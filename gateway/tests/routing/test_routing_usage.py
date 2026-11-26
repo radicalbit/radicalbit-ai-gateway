@@ -1,5 +1,5 @@
 from decimal import Decimal
-from unittest.mock import MagicMock, create_autospec, patch
+from unittest.mock import MagicMock, NonCallableMagicMock, create_autospec, patch
 
 from tests.common.mocked_gateway_config_openai import get_gateway_routing_llm
 from tests.common.resolve_route_models import resolve_route_models
@@ -30,7 +30,7 @@ ROUTER_MODEL = Model(
 )
 
 
-def _build_gateway() -> GatewayRoute:
+def _build_gateway(cost_service: MagicMock | None = None) -> GatewayRoute:
     route_cfg, chat_models, embedding_models = resolve_route_models(
         get_gateway_routing_llm(), 'smart_route'
     )
@@ -39,20 +39,22 @@ def _build_gateway() -> GatewayRoute:
         chat_models=chat_models,
         embedding_models=embedding_models,
         gateway_cache=None,
-        cost_service=MagicMock(spec_set=CostService),
+        cost_service=cost_service or MagicMock(spec_set=CostService),
     )
 
 
-def _limits() -> RequestLimits:
+def _limits() -> NonCallableMagicMock:
     limits = create_autospec(RequestLimits, instance=True)
     limits.identity = IDENTITY
+    assert isinstance(limits, NonCallableMagicMock)
     return limits
 
 
 async def test_chat_router_spend_counts_input_and_output():
     gateway, limits = _build_gateway(), _limits()
+    assert gateway.chat_invoker is not None
     gateway.chat_invoker.recorder.record = MagicMock()
-    record = RoutingSpend(limits, gateway.chat_invoker)
+    record = RoutingSpend(limits, gateway.chat_invoker.recorder)
 
     await record(ROUTER_MODEL, 120, 12.0, model_type='chat-model', output_tokens=15)
 
@@ -66,8 +68,9 @@ async def test_chat_router_spend_counts_input_and_output():
 
 async def test_input_only_router_spend_counts_no_output():
     gateway, limits = _build_gateway(), _limits()
+    assert gateway.chat_invoker is not None
     gateway.chat_invoker.recorder.record = MagicMock()
-    record = RoutingSpend(limits, gateway.chat_invoker)
+    record = RoutingSpend(limits, gateway.chat_invoker.recorder)
 
     await record(ROUTER_MODEL, 120, 12.0, model_type='embeddings')
 
@@ -76,11 +79,11 @@ async def test_input_only_router_spend_counts_no_output():
 
 
 async def test_chat_router_call_emits_output_tokens_flagged_as_routing():
-    gateway = _build_gateway()
-    gateway.chat_invoker.recorder.cost_service.compute_cost.return_value = Decimal(
-        '0.1'
-    )
-    record = RoutingSpend(_limits(), gateway.chat_invoker)
+    cost_service = MagicMock(spec_set=CostService)
+    cost_service.compute_cost.return_value = Decimal('0.1')
+    gateway = _build_gateway(cost_service)
+    assert gateway.chat_invoker is not None
+    record = RoutingSpend(_limits(), gateway.chat_invoker.recorder)
     with patch('radicalbit_ai_gateway.invocation.recorder.emit_event') as emit_event:
         await record(ROUTER_MODEL, 120, 12.0, model_type='chat-model', output_tokens=15)
     events = [call.args[0] for call in emit_event.call_args_list]

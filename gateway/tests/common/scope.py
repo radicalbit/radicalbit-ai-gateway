@@ -1,12 +1,14 @@
 """The scope of a request in tests that call an endpoint's pipeline directly."""
 
+from typing import Any
+
 from tests.common.limits import request_limits
 from tests.common.request_identity import with_identity
 
 from radicalbit_ai_gateway.gateway_route.scope import RequestScope
 
 
-def scope_of(route, limits=None, **caller) -> RequestScope:
+def scope_of(route, limits=None, **caller) -> RequestScope[Any, Any]:
     """Return the scope of a request to ``route`` by ``caller`` (loose
     identity fields; the tests' caller for those not given).
     """

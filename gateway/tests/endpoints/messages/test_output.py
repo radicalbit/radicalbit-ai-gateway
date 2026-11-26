@@ -1,3 +1,5 @@
+from typing import Any
+
 from anthropic.types import Message
 import pytest
 
@@ -32,11 +34,11 @@ USAGE = {
 }
 
 
-def _text(text: str, **fields) -> dict:
+def _text(text: str, **fields) -> dict[str, Any]:
     return {'type': 'text', 'text': text, **fields}
 
 
-def _message(content: list, **fields) -> dict:
+def _message(content: list[Any] | None, **fields) -> dict[str, Any]:
     return {
         'id': 'msg_provider_1',
         'type': 'message',
@@ -207,7 +209,7 @@ GUARDRAILS = [
 
 
 def _scope(*guardrails: str):
-    route: dict = {'chat_models': ['claude']}
+    route: dict[str, Any] = {'chat_models': ['claude']}
     if guardrails:
         route['guardrails'] = list(guardrails)
     routes = build_routes(

@@ -15,19 +15,18 @@ from radicalbit_ai_gateway.models.caching import CacheConfig, SemanticCaching
 from radicalbit_ai_gateway.models.fallback import FallbackModelType
 from radicalbit_ai_gateway.models.gateway_route_config import GatewayRouteConfig
 from radicalbit_ai_gateway.models.guardrails import (
-    DecisionJudgeParameter,
+    DecisionJudgeGuardrail,
     Guardrail,
     GuardrailType,
     GuardrailWhereType,
-    JudgeParameter,
+    JudgeGuardrail,
 )
 from radicalbit_ai_gateway.models.mcp_server import AnyMcpServer
 from radicalbit_ai_gateway.models.routing import (
     AnyRoutingConfig,
+    BudgetRoutingConfig,
     DecisionRoutingConfig,
-    DeterministicRoutingConfig,
     LLMRoutingConfig,
-    RoutingRuleType,
     SemanticRoutingConfig,
 )
 from radicalbit_ai_gateway.utils.config_hooks import (
@@ -165,10 +164,11 @@ class GatewayConfig(BaseModel):
         guardrails_by_name = {g.name: g for g in self.guardrails or []}
         for name in route_config.guardrails or []:
             guardrail = guardrails_by_name.get(name)
-            params = guardrail.parameters if guardrail is not None else None
-            if isinstance(params, JudgeParameter):
+            if isinstance(guardrail, JudgeGuardrail):
+                params = guardrail.parameters
                 chat += [params.model_id, params.fallback_model_id]
-            elif isinstance(params, DecisionJudgeParameter):
+            elif isinstance(guardrail, DecisionJudgeGuardrail):
+                params = guardrail.parameters
                 decision += [params.model_id, params.fallback_model_id]
 
         routing = (
@@ -479,15 +479,16 @@ class GatewayConfig(BaseModel):
     def validate_judge_models(self) -> Self:
         """Judges call models by id, so each id must be a top-level model."""
         for guardrail in self.guardrails or []:
-            params = guardrail.parameters
-            if isinstance(params, JudgeParameter):
+            if isinstance(guardrail, JudgeGuardrail):
+                params = guardrail.parameters
                 for model_id in (params.model_id, params.fallback_model_id):
                     if model_id is not None and model_id not in self.chat_models_by_id:
                         raise ValueError(
                             f"Guardrail '{guardrail.name}': judge model '{model_id}' "
                             'not declared in top-level chat_models.'
                         )
-            elif isinstance(params, DecisionJudgeParameter):
+            elif isinstance(guardrail, DecisionJudgeGuardrail):
+                params = guardrail.parameters
                 # Any decision model of the project, not only those on the route.
                 for label, model_id in (
                     ('model', params.model_id),
@@ -511,10 +512,7 @@ class GatewayConfig(BaseModel):
     def uses_budget_routing(self, route: GatewayRouteConfig) -> bool:
         """Whether *route* picks its model by how much of its budget is used."""
         routing_config = self.routing_by_name.get(route.routing)
-        return (
-            isinstance(routing_config, DeterministicRoutingConfig)
-            and routing_config.rule == RoutingRuleType.BUDGET
-        )
+        return isinstance(routing_config, BudgetRoutingConfig)
 
     @model_validator(mode='after')
     def validate_routing(self) -> Self:

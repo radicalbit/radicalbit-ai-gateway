@@ -1,5 +1,7 @@
 """The limit check of a chat-like request, before anything spends."""
 
+from typing import Any
+
 from radicalbit_ai_gateway.endpoints.common.limits import check_limits, checked_in_span
 from radicalbit_ai_gateway.gateway_route.scope import RequestScope
 from radicalbit_ai_gateway.limiting.limits import Demand, InputEstimate
@@ -20,7 +22,9 @@ def chat_demand(messages: list[BaseMessage], model: Model) -> Demand:
 _check_in_chat_span = checked_in_span('check_limiters')
 
 
-async def check_chat_limits(scope: RequestScope, messages: list[BaseMessage]) -> None:
+async def check_chat_limits(
+    scope: RequestScope[Any, Any], messages: list[BaseMessage]
+) -> None:
     """Check a conversation on the request's limits, before anything spends.
     Routing has not run yet: the route's first chat model picks the
     tokenizer.

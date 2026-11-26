@@ -1,11 +1,14 @@
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncIterator, Callable, Sequence
 from decimal import Decimal
 import logging
-from typing import NoReturn
+from typing import Any, Never, NoReturn
 
-from openai.types.chat import ChatCompletionToolChoiceOptionParam
+from openai.types.chat import (
+    ChatCompletionToolChoiceOptionParam,
+    ChatCompletionToolUnionParam,
+)
 from openai.types.chat.chat_completion import ChatCompletion
-from openai.types.chat.chat_completion_tool_param import ChatCompletionToolParam
+from typing_extensions import override
 
 from radicalbit_ai_gateway.invocation.errors import (
     Surface,
@@ -16,6 +19,7 @@ from radicalbit_ai_gateway.invocation.fallback_chain import (
     Attempt,
     CallContext,
     Candidate,
+    Failure,
     FallbackChain,
     Reply,
     candidates,
@@ -59,7 +63,11 @@ logger = logging.getLogger(app_config.log_config.logger_name)
 CHAT_MODEL_TYPE = 'chat-model'
 
 
-class ChatModelInvoker(ModelInvoker):
+# A Responses API candidate's client: the model and the body to send it.
+_ResponsesClient = tuple[ChatModel, dict[str, Any]]
+
+
+class ChatModelInvoker(ModelInvoker[ChatModel]):
     def __init__(
         self,
         models: list[Model],
@@ -75,6 +83,7 @@ class ChatModelInvoker(ModelInvoker):
         )
         self._initialize_models(self._build_model)
 
+    @override
     def _build_model(self, model: Model) -> ChatModel:
         return build_chat_model(model, self.httpx_client)
 
@@ -87,11 +96,14 @@ class ChatModelInvoker(ModelInvoker):
     def _chain(
         self,
         model_id: str,
-        tools: list[ChatCompletionToolParam] | None,
+        tools: Sequence[ChatCompletionToolUnionParam] | None,
         tool_choice: ChatCompletionToolChoiceOptionParam | None,
         call: Call,
-        **context,
-    ) -> FallbackChain:
+        *,
+        on_failure: Callable[[Candidate, BaseException], None],
+        on_exhausted: Callable[[list[Failure]], NoReturn],
+        record: Callable[[Candidate, Any, float], None] | None = None,
+    ) -> FallbackChain[Never, ChatModel]:
         """Return the chain of ``model_id``, each model offering the tools.
 
         The target is bound here: a tool it cannot take fails the request.
@@ -104,26 +116,42 @@ class ChatModelInvoker(ModelInvoker):
             chat_model = chat_model.bind_tools(tools=tools, tool_choice=tool_choice)
         return FallbackChain(
             candidates((model, chat_model), fallbacks),
-            CallContext(call=call, recorder=self.recorder, **context),
+            CallContext(
+                call=call,
+                recorder=self.recorder,
+                record=record,
+                on_failure=on_failure,
+                on_exhausted=on_exhausted,
+            ),
         )
 
     @staticmethod
-    def _bound(candidate: Candidate, tools, tool_choice) -> ChatModel:
-        if candidate.is_fallback and tools and tool_choice:
-            return candidate.client.bind_tools(tools=tools, tool_choice=tool_choice)
-        return candidate.client
+    def _bound(
+        candidate: Candidate[ChatModel],
+        tools: Sequence[ChatCompletionToolUnionParam] | None,
+        tool_choice: ChatCompletionToolChoiceOptionParam | None,
+    ) -> ChatModel:
+        client = candidate.client
+        if (
+            candidate.is_fallback
+            and tools is not None
+            and len(tools) > 0
+            and tool_choice
+        ):
+            return client.bind_tools(tools=tools, tool_choice=tool_choice)
+        return client
 
     @classmethod
-    def _tokens(cls, message: AIMessage) -> Tokens | None:
+    def _tokens(cls, message: object) -> Tokens | None:
         """Return the tokens of a reply; None when it reports no usage."""
         if not isinstance(message, AIMessage) or not message.usage_metadata:
             return None
         cached, creation_5m, creation_1h = cache_tokens(
             message.usage_metadata, message.response_metadata
         )
-        input_tokens = message.usage_metadata.get('input_tokens')
-        if input_tokens is not None:
-            input_tokens -= (cached or 0) + (creation_5m or 0) + (creation_1h or 0)
+        input_tokens = message.usage_metadata['input_tokens'] - (
+            (cached or 0) + (creation_5m or 0) + (creation_1h or 0)
+        )
         return Tokens(
             input=input_tokens,
             output=message.usage_metadata.get('output_tokens'),
@@ -138,7 +166,7 @@ class ChatModelInvoker(ModelInvoker):
         identity: RequestIdentity,
         messages: list[BaseMessage],
         model_id: str,
-        tools: list[ChatCompletionToolParam] | None,
+        tools: Sequence[ChatCompletionToolUnionParam] | None,
         tool_choice: ChatCompletionToolChoiceOptionParam | None,
         **kwargs,
     ) -> ChatCompletion:
@@ -168,15 +196,15 @@ class ChatModelInvoker(ModelInvoker):
         )
         logger.debug('Invoking model %s with messages: %s', model_id, messages)
 
-        async def ask(candidate: Candidate) -> Reply:
+        async def ask(
+            candidate: Candidate[ChatModel],
+        ) -> Reply[tuple[AIMessage, Model]]:
             result = await self._bound(candidate, tools, tool_choice).ainvoke(
                 input=messages, **kwargs
             )
             return Reply((result, candidate.model), usage=self._tokens(result))
 
         result, model_invoked = await chain.call(ask)
-        if not isinstance(result, AIMessage) and isinstance(result, BaseMessage):
-            result = AIMessage(content=result.content)
         if not isinstance(result, AIMessage):
             raise ModelInvokerInternalError(
                 f'Expected AIMessage or BaseMessage, got {type(result)}'
@@ -211,7 +239,7 @@ class ChatModelInvoker(ModelInvoker):
         identity: RequestIdentity,
         messages: list[BaseMessage],
         model_id: str,
-        tools: list[ChatCompletionToolParam] | None,
+        tools: Sequence[ChatCompletionToolUnionParam] | None,
         tool_choice: ChatCompletionToolChoiceOptionParam | None,
         **kwargs,
     ) -> AsyncIterator[AIMessageChunk]:
@@ -248,7 +276,7 @@ class ChatModelInvoker(ModelInvoker):
             on_exhausted=raising(Surface.CHAT_STREAM, identity.route_name),
         )
 
-        async def stream(attempt: Attempt) -> AsyncIterator[AIMessageChunk]:
+        async def stream(attempt: Attempt[ChatModel]) -> AsyncIterator[AIMessageChunk]:
             candidate = attempt.candidate
             if candidate.is_fallback:
                 logger.info(
@@ -272,16 +300,16 @@ class ChatModelInvoker(ModelInvoker):
         """Whether the model serves the Responses API."""
         if model_id not in self.model_map:
             return False
-        _, chat_model, _ = self.model_map[model_id]
+        chat_model = self.model_map[model_id][1]
         return chat_model.supports_native_responses()
 
     def _responses_chain(
         self,
         model_id: str,
         allow_fallback: bool,
-        body: dict,
+        body: dict[str, Any],
         call: Call,
-    ) -> FallbackChain:
+    ) -> FallbackChain[Never, _ResponsesClient]:
         """Return the chain of the model, then its fallbacks that serve the
         Responses API. Each candidate's client is the model and the body to
         send it.
@@ -304,7 +332,9 @@ class ChatModelInvoker(ModelInvoker):
             for candidate, candidate_model in [(model, chat_model), *served]
         ]
 
-        def record(candidate: Candidate, usage: dict | None, latency_ms: float):
+        def record(
+            candidate: Candidate, usage: dict[str, Any] | None, latency_ms: float
+        ):
             self._record_responses(call, candidate, usage, latency_ms)
 
         return FallbackChain(
@@ -319,7 +349,7 @@ class ChatModelInvoker(ModelInvoker):
         )
 
     @staticmethod
-    def _responses_body(chat_model: ChatModel, body: dict) -> dict:
+    def _responses_body(chat_model: ChatModel, body: dict[str, Any]) -> dict[str, Any]:
         """Return the body with its input adapted for ``chat_model``."""
         items = body.get('input')
         if not isinstance(items, list):
@@ -327,7 +357,11 @@ class ChatModelInvoker(ModelInvoker):
         return {**body, 'input': chat_model.adapt_responses_input(items)}
 
     def _record_responses(
-        self, call: Call, candidate: Candidate, usage: dict | None, latency_ms: float
+        self,
+        call: Call,
+        candidate: Candidate,
+        usage: dict[str, Any] | None,
+        latency_ms: float,
     ) -> None:
         input_tokens, cached, output = responses_token_counts(usage)
         self.recorder.invocation(
@@ -346,7 +380,7 @@ class ChatModelInvoker(ModelInvoker):
     async def stream_responses(
         self,
         identity: RequestIdentity,
-        body: dict,
+        body: dict[str, Any],
         model_id: str,
         allow_fallback: bool = True,
     ) -> AsyncIterator[NativeResponsesEvent]:
@@ -358,7 +392,9 @@ class ChatModelInvoker(ModelInvoker):
         call = self._call(model_id, identity)
         chain = self._responses_chain(model_id, allow_fallback, body, call)
 
-        async def stream(attempt: Attempt) -> AsyncIterator[NativeResponsesEvent]:
+        async def stream(
+            attempt: Attempt[_ResponsesClient],
+        ) -> AsyncIterator[NativeResponsesEvent]:
             chat_model, candidate_body = attempt.candidate.client
             async for event, data in chat_model.astream_native_responses(
                 candidate_body
@@ -375,17 +411,19 @@ class ChatModelInvoker(ModelInvoker):
     async def complete_responses(
         self,
         identity: RequestIdentity,
-        body: dict,
+        body: dict[str, Any],
         model_id: str,
         allow_fallback: bool = True,
-    ) -> tuple[dict, Model]:
+    ) -> tuple[dict[str, Any], Model]:
         """Answer a Responses API request; return the upstream's response
         object and the model that answered.
         """
         call = self._call(model_id, identity)
         chain = self._responses_chain(model_id, allow_fallback, body, call)
 
-        async def ask(candidate: Candidate) -> Reply:
+        async def ask(
+            candidate: Candidate[_ResponsesClient],
+        ) -> Reply[tuple[dict[str, Any], Model]]:
             chat_model, candidate_body = candidate.client
             result = await chat_model.ainvoke_native_responses(candidate_body)
             # A reply without usage is recorded too: {} is not None.
@@ -399,10 +437,12 @@ class ChatModelInvoker(ModelInvoker):
         """Whether the model serves the Anthropic Messages API."""
         if model_id not in self.model_map:
             return False
-        _, chat_model, _ = self.model_map[model_id]
+        chat_model = self.model_map[model_id][1]
         return chat_model.supports_native_messages()
 
-    def _messages_chain(self, model_id: str, call: Call) -> FallbackChain:
+    def _messages_chain(
+        self, model_id: str, call: Call
+    ) -> FallbackChain[Never, ChatModel]:
         """Return the chain of the model, then its fallbacks in order.
 
         A fallback that does not serve the Messages API ends the chain: the
@@ -423,7 +463,7 @@ class ChatModelInvoker(ModelInvoker):
             served.append((fallback, fallback_model))
         raise_exhausted = raising(Surface.MESSAGES, route_name)
 
-        def on_exhausted(failures: list) -> NoReturn:
+        def on_exhausted(failures: list[Failure]) -> NoReturn:
             if unserved is not None:
                 raise ModelInvokerBadRequest(
                     f'Model {unserved.model_id} of route {route_name} '
@@ -431,7 +471,9 @@ class ChatModelInvoker(ModelInvoker):
                 ) from failures[0].error
             raise_exhausted(failures)
 
-        def record(candidate: Candidate, usage: dict | None, latency_ms: float):
+        def record(
+            candidate: Candidate, usage: dict[str, Any] | None, latency_ms: float
+        ):
             self.recorder.invocation(
                 call,
                 candidate.model,
@@ -455,7 +497,9 @@ class ChatModelInvoker(ModelInvoker):
         )
 
     @staticmethod
-    def _signature_retry_body(model: Model, body: dict, error: Exception) -> dict:
+    def _signature_retry_body(
+        model: Model, body: dict[str, Any], error: Exception
+    ) -> dict[str, Any]:
         """Return the body to retry when the upstream refused a thinking signature.
 
         A client that switched models sends thinking that another provider
@@ -501,8 +545,12 @@ class ChatModelInvoker(ModelInvoker):
         return cost
 
     async def _invoke_messages(
-        self, model: Model, chat_model: ChatModel, body: dict, headers: dict[str, str]
-    ) -> dict:
+        self,
+        model: Model,
+        chat_model: ChatModel,
+        body: dict[str, Any],
+        headers: dict[str, str],
+    ) -> dict[str, Any]:
         """Make one Messages call to one model (see ``_signature_retry_body``)."""
         cost = self._messages_cost(model)
         try:
@@ -512,7 +560,11 @@ class ChatModelInvoker(ModelInvoker):
         return await chat_model.ainvoke_native_messages(retry_body, headers, cost)
 
     async def _stream_messages(
-        self, model: Model, chat_model: ChatModel, body: dict, headers: dict[str, str]
+        self,
+        model: Model,
+        chat_model: ChatModel,
+        body: dict[str, Any],
+        headers: dict[str, str],
     ) -> AsyncIterator[tuple[str, str]]:
         """Stream one Messages call from one model (see ``_signature_retry_body``).
 
@@ -541,17 +593,19 @@ class ChatModelInvoker(ModelInvoker):
     async def complete_messages(
         self,
         identity: RequestIdentity,
-        body: dict,
+        body: dict[str, Any],
         headers: dict[str, str],
         model_id: str,
-    ) -> tuple[dict, Model]:
+    ) -> tuple[dict[str, Any], Model]:
         """Answer a Messages API request; return the upstream's message object
         and the model that answered.
         """
         call = self._call(model_id, identity)
         chain = self._messages_chain(model_id, call)
 
-        async def ask(candidate: Candidate) -> Reply:
+        async def ask(
+            candidate: Candidate[ChatModel],
+        ) -> Reply[tuple[dict[str, Any], Model]]:
             try:
                 result = await self._invoke_messages(
                     candidate.model, candidate.client, body, headers
@@ -569,7 +623,7 @@ class ChatModelInvoker(ModelInvoker):
     async def stream_messages(
         self,
         identity: RequestIdentity,
-        body: dict,
+        body: dict[str, Any],
         headers: dict[str, str],
         model_id: str,
         on_answer: Callable[[Model], None] | None = None,
@@ -586,7 +640,7 @@ class ChatModelInvoker(ModelInvoker):
         call = self._call(model_id, identity)
         chain = self._messages_chain(model_id, call)
 
-        async def stream(attempt: Attempt) -> AsyncIterator[tuple[str, str]]:
+        async def stream(attempt: Attempt[ChatModel]) -> AsyncIterator[tuple[str, str]]:
             attempt.usage = {}
             started = False
             try:
@@ -613,7 +667,7 @@ def _log_responses_failure(candidate: Candidate, error: BaseException) -> None:
     )
 
 
-def _messages_tokens(usage: dict | None) -> Tokens:
+def _messages_tokens(usage: dict[str, Any] | None) -> Tokens:
     """Return the tokens of a Messages API usage object; 0 is not reported."""
     counts = messages_usage(usage)
     return Tokens(

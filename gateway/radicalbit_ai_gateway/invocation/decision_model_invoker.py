@@ -3,12 +3,14 @@ import contextlib
 from dataclasses import dataclass
 import json
 import logging
+from typing import Any
 
 import httpx
 from opentelemetry import trace
 from opentelemetry.semconv._incubating.attributes import (
     gen_ai_attributes as GenAIAttributes,
 )
+from typing_extensions import override
 
 from radicalbit_ai_gateway.invocation.errors import Surface, exhausted
 from radicalbit_ai_gateway.invocation.fallback_chain import (
@@ -88,7 +90,7 @@ class DecisionResponse:
     model_invoked: Model | None = None
 
 
-def _set_decision_request_attributes(body: dict, model_id: str) -> None:
+def _set_decision_request_attributes(body: dict[str, Any], model_id: str) -> None:
     try:
         span = trace.get_current_span()
         if span.is_recording():
@@ -116,7 +118,9 @@ def _set_decision_fallback_attributes(
         pass
 
 
-def _set_decision_response_attributes(payload: dict, input_tokens: int) -> None:
+def _set_decision_response_attributes(
+    payload: dict[str, Any], input_tokens: int
+) -> None:
     try:
         span = trace.get_current_span()
         if span.is_recording():
@@ -152,8 +156,10 @@ def _backoff_seconds(attempt: int, last_response: httpx.Response | None) -> floa
     return max(0.0, min(delay, BACKOFF_CAP_SECONDS))
 
 
-class DecisionModelInvoker(ModelInvoker):
+class DecisionModelInvoker(ModelInvoker[DecisionUpstream]):
     """Forwards Typesafe's own request to Typesafe with plain httpx (ADR 0004)."""
+
+    httpx_client: httpx.AsyncClient | None
 
     def __init__(
         self,
@@ -170,6 +176,7 @@ class DecisionModelInvoker(ModelInvoker):
         )
         self._initialize_models(self._build_model)
 
+    @override
     def _build_model(self, model: Model) -> DecisionUpstream:
         _, model_name = parse_provider_and_model(model.model)
         credentials = model.credentials
@@ -186,7 +193,7 @@ class DecisionModelInvoker(ModelInvoker):
     async def decide(
         self,
         identity: RequestIdentity,
-        body: dict,
+        body: dict[str, Any],
         model_id: str,
     ) -> DecisionResponse:
         if model_id not in self.model_map:
@@ -201,7 +208,9 @@ class DecisionModelInvoker(ModelInvoker):
             target_model_id=model_id,
         )
 
-        async def ask(candidate: Candidate) -> Reply:
+        async def ask(
+            candidate: Candidate[DecisionUpstream],
+        ) -> Reply[DecisionResponse]:
             if candidate.is_fallback:
                 logger.warning(
                     'Decision model %s failed. Falling back to %s',
@@ -220,7 +229,7 @@ class DecisionModelInvoker(ModelInvoker):
                 candidate.model.model_id, candidate.is_fallback
             )
             if not response.is_success:
-                raise Refused(_relayed(response))
+                return Refused(_relayed(response))
             payload = self._parse_json(response, model_id)
             input_tokens = billed_input_tokens(payload)
             _set_decision_response_attributes(payload, input_tokens)
@@ -257,7 +266,7 @@ class DecisionModelInvoker(ModelInvoker):
             CallContext(call=call, recorder=self.recorder, on_exhausted=on_exhausted),
         ).call(ask)
 
-    async def call(self, model_id: str, body: dict) -> httpx.Response | None:
+    async def call(self, model_id: str, body: dict[str, Any]) -> httpx.Response | None:
         """Call one decision model with retries: no fallbacks, no metrics.
 
         Return what `_call_with_retries` returns.
@@ -268,7 +277,7 @@ class DecisionModelInvoker(ModelInvoker):
         return await self._call_with_retries(model, upstream, body)
 
     async def _call_with_retries(
-        self, model: Model, upstream: DecisionUpstream, body: dict
+        self, model: Model, upstream: DecisionUpstream, body: dict[str, Any]
     ) -> httpx.Response | None:
         """Call one decision model, retrying transient failures.
 
@@ -297,7 +306,9 @@ class DecisionModelInvoker(ModelInvoker):
             last_response = response
         return last_response
 
-    async def _post(self, url: str, body: dict, headers: dict) -> httpx.Response:
+    async def _post(
+        self, url: str, body: dict[str, Any], headers: dict[str, Any]
+    ) -> httpx.Response:
         if self.httpx_client is not None:
             return await self.httpx_client.post(url, json=body, headers=headers)
         # No shared client (tests, scripts): use a short-lived one.
@@ -305,7 +316,7 @@ class DecisionModelInvoker(ModelInvoker):
             return await client.post(url, json=body, headers=headers)
 
     @staticmethod
-    def _parse_json(response: httpx.Response, model_id: str) -> dict:
+    def _parse_json(response: httpx.Response, model_id: str) -> dict[str, Any]:
         try:
             payload = response.json()
         except ValueError:

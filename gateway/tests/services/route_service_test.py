@@ -1,11 +1,13 @@
 import copy
 import unittest
 
+from typing_extensions import override
+
 from tests.common.mocked_gateway_config import get_default_gateway
 
 from radicalbit_ai_gateway.models.guardrails import (
-    Guardrail,
     GuardrailType,
+    JudgeGuardrail,
     JudgeParameter,
 )
 from radicalbit_ai_gateway.models.prompt_dto import PromptCategory
@@ -15,6 +17,7 @@ from radicalbit_ai_gateway.utils.app_config import PromptManagerConfig
 
 
 class RouteServiceTest(unittest.TestCase):
+    @override
     @classmethod
     def setUpClass(cls):
         cls.gateway_config = get_default_gateway('route-A')
@@ -60,7 +63,7 @@ class RouteServiceTest(unittest.TestCase):
         PromptManager.set_global(pm)
 
         config = copy.deepcopy(self.gateway_config)
-        judge = Guardrail(
+        judge = JudgeGuardrail(
             name='injection_check',
             type=GuardrailType.JUDGE,
             where='INPUT',
@@ -93,7 +96,7 @@ class RouteServiceTest(unittest.TestCase):
         PromptManager.set_global(pm)
 
         config = copy.deepcopy(self.gateway_config)
-        judge = Guardrail(
+        judge = JudgeGuardrail(
             name='missing_prompt',
             type=GuardrailType.JUDGE,
             where='INPUT',

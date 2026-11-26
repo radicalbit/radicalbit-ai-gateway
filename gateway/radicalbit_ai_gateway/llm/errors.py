@@ -2,12 +2,18 @@
 error behind it, read from each provider SDK's error type.
 """
 
-from typing import Any
+from typing import Any, Protocol
 
 import anthropic
 from google.genai import errors as genai_errors
 import httpx
 import openai
+
+
+class _JsonResponse(Protocol):
+    """An HTTP response of any provider SDK's client (httpx or httpx2)."""
+
+    def json(self) -> Any: ...
 
 
 def provider_status(error: BaseException) -> tuple[int, str, Any] | None:
@@ -22,12 +28,16 @@ def provider_status(error: BaseException) -> tuple[int, str, Any] | None:
     if isinstance(error, httpx.HTTPStatusError):
         return error.response.status_code, str(error), _json(error.response, str(error))
     if isinstance(error, genai_errors.APIError):
-        body = error.details if isinstance(error.details, dict) else None
-        return error.code, error.message, body or {'error': {'message': str(error)}}
+        # Gemini sends no message when its error body has none.
+        message = error.message or str(error)
+        details = error.details
+        if isinstance(details, dict) and details:
+            return error.code, message, details
+        return error.code, message, {'error': {'message': message}}
     return None
 
 
-def _json(response: httpx.Response, message: str) -> Any:
+def _json(response: _JsonResponse, message: str) -> Any:
     try:
         return response.json()
     except ValueError:

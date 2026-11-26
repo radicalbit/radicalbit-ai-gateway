@@ -22,6 +22,7 @@ from radicalbit_ai_gateway.llm.messages import (
     HumanMessage,
     SystemMessage,
     ToolMessage,
+    invalid_tool_call,
 )
 from radicalbit_ai_gateway.llm.providers._openai_common import (
     OutputParserError,
@@ -56,7 +57,9 @@ AZURE = {
 
 def model(name='gpt-4o-mini', **kwargs) -> ChatOpenAI:
     kwargs.setdefault('http_async_client', HttpxAiohttpClient())
-    return init_chat_model(f'openai:{name}', api_key='sk', **kwargs)
+    chat_model = init_chat_model(f'openai:{name}', api_key='sk', **kwargs)
+    assert isinstance(chat_model, ChatOpenAI)
+    return chat_model
 
 
 async def invoke(chat_model, responses, messages=MESSAGES, **kwargs):
@@ -710,7 +713,7 @@ def test_assistant_history_variants_on_the_wire():
         AIMessage(
             '',
             invalid_tool_calls=[
-                {'name': 'f', 'args': '{"x', 'id': 'c8', 'error': 'bad'}
+                invalid_tool_call(name='f', args='{"x', id='c8', error='bad')
             ],
         ),
         AIMessage(
@@ -801,7 +804,7 @@ def test_unknown_message_types_are_rejected():
         type: str = 'other'
 
     with pytest.raises(TypeError, match='Got unknown type'):
-        payload([OtherMessage('x')])
+        payload([OtherMessage(content='x')])
 
 
 def test_user_content_blocks_and_cache_breakpoints():
@@ -1302,3 +1305,32 @@ async def test_stalled_stream_raises_chunk_timeout():
         async for _ in with_chunk_timeout(source, 0.01, 'm'):
             pass
     assert source.closed
+
+
+async def test_a_custom_tool_call_is_kept_as_an_invalid_tool_call():
+    custom_call = {
+        'id': 'call_custom',
+        'type': 'custom',
+        'custom': {'name': 'grammar', 'input': 'SELECT 1'},
+    }
+    function_call = {
+        'id': 'call_f',
+        'type': 'function',
+        'function': {'name': 'f', 'arguments': '{"a": 1}'},
+    }
+    result, _ = await invoke(
+        model(),
+        [
+            canned.openai_completion(
+                None, extra_message={'tool_calls': [custom_call, function_call]}
+            )
+        ],
+    )
+    assert [tc['id'] for tc in result.tool_calls] == ['call_f']
+    [invalid] = result.invalid_tool_calls
+    assert invalid['id'] == 'call_custom'
+    assert invalid['name'] == 'grammar'
+    assert invalid['args'] == 'SELECT 1'
+    assert invalid['error'] == (
+        "Unsupported tool call type 'custom': only function calls are parsed."
+    )

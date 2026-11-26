@@ -1,7 +1,7 @@
 """Chat model interface implemented by every chat provider."""
 
 from abc import ABC, abstractmethod
-from collections.abc import AsyncIterator, Sequence
+from collections.abc import AsyncIterator, Mapping, Sequence
 from typing import Any, ClassVar
 import uuid
 
@@ -108,7 +108,7 @@ class ChatModel(ABC):
         """Whether this model can serve a Responses API request body as is."""
         return False
 
-    def adapt_responses_input(self, items: list) -> list:
+    def adapt_responses_input(self, items: list[Any]) -> list[Any]:
         """Return the Responses ``input`` items reduced to what this model accepts."""
         # Reasoning can be resumed only by the model that produced it.
         return [
@@ -117,7 +117,7 @@ class ChatModel(ABC):
             if not (isinstance(item, dict) and item.get('type') == 'reasoning')
         ]
 
-    async def ainvoke_native_responses(self, body: dict) -> dict:
+    async def ainvoke_native_responses(self, body: dict[str, Any]) -> dict[str, Any]:
         """Send a Responses API request body and return the response object."""
         trace = ResponsesTrace.start(self, body)
         try:
@@ -131,7 +131,7 @@ class ChatModel(ABC):
         return response
 
     async def astream_native_responses(
-        self, body: dict
+        self, body: dict[str, Any]
     ) -> AsyncIterator[tuple[str, str]]:
         """Send a streaming Responses API request; yield ``(event, data)`` pairs."""
         trace = ResponsesTrace.start(self, body, stream=True)
@@ -148,13 +148,15 @@ class ChatModel(ABC):
         if trace:
             trace.end_stream()
 
-    async def _ainvoke_native_responses(self, body: dict) -> dict:
+    async def _ainvoke_native_responses(self, body: dict[str, Any]) -> dict[str, Any]:
         """Call the provider's Responses API and return the response object."""
         raise NotImplementedError(
             f'{type(self).__name__} does not serve the Responses API'
         )
 
-    def _astream_native_responses(self, body: dict) -> AsyncIterator[tuple[str, str]]:
+    def _astream_native_responses(
+        self, body: dict[str, Any]
+    ) -> AsyncIterator[tuple[str, str]]:
         """Call the provider's Responses API in streaming mode; yield its events."""
         raise NotImplementedError(
             f'{type(self).__name__} does not serve the Responses API'
@@ -174,10 +176,10 @@ class ChatModel(ABC):
 
     async def ainvoke_native_messages(
         self,
-        body: dict,
+        body: dict[str, Any],
         headers: dict[str, str],
         cost: MessagesCost | None = None,
-    ) -> dict:
+    ) -> dict[str, Any]:
         """Send a Messages API request body and return the message object."""
         trace = MessagesTrace.start(self, body, cost=cost)
         try:
@@ -192,7 +194,7 @@ class ChatModel(ABC):
 
     async def astream_native_messages(
         self,
-        body: dict,
+        body: dict[str, Any],
         headers: dict[str, str],
         cost: MessagesCost | None = None,
     ) -> AsyncIterator[tuple[str, str]]:
@@ -212,22 +214,24 @@ class ChatModel(ABC):
             trace.end_stream()
 
     async def _ainvoke_native_messages(
-        self, body: dict, headers: dict[str, str]
-    ) -> dict:
+        self, body: dict[str, Any], headers: dict[str, str]
+    ) -> dict[str, Any]:
         """Call the provider's Messages API and return the message object."""
         raise NotImplementedError(
             f'{type(self).__name__} does not serve the Messages API'
         )
 
     def _astream_native_messages(
-        self, body: dict, headers: dict[str, str]
+        self, body: dict[str, Any], headers: dict[str, str]
     ) -> AsyncIterator[tuple[str, str]]:
         """Call the provider's Messages API in streaming mode; yield its events."""
         raise NotImplementedError(
             f'{type(self).__name__} does not serve the Messages API'
         )
 
-    def bind_tools(self, tools: list[dict], tool_choice: Any = None) -> 'ChatModel':
+    def bind_tools(
+        self, tools: Sequence[Mapping[str, Any]], tool_choice: Any = None
+    ) -> 'ChatModel':
         """Return a model that offers ``tools`` on every call."""
         raise NotImplementedError(f'{type(self).__name__} does not support tools')
 
@@ -246,7 +250,9 @@ class ChatModel(ABC):
         """Return the URL of the provider's API, reported as ``server.*``."""
         return None
 
-    def _invocation_params(self, stop: list[str] | None = None, **kwargs: Any) -> dict:
+    def _invocation_params(
+        self, stop: list[str] | None = None, **kwargs: Any
+    ) -> dict[str, Any]:
         """LangChain's invocation params of a call with ``kwargs``.
 
         The tracer reads ``model``/``model_id``/``model_name``, ``max_tokens``,
@@ -255,7 +261,7 @@ class ChatModel(ABC):
         """
         return {'stop': stop, **kwargs}
 
-    def _serialized_kwargs(self) -> dict:
+    def _serialized_kwargs(self) -> dict[str, Any]:
         """Return the constructor params LangChain serialized for tracing.
 
         They override the call's params in the span (``model``/``model_name``,
@@ -268,7 +274,7 @@ class ChatModel(ABC):
             if (value := getattr(self, name, None)) is not None
         }
 
-    def _llm_output(self, message: AIMessage) -> dict | None:
+    def _llm_output(self, message: AIMessage) -> dict[str, Any] | None:
         """LangChain's ``llm_output`` of a (non-streamed) reply.
 
         The tracer reads ``model_name``, ``id`` and the provider's raw usage
@@ -276,7 +282,7 @@ class ChatModel(ABC):
         """
         return None
 
-    def _generation_info(self, message: AIMessage) -> dict | None:
+    def _generation_info(self, message: AIMessage) -> dict[str, Any] | None:
         """LangChain's ``generation_info`` of a reply or of a stream chunk.
 
         The tracer reads ``finish_reason``; a stream's infos are merged.

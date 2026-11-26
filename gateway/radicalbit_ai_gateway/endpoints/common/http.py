@@ -2,11 +2,12 @@
 their server-sent events.
 """
 
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Awaitable, Callable
 from functools import wraps
 import json
 import logging
 import time
+from typing import Concatenate, ParamSpec, TypeVar
 
 from fastapi import Request
 from opentelemetry import trace
@@ -32,6 +33,9 @@ from radicalbit_ai_gateway.utils.trace_attributes import (
 )
 
 logger = logging.getLogger(get_app_config().log_config.logger_name)
+
+P = ParamSpec('P')
+R = TypeVar('R')
 
 # The span attribute naming the endpoint a request came in through.
 ENTRY_ENDPOINT = 'gateway.entry_endpoint'
@@ -68,9 +72,11 @@ def record_metrics(
     logger.debug(log_message.format(method, path, status_code, route_name, latency_ms))
 
 
-def otel_metrics_decorator(func):
+def otel_metrics_decorator(
+    func: Callable[Concatenate[Request, P], Awaitable[R]],
+) -> Callable[Concatenate[Request, P], Awaitable[R]]:
     @wraps(func)
-    async def wrapper(request: Request, *args, **kwargs):
+    async def wrapper(request: Request, *args: P.args, **kwargs: P.kwargs) -> R:
         start_time = time.monotonic()
         status_code = 200
 
@@ -97,12 +103,14 @@ def otel_metrics_decorator(func):
     return wrapper
 
 
-def traced_endpoint(name: str):
+def traced_endpoint(
+    name: str,
+) -> Callable[[Callable[P, Awaitable[R]]], Callable[P, Awaitable[R]]]:
     """Decorate a proxy endpoint: its trace (a workflow span named ``name``,
     marked ENDPOINT), and the route context cleared when the request is done.
     """
 
-    def decorate(handler):
+    def decorate(handler: Callable[P, Awaitable[R]]) -> Callable[P, Awaitable[R]]:
         return workflow(name=name)(
             ensure_endpoint_category(reset_route_context(handler))
         )
@@ -110,12 +118,19 @@ def traced_endpoint(name: str):
     return decorate
 
 
-def endpoint(name: str):
+def endpoint(
+    name: str,
+) -> Callable[
+    [Callable[Concatenate[Request, P], Awaitable[R]]],
+    Callable[Concatenate[Request, P], Awaitable[R]],
+]:
     """Decorate a proxy endpoint: its HTTP metrics, and its trace and route
     context (see ``traced_endpoint``).
     """
 
-    def decorate(handler):
+    def decorate(
+        handler: Callable[Concatenate[Request, P], Awaitable[R]],
+    ) -> Callable[Concatenate[Request, P], Awaitable[R]]:
         return otel_metrics_decorator(traced_endpoint(name)(handler))
 
     return decorate

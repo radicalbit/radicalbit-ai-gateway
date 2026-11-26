@@ -1,4 +1,5 @@
 from dataclasses import fields, replace
+from typing import Any
 
 from tests.common.db_mock import API_KEY_UUID, GROUP_UUID, REQUEST_UUID
 
@@ -17,7 +18,7 @@ IDENTITY = RequestIdentity(
 _IDENTITY_FIELDS = {field.name for field in fields(RequestIdentity)}
 
 
-def with_identity(**kwargs) -> dict:
+def with_identity(**kwargs) -> dict[str, Any]:
     """Return the arguments of a call that takes an ``identity``: the loose
     identity fields among ``kwargs`` (``request_uuid``, ``route_name``…)
     gathered into one ``RequestIdentity``, the others as they are. A field

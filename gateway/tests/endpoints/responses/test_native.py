@@ -6,9 +6,10 @@ on assistant messages, parallel function calls).
 """
 
 import json
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
-import httpx
+import httpx2
 from httpx_aiohttp import HttpxAiohttpClient
 import openai
 import pytest
@@ -181,6 +182,7 @@ def test_native_event_reports_the_route_as_model():
     created_frame = created_event.to_sse('r')
     assert json.loads(created_frame.split('data: ')[1])['response']['model'] == 'r'
     # The upstream response stays as sent, for accounting and the cache
+    assert created_event.response is not None
     assert created_event.response['model'] == 'gpt-6-luna'
     # Other events pass byte for byte
     assert delta_event.to_sse('r') == (
@@ -202,6 +204,14 @@ def _invoker(primary, *fallbacks) -> ChatModelInvoker:
     invoker.recorder = Recorder(MagicMock())
     invoker.recorder.record = MagicMock()
     return invoker
+
+
+def _recorded(invoker: ChatModelInvoker) -> dict[str, Any]:
+    """Return the metrics ``_invoker``'s recorder was last given."""
+    record = invoker.recorder.record
+    assert isinstance(record, MagicMock)
+    assert record.call_args is not None
+    return record.call_args.kwargs
 
 
 CALL = with_identity(
@@ -226,7 +236,7 @@ class TestStreamResponses:
         events = await _stream(invoker, {'input': OPENCODE_TURN})
 
         assert [event.event for event in events] == [e['type'] for e in UPSTREAM_EVENTS]
-        metrics = invoker.recorder.record.call_args.kwargs
+        metrics = _recorded(invoker)
         assert metrics['token_input_count'] == 60
         assert metrics['cached_token_count'] == 40
         assert metrics['token_output_count'] == 7
@@ -245,7 +255,7 @@ class TestStreamResponses:
         assert primary.bodies[0] == {**body, 'input': [*OPENCODE_TURN, 'for primary']}
         assert fallback.bodies[0]['input'] == [*OPENCODE_TURN, 'for fallback']
         assert body['input'] == OPENCODE_TURN
-        assert invoker.recorder.record.call_args.kwargs['fallback_triggered'] is True
+        assert _recorded(invoker)['fallback_triggered'] is True
 
     async def test_primary_attempt_is_adapted_too(self):
         primary = FakeChatModel(events=UPSTREAM_EVENTS)
@@ -323,7 +333,7 @@ class TestCompleteResponses:
 
         assert result == UPSTREAM_EVENTS[2]['response']
         assert model.model_id == 'm0'
-        assert invoker.recorder.record.call_args.kwargs['token_input_count'] == 60
+        assert _recorded(invoker)['token_input_count'] == 60
 
     async def test_fallback_answers_with_the_input_adapted_for_it(self):
         primary = FakeChatModel(error=RuntimeError('503'))
@@ -339,7 +349,7 @@ class TestCompleteResponses:
         assert primary.bodies[0]['input'] == [*OPENCODE_TURN, 'for primary']
         # The fake keeps the base behaviour: it reads no reasoning.
         assert 'reasoning' not in [item['type'] for item in fallback.bodies[0]['input']]
-        assert invoker.recorder.record.call_args.kwargs['fallback_triggered'] is True
+        assert _recorded(invoker)['fallback_triggered'] is True
 
     async def test_no_fallback_for_stored_state(self):
         primary = FakeChatModel(error=RuntimeError('503'))
@@ -364,8 +374,10 @@ class TestCompleteResponses:
         assert raised.value.status_code == 429
 
     async def test_upstream_refusal_without_a_json_body_gets_one(self):
-        request = httpx.Request('POST', 'https://api.openai.com/v1/responses')
-        response = httpx.Response(413, text='Request Entity Too Large', request=request)
+        request = httpx2.Request('POST', 'https://api.openai.com/v1/responses')
+        response = httpx2.Response(
+            413, text='Request Entity Too Large', request=request
+        )
         primary = FakeChatModel()
         primary.ainvoke_native_responses = AsyncMock(
             side_effect=openai.APIStatusError(
@@ -394,6 +406,7 @@ class TestChatChunkConversion:
 
         converted = streaming.to_openai_chat_completion_chunk(chunk, 'r')
 
+        assert converted.choices[0].delta.tool_calls is not None
         assert converted.choices[0].delta.tool_calls[0].index == 1
 
     def test_reasoning_content_is_streamed(self):
@@ -403,5 +416,6 @@ class TestChatChunkConversion:
 
         converted = streaming.to_openai_chat_completion_chunk(chunk, 'r')
 
+        assert converted.choices[0].delta.model_extra is not None
         assert converted.choices[0].delta.model_extra['reasoning_content'] == 'Thinking'
         assert '"reasoning_content":"Thinking"' in converted.model_dump_json()

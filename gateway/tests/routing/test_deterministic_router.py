@@ -1,6 +1,8 @@
+from typing import Any
 from unittest.mock import patch
 
 from freezegun import freeze_time
+from pydantic import TypeAdapter, ValidationError
 import pytest
 
 from tests.common.mocked_gateway_config_openai import (
@@ -16,13 +18,24 @@ from radicalbit_ai_gateway.limiting.windows import Category, Window
 from radicalbit_ai_gateway.llm.messages import HumanMessage, SystemMessage
 from radicalbit_ai_gateway.models.credentials import Credentials
 from radicalbit_ai_gateway.models.event_payload import LimitScope
+from radicalbit_ai_gateway.models.gateway_config_out import (
+    AnyRoutingConfigOut,
+    BudgetRoutingConfigOut,
+    KeywordRoutingConfigOut,
+    TimeRoutingConfigOut,
+    TokenLengthRoutingConfigOut,
+)
 from radicalbit_ai_gateway.models.model import Model
 from radicalbit_ai_gateway.models.routing import (
+    AnyRoutingConfig,
     BudgetConditions,
-    DeterministicRoutingConfig,
+    BudgetRoutingConfig,
+    KeywordRoutingConfig,
     OutputMappingEntry,
     RoutingRuleType,
+    TimeRoutingConfig,
     TokenLengthConditions,
+    TokenLengthRoutingConfig,
 )
 from radicalbit_ai_gateway.routing.deterministic_router import DeterministicRouter
 
@@ -31,7 +44,9 @@ from radicalbit_ai_gateway.routing.deterministic_router import DeterministicRout
 def keyword_router():
     config = get_gateway_routing_keyword()
     routing_config = config.routing_by_name['keyword_routing']
+    assert isinstance(routing_config, KeywordRoutingConfig)
     route = config.routes['support_route']
+    assert route.chat_models is not None
     models_by_id = {mid: config.chat_models_by_id[mid] for mid in route.chat_models}
     return DeterministicRouter(
         config=routing_config, models_by_id=models_by_id, budget=None
@@ -42,7 +57,9 @@ def keyword_router():
 def time_router():
     config = get_gateway_routing_time()
     routing_config = config.routing_by_name['time_routing']
+    assert isinstance(routing_config, TimeRoutingConfig)
     route = config.routes['time_route']
+    assert route.chat_models is not None
     models_by_id = {mid: config.chat_models_by_id[mid] for mid in route.chat_models}
     return DeterministicRouter(
         config=routing_config, models_by_id=models_by_id, budget=None
@@ -53,7 +70,9 @@ def time_router():
 def token_length_router():
     config = get_gateway_routing_token_length()
     routing_config = config.routing_by_name['token_routing']
+    assert isinstance(routing_config, TokenLengthRoutingConfig)
     route = config.routes['smart_route']
+    assert route.chat_models is not None
     models_by_id = {mid: config.chat_models_by_id[mid] for mid in route.chat_models}
     return DeterministicRouter(
         config=routing_config, models_by_id=models_by_id, budget=None
@@ -64,7 +83,9 @@ def token_length_router():
 def context_length_router():
     config = get_gateway_routing_context_length()
     routing_config = config.routing_by_name['context_routing']
+    assert isinstance(routing_config, TokenLengthRoutingConfig)
     route = config.routes['smart_route']
+    assert route.chat_models is not None
     models_by_id = {mid: config.chat_models_by_id[mid] for mid in route.chat_models}
     return DeterministicRouter(
         config=routing_config, models_by_id=models_by_id, budget=None
@@ -92,7 +113,7 @@ def _make_budget_router(thresholds: dict[str, float], default_model_id: str, bud
         OutputMappingEntry(model_id=mid, conditions=BudgetConditions(threshold=thr))
         for mid, thr in thresholds.items()
     ]
-    routing_config = DeterministicRoutingConfig(
+    routing_config = BudgetRoutingConfig(
         name='budget_test',
         default_model_id=default_model_id,
         rule=RoutingRuleType.BUDGET,
@@ -140,7 +161,7 @@ def _make_token_router(conditions: dict[str, TokenLengthConditions]):
 
 
 def _token_length_config(conditions: dict[str, TokenLengthConditions]):
-    return DeterministicRoutingConfig(
+    return TokenLengthRoutingConfig(
         name='test',
         default_model_id='default',
         rule=RoutingRuleType.TOKEN_LENGTH,
@@ -458,12 +479,16 @@ class TestDeterministicRouting:
         """When multiple entries could match, the first one wins."""
         config = get_gateway_routing_time()
         routing_config = config.routing_by_name['time_routing']
+        assert isinstance(routing_config, TimeRoutingConfig)
 
-        routing_config.output_mapping.insert(
-            0,
-            OutputMappingEntry(model_id='night_model', conditions=['0 9-17 * * 1-5']),
+        first = OutputMappingEntry(
+            model_id='night_model', conditions=['0 9-17 * * 1-5']
+        )
+        routing_config = routing_config.model_copy(
+            update={'output_mapping': [first, *routing_config.output_mapping]}
         )
         route = config.routes['time_route']
+        assert route.chat_models is not None
         models_by_id = {mid: config.chat_models_by_id[mid] for mid in route.chat_models}
         router = DeterministicRouter(
             config=routing_config, models_by_id=models_by_id, budget=None
@@ -527,3 +552,99 @@ class TestDeterministicRouting:
         )
         result = await router.select_model([HumanMessage(content='hello')])
         assert result.model_id == expected
+
+
+def _deterministic(rule: str, conditions: object) -> dict[str, Any]:
+    return {
+        'name': 'r',
+        'type': 'deterministic',
+        'default_model_id': 'default',
+        'rule': rule,
+        'output_mapping': [{'model_id': 'm1', 'conditions': conditions}],
+    }
+
+
+@pytest.mark.parametrize(
+    ('rule', 'conditions'),
+    [
+        pytest.param('keyword', {'gte': 100}, id='keyword-with-token-length'),
+        pytest.param('time', {'threshold': 0.5}, id='time-with-budget'),
+        pytest.param('token_length', ['billing'], id='token-length-with-strings'),
+        pytest.param('context_length', {'threshold': 0.5}, id='context-with-budget'),
+        pytest.param('budget', ['billing'], id='budget-with-strings'),
+        pytest.param('budget', {'gte': 100}, id='budget-with-token-length'),
+    ],
+)
+def test_conditions_of_another_rule_are_rejected(rule, conditions):
+    """Each rule's config class takes the conditions of that rule only."""
+    with pytest.raises(ValidationError) as exc_info:
+        TypeAdapter(AnyRoutingConfig).validate_python(_deterministic(rule, conditions))
+    loc = exc_info.value.errors()[0]['loc']
+    assert loc[:5] == ('deterministic', rule, 'output_mapping', 0, 'conditions')
+
+
+@pytest.mark.parametrize('rule', ['KEYWORD', 'unknown', None])
+def test_an_unknown_or_missing_rule_lists_the_rules(rule):
+    raw = _deterministic('keyword', ['billing'])
+    if rule is None:
+        del raw['rule']
+    else:
+        raw['rule'] = rule
+    with pytest.raises(ValidationError) as exc_info:
+        TypeAdapter(AnyRoutingConfig).validate_python(raw)
+    [error] = exc_info.value.errors()
+    assert error['loc'] == ('deterministic',)
+    assert error['msg'] == (
+        "rule must be one of: 'keyword', 'token_length', 'context_length', "
+        "'time', 'budget'"
+    )
+
+
+@pytest.mark.parametrize(
+    ('config', 'name', 'out_class'),
+    [
+        pytest.param(
+            get_gateway_routing_keyword,
+            'keyword_routing',
+            KeywordRoutingConfigOut,
+            id='keyword',
+        ),
+        pytest.param(
+            get_gateway_routing_time, 'time_routing', TimeRoutingConfigOut, id='time'
+        ),
+        pytest.param(
+            get_gateway_routing_token_length,
+            'token_routing',
+            TokenLengthRoutingConfigOut,
+            id='token-length',
+        ),
+        pytest.param(
+            get_gateway_routing_context_length,
+            'context_routing',
+            TokenLengthRoutingConfigOut,
+            id='context-length',
+        ),
+    ],
+)
+def test_the_dump_of_a_rule_config_validates_to_its_out_class(config, name, out_class):
+    """The dashboard builds the Out model from a dump of the routing config."""
+    routing = config().routing_by_name[name]
+    out = TypeAdapter(AnyRoutingConfigOut).validate_python(routing.model_dump())
+    assert type(out) is out_class
+    assert out.model_dump() == routing.model_dump()
+
+
+def test_the_dump_of_a_budget_config_validates_to_its_out_class():
+    routing = BudgetRoutingConfig(
+        name='budget',
+        default_model_id='default',
+        rule=RoutingRuleType.BUDGET,
+        output_mapping=[
+            OutputMappingEntry(
+                model_id='m1', conditions=BudgetConditions(threshold=0.5)
+            )
+        ],
+    )
+    out = TypeAdapter(AnyRoutingConfigOut).validate_python(routing.model_dump())
+    assert type(out) is BudgetRoutingConfigOut
+    assert out.model_dump() == routing.model_dump()

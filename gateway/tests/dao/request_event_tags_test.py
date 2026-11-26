@@ -10,7 +10,8 @@ The tests only read, so the data set is seeded once for the class.
 import datetime
 import uuid
 
-from sqlalchemy import distinct, func, select
+from sqlalchemy import func, select
+from typing_extensions import override
 
 from tests.common import db_mock
 from tests.common.db_integration_ch import DatabaseIntegrationClickhouse
@@ -40,12 +41,12 @@ SEED = [
 class RequestEventTagsTest(DatabaseIntegrationClickhouse):
     T = RequestEvent.__table__
 
+    @override
     @classmethod
     def setUpClass(cls):
         super().setUpClass()
-        DatabaseIntegrationClickhouse.clean(cls)
-        DatabaseIntegrationClickhouse.insert(
-            cls,
+        cls.clean()
+        cls.insert(
             [
                 db_mock.get_sample_request_event(
                     timestamp=TIMESTAMP, project_uuid=project, tags=tags
@@ -54,12 +55,14 @@ class RequestEventTagsTest(DatabaseIntegrationClickhouse):
             ],
         )
 
+    @override
     def tearDown(self) -> None:
         pass  # read-only tests share the class seed
 
+    @override
     @classmethod
     def tearDownClass(cls):
-        DatabaseIntegrationClickhouse.clean(cls)
+        cls.clean()
         super().tearDownClass()
 
     @property
@@ -77,7 +80,8 @@ class RequestEventTagsTest(DatabaseIntegrationClickhouse):
 
     def _raw_distinct_tags(self, project):
         stmt = (
-            select(distinct(func.arrayJoin(self.T.c['TAGS'])))
+            select(func.arrayJoin(self.T.c['TAGS']))
+            .distinct()
             .select_from(RequestEvent)
             .where(self.T.c['PROJECT_UUID'] == str(project))
         )

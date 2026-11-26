@@ -7,9 +7,15 @@ OpenAI-family adapters, also the provider's raw usage under
 ``prompt_tokens_details.cached_tokens``.
 """
 
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterator, Mapping
 from decimal import Decimal
 from typing import Any, NamedTuple
+
+from radicalbit_ai_gateway.llm.messages import (
+    InputTokenDetails,
+    OutputTokenDetails,
+    UsageMetadata,
+)
 
 
 class CacheTokens(NamedTuple):
@@ -23,7 +29,7 @@ class CacheTokens(NamedTuple):
     creation_1h: int | None
 
 
-def legacy_cached_tokens(response_metadata: dict | None) -> int | None:
+def legacy_cached_tokens(response_metadata: Mapping[str, Any] | None) -> int | None:
     """Return the cached tokens of the raw OpenAI usage in ``response_metadata``."""
     if not response_metadata:
         return None
@@ -33,11 +39,13 @@ def legacy_cached_tokens(response_metadata: dict | None) -> int | None:
     prompt_tokens_details = token_usage.get('prompt_tokens_details')
     if not prompt_tokens_details:
         return None
-    return prompt_tokens_details.get('cached_tokens')
+    cached_tokens = prompt_tokens_details.get('cached_tokens')
+    return cached_tokens if isinstance(cached_tokens, int) else None
 
 
 def cache_tokens(
-    usage_metadata: dict | None, response_metadata: dict | None
+    usage_metadata: Mapping[str, Any] | None,
+    response_metadata: Mapping[str, Any] | None,
 ) -> CacheTokens:
     """Return a reply's cached input tokens.
 
@@ -51,17 +59,20 @@ def cache_tokens(
 
     details = (usage_metadata or {}).get('input_token_details')
     if details:
-        if cache_read := details.get('cache_read'):
+        cache_read = details.get('cache_read')
+        if cache_read and isinstance(cache_read, int):
             read = cache_read
         ephemeral_5m = details.get('ephemeral_5m_input_tokens')
         ephemeral_1h = details.get('ephemeral_1h_input_tokens')
         if ephemeral_5m or ephemeral_1h:
-            if ephemeral_5m:
+            if ephemeral_5m and isinstance(ephemeral_5m, int):
                 creation_5m = ephemeral_5m
-            if ephemeral_1h:
+            if ephemeral_1h and isinstance(ephemeral_1h, int):
                 creation_1h = ephemeral_1h
-        elif cache_creation := details.get('cache_creation'):
-            creation_5m = cache_creation
+        else:
+            cache_creation = details.get('cache_creation')
+            if cache_creation and isinstance(cache_creation, int):
+                creation_5m = cache_creation
 
     if read is None:
         read = legacy_cached_tokens(response_metadata)
@@ -82,7 +93,11 @@ class StreamUsage:
         self.cache_creation_5m = 0
         self.cache_creation_1h = 0
 
-    def add(self, usage_metadata: dict | None, response_metadata: dict | None) -> None:
+    def add(
+        self,
+        usage_metadata: Mapping[str, Any] | None,
+        response_metadata: Mapping[str, Any] | None,
+    ) -> None:
         """Count a chunk's usage."""
         if not usage_metadata:
             return
@@ -114,12 +129,16 @@ class StreamUsage:
         )
 
 
-def responses_token_counts(usage: dict | None) -> tuple[int, int, int]:
+def responses_token_counts(usage: dict[str, Any] | None) -> tuple[int, int, int]:
     """Return ``(input, cached input, output)`` tokens of a Responses usage."""
     if not usage:
         return 0, 0, 0
-    cached = (usage.get('input_tokens_details') or {}).get('cached_tokens') or 0
-    return usage.get('input_tokens') or 0, cached, usage.get('output_tokens') or 0
+    cached = _token_count(usage.get('input_tokens_details'), 'cached_tokens')
+    return (
+        _token_count(usage, 'input_tokens'),
+        cached,
+        _token_count(usage, 'output_tokens'),
+    )
 
 
 class MessagesUsage(NamedTuple):
@@ -188,10 +207,96 @@ def messages_usage(usage: Any) -> MessagesUsage:
     )
 
 
-def messages_token_counts(usage: dict | None) -> tuple[int, int]:
+def messages_token_counts(usage: dict[str, Any] | None) -> tuple[int, int]:
     """Return ``(input, output)`` tokens of a Messages API usage.
 
     The input includes the cache reads and writes (see ``messages_usage``).
     """
     counts = messages_usage(usage)
     return counts.input, counts.output
+
+
+# ── Usage metadata ───────────────────────────────────────────────────────────
+
+
+def input_token_details(counts: Mapping[str, int | None]) -> InputTokenDetails:
+    """Return the input token details a provider reported: None is left out."""
+    details: InputTokenDetails = {}
+    for key, count in counts.items():
+        if count is not None:
+            details[key] = count
+    return details
+
+
+def output_token_details(counts: Mapping[str, int | None]) -> OutputTokenDetails:
+    """Return the output token details a provider reported: None is left out."""
+    details: OutputTokenDetails = {}
+    for key, count in counts.items():
+        if count is not None:
+            details[key] = count
+    return details
+
+
+_ZERO_USAGE = UsageMetadata(input_tokens=0, output_tokens=0, total_tokens=0)
+
+
+def _combined(
+    left: Mapping[str, int], right: Mapping[str, int], op: Callable[[int, int], int]
+) -> Iterator[tuple[str, int]]:
+    """Each count of either side, ``left``'s keys first: a missing one is 0."""
+    for key in [*left, *(k for k in right if k not in left)]:
+        yield key, op(left.get(key, 0), right.get(key, 0))
+
+
+def _combine_usage(
+    left: UsageMetadata, right: UsageMetadata, op: Callable[[int, int], int]
+) -> UsageMetadata:
+    combined = UsageMetadata(
+        input_tokens=op(left['input_tokens'], right['input_tokens']),
+        output_tokens=op(left['output_tokens'], right['output_tokens']),
+        total_tokens=op(left['total_tokens'], right['total_tokens']),
+    )
+    if 'input_token_details' in left or 'input_token_details' in right:
+        combined['input_token_details'] = input_token_details(
+            dict(
+                _combined(
+                    left.get('input_token_details', {}),
+                    right.get('input_token_details', {}),
+                    op,
+                )
+            )
+        )
+    if 'output_token_details' in left or 'output_token_details' in right:
+        combined['output_token_details'] = output_token_details(
+            dict(
+                _combined(
+                    left.get('output_token_details', {}),
+                    right.get('output_token_details', {}),
+                    op,
+                )
+            )
+        )
+    return combined
+
+
+def add_usage(left: UsageMetadata | None, right: UsageMetadata | None) -> UsageMetadata:
+    """Return the sum of two usages; with one missing, the other; with neither, zero."""
+    if not left:
+        return right or UsageMetadata(**_ZERO_USAGE)
+    if not right:
+        return left
+    return _combine_usage(left, right, lambda a, b: a + b)
+
+
+def subtract_usage(
+    left: UsageMetadata | None, right: UsageMetadata | None
+) -> UsageMetadata:
+    """Return ``left`` less ``right``, each count floored at 0.
+
+    With one missing, the other; with neither, zero.
+    """
+    if not left:
+        return right or UsageMetadata(**_ZERO_USAGE)
+    if not right:
+        return left
+    return _combine_usage(left, right, lambda a, b: max(a - b, 0))

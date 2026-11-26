@@ -4,6 +4,7 @@ import uuid
 import anyio
 import pytest
 from sqlalchemy import select
+from typing_extensions import override
 
 from tests.common import db_mock
 from tests.common.db_integration import AsyncDatabaseIntegration
@@ -36,6 +37,7 @@ class AsyncSessionTest(AsyncDatabaseIntegration):
                 select(Project).where(Project.uuid == project.uuid)
             )
 
+        assert found is not None
         assert found.name == 'async'
 
     async def test_an_error_rolls_the_session_back(self):
@@ -63,6 +65,7 @@ class AsyncSessionTest(AsyncDatabaseIntegration):
 
 
 class FilterIfTest(AsyncDatabaseIntegration):
+    @override
     async def asyncSetUp(self):
         for name in ('alpha', 'beta'):
             await self.insert(db_mock.get_sample_project(uuid=uuid.uuid4(), name=name))

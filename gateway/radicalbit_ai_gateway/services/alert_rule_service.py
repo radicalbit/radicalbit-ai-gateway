@@ -88,7 +88,7 @@ def _check_target(fields: Mapping[str, Any]) -> None:
             raise AlertRuleInvalidTargetError(
                 'A project rule takes no route and no credential'
             )
-    elif scope is AlertRuleScope.CREDENTIAL:
+    else:
         if not credential:
             raise AlertRuleInvalidTargetError('A credential rule requires a credential')
         if project or route:

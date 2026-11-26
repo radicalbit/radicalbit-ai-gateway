@@ -1,6 +1,6 @@
 from collections.abc import Callable
 import logging
-from typing import Any, TypeAlias
+from typing import Generic, TypeAlias, TypeVar
 
 from radicalbit_ai_gateway.invocation.recorder import Recorder
 from radicalbit_ai_gateway.models.fallback import Fallback
@@ -12,11 +12,12 @@ app_config = get_app_config()
 
 logger = logging.getLogger(app_config.log_config.logger_name)
 
-PrimaryModel: TypeAlias = Any
-FallbackModels: TypeAlias = list[tuple[Model, Any]]
+# The client an invoker calls its models with.
+ClientT = TypeVar('ClientT')
+FallbackModels: TypeAlias = list[tuple[Model, ClientT]]
 
 
-class ModelInvoker:
+class ModelInvoker(Generic[ClientT]):
     def __init__(
         self,
         models: list[Model],
@@ -29,9 +30,9 @@ class ModelInvoker:
         self.fallbacks = fallbacks
         self.httpx_client = httpx_client
         self.recorder = Recorder(cost_service)
-        self.model_map: dict[str, tuple[Model, PrimaryModel, FallbackModels]] = {}
+        self.model_map: dict[str, tuple[Model, ClientT, FallbackModels[ClientT]]] = {}
 
-    def _initialize_models(self, build_fn: Callable[[Model], Any]):
+    def _initialize_models(self, build_fn: Callable[[Model], ClientT]) -> None:
         models_lookup: dict[str, Model] = {m.model_id: m for m in self.models}
 
         fallback_lookup: dict[str, list[str]] = {}
@@ -42,7 +43,7 @@ class ModelInvoker:
         for model in self.models:
             model_id = model.model_id
             primary_runnable = build_fn(model)
-            fallbacks_runnable = []
+            fallbacks_runnable: FallbackModels[ClientT] = []
             for f in fallback_lookup.get(model_id, []):
                 fallback_model = models_lookup.get(f)
                 if fallback_model:
@@ -58,5 +59,5 @@ class ModelInvoker:
                         )
             self.model_map[model_id] = (model, primary_runnable, fallbacks_runnable)
 
-    def _build_model(self, model: Model):
+    def _build_model(self, model: Model) -> ClientT:
         raise NotImplementedError

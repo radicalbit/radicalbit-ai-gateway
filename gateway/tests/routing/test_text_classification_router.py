@@ -1,3 +1,4 @@
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
@@ -8,6 +9,7 @@ from tests.common.mocked_gateway_config_openai import (
 )
 
 from radicalbit_ai_gateway.llm.messages import HumanMessage, SystemMessage
+from radicalbit_ai_gateway.models.routing import TextClassificationRoutingConfig
 from radicalbit_ai_gateway.routing.text_classification_router import (
     TextClassificationRouter,
 )
@@ -17,12 +19,14 @@ from radicalbit_ai_gateway.routing.text_classification_router import (
 def text_classification_router():
     config = get_gateway_routing_text_classification()
     routing_config = config.routing_by_name['intent_routing']
+    assert isinstance(routing_config, TextClassificationRoutingConfig)
     route = config.routes['support_route']
+    assert route.chat_models is not None
     models_by_id = {mid: config.chat_models_by_id[mid] for mid in route.chat_models}
     return TextClassificationRouter(config=routing_config, models_by_id=models_by_id)
 
 
-def _make_mock_client(json_response: dict, raise_for_status=None):
+def _make_mock_client(json_response: dict[str, Any], raise_for_status=None):
     mock_resp = MagicMock()
     mock_resp.json.return_value = json_response
     if raise_for_status:

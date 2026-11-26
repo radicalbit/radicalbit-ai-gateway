@@ -2,7 +2,7 @@ import asyncio
 import contextlib
 from datetime import datetime, timezone
 import logging
-from typing import Literal
+from typing import Any, Literal
 from uuid import UUID
 
 from radicalbit_ai_gateway.db.dao.event_dao import EventDAO
@@ -15,9 +15,11 @@ from radicalbit_ai_gateway.db.models.event import (
     EventDetails,
     LastEventFallback,
     LastEventGuardrail,
+    LastEvents,
     RequestStats,
     TokensCounter,
 )
+from radicalbit_ai_gateway.gateway_route.route import GatewayRoute
 from radicalbit_ai_gateway.limiting.limits import shared_limits
 from radicalbit_ai_gateway.limiting.windows import Category, Window
 from radicalbit_ai_gateway.limiting.wording import BLOCKS
@@ -56,6 +58,7 @@ from radicalbit_ai_gateway.models.gateway_config import GatewayConfig
 from radicalbit_ai_gateway.models.gateway_config_out import GatewayRouteConfigOut
 from radicalbit_ai_gateway.models.gateway_route_config import GatewayRouteConfig
 from radicalbit_ai_gateway.models.gateway_route_out import GatewayRouteOut
+from radicalbit_ai_gateway.models.model import Model
 from radicalbit_ai_gateway.services.group_service import GroupService
 from radicalbit_ai_gateway.services.key_service import KeyService
 from radicalbit_ai_gateway.utils.app_config import get_app_config
@@ -75,6 +78,18 @@ logger = logging.getLogger(app_config.log_config.logger_name)
 _BLOCKED_BY: dict[str, tuple[LimitScope, Category]] = {
     block.event_type.value: key for key, block in BLOCKS.items()
 }
+
+
+def _events_of(
+    last_events: LastEvents,
+) -> list[LastEventGuardrail | LastEventFallback]:
+    """Return the latest events a ``LastEvents`` holds."""
+    events: list[LastEventGuardrail | LastEventFallback] = []
+    if (guardrail := last_events.get('GUARDRAIL')) is not None:
+        events.append(guardrail)
+    if (fallback := last_events.get('FALLBACK')) is not None:
+        events.append(fallback)
+    return events
 
 
 class EventService:
@@ -199,7 +214,13 @@ class EventService:
         )
 
         # One name lookup for the last events of every route.
-        self._resolve_last_event_key_names(list(last_events.values()))
+        self._resolve_last_event_key_names(
+            [
+                event
+                for route_events in last_events.values()
+                for event in _events_of(route_events)
+            ]
+        )
 
         return {
             route_name: EventsDTO.from_dao_per_route(
@@ -209,8 +230,8 @@ class EventService:
                 tokens_counter_dto=self._calculate_token_metrics(
                     tokens_counter=tokens_counter, route_name=route_name
                 ),
-                last_event_guardrail=last_events.get((route_name, EventType.GUARDRAIL)),
-                last_event_fallback=last_events.get((route_name, EventType.FALLBACK)),
+                last_event_guardrail=last_events.get(route_name, {}).get('GUARDRAIL'),
+                last_event_fallback=last_events.get(route_name, {}).get('FALLBACK'),
                 routing_model_counters=routing_model_counters.get(route_name, []),
                 request_stats=request_stats.get(route_name, RequestStats()),
                 error_details=error_details.get(route_name, []),
@@ -256,14 +277,14 @@ class EventService:
 
         # TODO: Implement soft delete for keys in Postgres (deleted_at column)
         # so that deleted keys still have resolvable names, removing the need for this fallback.
-        self._resolve_last_event_key_names(list(last_events.values()))
+        self._resolve_last_event_key_names(_events_of(last_events))
 
         return EventsDTO.from_dao_global(
             config=config,
             counters=counters,
             tokens_counter_dto=tokens_counter_dto,
-            last_event_guardrail=last_events.get(EventType.GUARDRAIL),
-            last_event_fallback=last_events.get(EventType.FALLBACK),
+            last_event_guardrail=last_events.get('GUARDRAIL'),
+            last_event_fallback=last_events.get('FALLBACK'),
             routing_model_counters=routing_model_counters,
             request_stats=request_stats,
             error_details=error_details,
@@ -510,18 +531,22 @@ class EventService:
         scope and category when the row predates ``limit_scope``.
         """
         scope, category = _BLOCKED_BY[event.event_type]
-        return LimitEventDetailDTO(
-            timestamp=event.timestamp,
-            api_key_uuid=event.api_key_uuid,
-            route_name=event.route_name,
-            api_key_name=api_key_name,
-            api_key_active=event.api_key_active,
-            event_type=event.event_type,
-            limit_scope=event.limit_scope or scope,
-            category=event.category or category,
-            window_seconds=event.window_seconds,
-            maximum=event.maximum,
-            consumption=event.consumption,
+        # The event type is the row's text: validated into the DTO's limit
+        # event types, as the other fields.
+        return LimitEventDetailDTO.model_validate(
+            {
+                'timestamp': event.timestamp,
+                'api_key_uuid': event.api_key_uuid,
+                'route_name': event.route_name,
+                'api_key_name': api_key_name,
+                'api_key_active': event.api_key_active,
+                'event_type': event.event_type,
+                'limit_scope': event.limit_scope or scope,
+                'category': event.category or category,
+                'window_seconds': event.window_seconds,
+                'maximum': event.maximum,
+                'consumption': event.consumption,
+            }
         )
 
     @staticmethod
@@ -531,10 +556,10 @@ class EventService:
     ) -> GatewayRouteConfigOut:
         route_dict = route_config.model_dump()
 
-        guardrail_names: list[str] | None = route_dict.get('guardrails')
+        guardrail_names = route_config.guardrails
         if guardrail_names and config.guardrails:
             by_name = {g.name: g for g in config.guardrails}
-            resolved_guardrails: list[dict] = []
+            resolved_guardrails: list[dict[str, Any]] = []
             for name in guardrail_names:
                 gr = by_name.get(name)
                 if gr is None:
@@ -556,11 +581,11 @@ class EventService:
         }
         decision_by_id = config.decision_models_by_id
 
-        chat_ids: list[str] | None = route_dict.get('chat_models')
+        chat_ids = route_config.chat_models
         if chat_ids is None:
             route_dict['chat_models'] = None
         else:
-            resolved_chat: list[dict] = []
+            resolved_chat: list[dict[str, Any]] = []
             for mid in chat_ids:
                 chat_model = chat_by_id.get(mid)
                 if chat_model is None:
@@ -573,11 +598,11 @@ class EventService:
                 resolved_chat.append(chat_model.model_dump())
             route_dict['chat_models'] = resolved_chat
 
-        embed_ids: list[str] | None = route_dict.get('embedding_models')
+        embed_ids = route_config.embedding_models
         if embed_ids is None:
             route_dict['embedding_models'] = None
         else:
-            resolved_embed: list[dict] = []
+            resolved_embed: list[dict[str, Any]] = []
             for mid in embed_ids:
                 embedding_model = embed_by_id.get(mid)
                 if embedding_model is None:
@@ -590,11 +615,11 @@ class EventService:
                 resolved_embed.append(embedding_model.model_dump())
             route_dict['embedding_models'] = resolved_embed
 
-        transcription_ids: list[str] | None = route_dict.get('transcription_models')
+        transcription_ids = route_config.transcription_models
         if transcription_ids is None:
             route_dict['transcription_models'] = None
         else:
-            resolved_transcription: list[dict] = []
+            resolved_transcription: list[dict[str, Any]] = []
             for mid in transcription_ids:
                 transcription_model = transcription_by_id.get(mid)
                 if transcription_model is None:
@@ -607,11 +632,11 @@ class EventService:
                 resolved_transcription.append(transcription_model.model_dump())
             route_dict['transcription_models'] = resolved_transcription
 
-        decision_ids: list[str] | None = route_dict.get('decision_models')
+        decision_ids = route_config.decision_models
         if decision_ids is None:
             route_dict['decision_models'] = None
         else:
-            resolved_decision: list[dict] = []
+            resolved_decision: list[dict[str, Any]] = []
             for mid in decision_ids:
                 decision_model = decision_by_id.get(mid)
                 if decision_model is None:
@@ -624,7 +649,7 @@ class EventService:
                 resolved_decision.append(decision_model.model_dump())
             route_dict['decision_models'] = resolved_decision
 
-        routing_name: str | None = route_dict.get('routing')
+        routing_name = route_config.routing
         if routing_name:
             routing_config = config.routing_by_name.get(routing_name)
             route_dict['routing'] = (
@@ -633,7 +658,7 @@ class EventService:
         else:
             route_dict['routing'] = None
 
-        mcp_aliases: list[str] | None = route_dict.get('mcp_servers')
+        mcp_aliases = route_config.mcp_servers
         if mcp_aliases is None:
             route_dict['mcp_servers'] = None
         else:
@@ -646,7 +671,7 @@ class EventService:
         # with names: the route Models popover lists these.
         used_ids = config.route_model_ids(route_config)
 
-        def resolve(ids: list[str], by_id: dict) -> list[dict]:
+        def resolve(ids: list[str], by_id: dict[str, Model]) -> list[dict[str, Any]]:
             return [by_id[mid].model_dump() for mid in ids if mid in by_id]
 
         route_dict['used_models'] = {
@@ -1243,7 +1268,7 @@ class EventService:
 
     async def get_route_limits_progress(
         self,
-        gateway_routes: dict,
+        gateway_routes: dict[str, GatewayRoute],
         project_name: str,
         route_names: list[str] | None,
         window_statuses: list[WindowStatus] | None = None,

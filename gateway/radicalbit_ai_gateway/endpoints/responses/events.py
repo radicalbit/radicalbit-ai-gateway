@@ -15,7 +15,7 @@ from radicalbit_ai_gateway.llm.responses_stream import FINAL_EVENT_TYPES
 # ── Events the gateway builds ───────────────────────────────────────────────────────────────
 
 
-def sse(event: dict) -> str:
+def sse(event: dict[str, Any]) -> str:
     data = json.dumps(event, ensure_ascii=False, separators=(',', ':'))
     return f'event: {event["type"]}\ndata: {data}\n\n'
 
@@ -30,7 +30,7 @@ class _Events:
         )
 
 
-def _added_item(item: dict) -> dict:
+def _added_item(item: dict[str, Any]) -> dict[str, Any]:
     """Show an output item as ``response.output_item.added`` does, before its content."""
     added = {**item, 'status': 'in_progress'} if 'status' in item else dict(item)
     if item.get('type') == 'message':
@@ -61,7 +61,9 @@ _TOOL_PROGRESS = {
 }
 
 
-def _tool_call_events(events: _Events, item: dict, where: dict) -> None:
+def _tool_call_events(
+    events: _Events, item: dict[str, Any], where: dict[str, Any]
+) -> None:
     """Emit the events of a hosted tool call, as OpenAI streams them."""
     item_type = item['type']
     prefix = f'response.{item_type}'
@@ -80,7 +82,7 @@ def _tool_call_events(events: _Events, item: dict, where: dict) -> None:
     events.add(f'{prefix}.{"failed" if failed else "completed"}', **where)
 
 
-def _item_events(events: _Events, item: dict, output_index: int) -> None:
+def _item_events(events: _Events, item: dict[str, Any], output_index: int) -> None:
     item_id = item.get('id')
     item_type = item.get('type')
     events.add(
@@ -157,7 +159,7 @@ def _item_events(events: _Events, item: dict, output_index: int) -> None:
     events.add('response.output_item.done', item=item, output_index=output_index)
 
 
-def response_events(response: dict) -> list[str]:
+def response_events(response: dict[str, Any]) -> list[str]:
     """Return the SSE frames OpenAI streams for ``response``, each text in one delta."""
     events = _Events()
     started = {

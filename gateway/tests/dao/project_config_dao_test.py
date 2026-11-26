@@ -2,6 +2,8 @@ import datetime
 import uuid
 
 from sqlalchemy import update
+from sqlalchemy.ext.asyncio import AsyncSession
+from typing_extensions import override
 
 from tests.common import db_mock
 from tests.common.db_integration import AsyncDatabaseIntegration
@@ -15,11 +17,23 @@ from radicalbit_ai_gateway.models.config_status import ConfigStatus
 _UTC = getattr(datetime, 'UTC', datetime.timezone.utc)
 
 
+async def _stored_project(session: AsyncSession, project_uuid: uuid.UUID) -> Project:
+    project = await session.get(Project, project_uuid)
+    assert project is not None
+    return project
+
+
 class ProjectConfigDAOTest(AsyncDatabaseIntegration):
+    @override
     @classmethod
     def setUpClass(cls):
         super().setUpClass()
         cls.dao = ProjectConfigDAO(cls.db)
+
+    async def _config(self, config_uuid: uuid.UUID) -> ProjectConfig:
+        config = await self.dao.get_by_uuid(config_uuid)
+        assert config is not None
+        return config
 
     async def _project(self) -> Project:
         project = db_mock.get_sample_project(
@@ -61,7 +75,7 @@ class ProjectConfigDAOTest(AsyncDatabaseIntegration):
     async def test_get_by_uuid(self):
         p = await self._project()
         a_id, _ = await self._seed_two(p.uuid)
-        assert (await self.dao.get_by_uuid(a_id)).uuid == a_id
+        assert (await self._config(a_id)).uuid == a_id
         assert await self.dao.get_by_uuid(uuid.uuid4()) is None
 
     async def test_update_config_file_resets_to_draft(self):
@@ -69,41 +83,42 @@ class ProjectConfigDAOTest(AsyncDatabaseIntegration):
         a_id, _ = await self._seed_two(p.uuid)
         await self.dao.set_status(a_id, ConfigStatus.READY_TO_SERVE)
         assert await self.dao.update_config_file(a_id, 'new') == 1
-        updated = await self.dao.get_by_uuid(a_id)
+        updated = await self._config(a_id)
         assert updated.config_file == 'new'
         assert updated.config_status == ConfigStatus.DRAFT.value
 
     async def test_seeded_configs_have_null_updated_at(self):
         p = await self._project()
         a_id, b_id = await self._seed_two(p.uuid)
-        assert (await self.dao.get_by_uuid(a_id)).updated_at is None
-        assert (await self.dao.get_by_uuid(b_id)).updated_at is None
+        assert (await self._config(a_id)).updated_at is None
+        assert (await self._config(b_id)).updated_at is None
 
     async def test_update_config_file_sets_updated_at(self):
         p = await self._project()
         a_id, _ = await self._seed_two(p.uuid)
         await self.dao.update_config_file(a_id, 'saved')
-        assert (await self.dao.get_by_uuid(a_id)).updated_at is not None
+        assert (await self._config(a_id)).updated_at is not None
 
     async def test_set_status_keeps_updated_at_null(self):
         p = await self._project()
         a_id, _ = await self._seed_two(p.uuid)
         await self.dao.set_status(a_id, ConfigStatus.READY_TO_SERVE)
-        assert (await self.dao.get_by_uuid(a_id)).updated_at is None
+        assert (await self._config(a_id)).updated_at is None
 
     async def test_serve_keeps_config_updated_at_null(self):
         p = await self._project()
         a_id, _ = await self._seed_two(p.uuid)
         await self.dao.serve(a_id)
-        assert (await self.dao.get_by_uuid(a_id)).updated_at is None
+        assert (await self._config(a_id)).updated_at is None
 
     async def test_serve_sets_served_ref_and_first_served_at(self):
         p = await self._project()
         a_id, _ = await self._seed_two(p.uuid)
         served = await self.dao.serve(a_id)
+        assert served is not None
         assert served.config_status == ConfigStatus.SERVED.value
         async with self.db.begin_session() as s:
-            proj = await s.get(Project, p.uuid)
+            proj = await _stored_project(s, p.uuid)
             assert str(proj.served_config_uuid) == str(a_id)
             assert proj.first_served_at is not None
 
@@ -112,7 +127,7 @@ class ProjectConfigDAOTest(AsyncDatabaseIntegration):
         a_id, b_id = await self._seed_two(p.uuid)
         await self.dao.serve(a_id)
         async with self.db.begin_session() as s:
-            first_served = (await s.get(Project, p.uuid)).first_served_at
+            first_served = (await _stored_project(s, p.uuid)).first_served_at
         await self.dao.serve(b_id)
         by = {c.uuid: c.config_status for c in await self.dao.list_by_project(p.uuid)}
         assert by[b_id] == ConfigStatus.SERVED.value
@@ -124,7 +139,7 @@ class ProjectConfigDAOTest(AsyncDatabaseIntegration):
         ]
         assert len(served_rows) == 1
         async with self.db.begin_session() as s:
-            proj = await s.get(Project, p.uuid)
+            proj = await _stored_project(s, p.uuid)
             assert str(proj.served_config_uuid) == str(b_id)
             assert proj.first_served_at == first_served
 
@@ -138,7 +153,7 @@ class ProjectConfigDAOTest(AsyncDatabaseIntegration):
         assert await self.dao.unserve(a_id) == 1
         assert await self.dao.get_served_by_project(p.uuid) is None
         async with self.db.begin_session() as s:
-            assert (await s.get(Project, p.uuid)).served_config_uuid is None
+            assert (await _stored_project(s, p.uuid)).served_config_uuid is None
 
     async def test_unserve_not_found(self):
         assert await self.dao.unserve(uuid.uuid4()) == 0

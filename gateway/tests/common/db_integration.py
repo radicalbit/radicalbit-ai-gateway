@@ -4,8 +4,9 @@ import functools
 from typing import TypeVar
 import unittest
 
-from sqlalchemy import delete
+from sqlalchemy import Constraint, delete
 from testcontainers.community.postgres import PostgresContainer
+from typing_extensions import override
 
 from radicalbit_ai_gateway.db import database
 from radicalbit_ai_gateway.db.database import Database
@@ -36,7 +37,9 @@ def _db_conf(container: PostgresContainer) -> DBConfig:
 
 
 async def _create_schema(db: Database) -> None:
-    async with db._async_engine.begin() as conn:
+    engine = db._async_engine
+    assert engine is not None
+    async with engine.begin() as conn:
         await conn.run_sync(database.BaseTable.metadata.create_all)
     await db.init_mappings()
     # The pooled connections belong to this short-lived loop: drop them.
@@ -44,7 +47,9 @@ async def _create_schema(db: Database) -> None:
 
 
 async def _drop_schema(db: Database) -> None:
-    async with db._async_engine.begin() as conn:
+    engine = db._async_engine
+    assert engine is not None
+    async with engine.begin() as conn:
         await conn.run_sync(database.BaseTable.metadata.drop_all)
     await db.dispose()
 
@@ -58,6 +63,7 @@ class SchemaIntegration(unittest.TestCase):
     ``AsyncDatabaseIntegration``.
     """
 
+    @override
     @classmethod
     def setUpClass(cls) -> None:
         cls.postgres_container = _postgres()
@@ -66,6 +72,7 @@ class SchemaIntegration(unittest.TestCase):
         cls.db.connect()
         asyncio.run(_create_schema(cls.db))
 
+    @override
     @classmethod
     def tearDownClass(cls) -> None:
         asyncio.run(_drop_schema(cls.db))
@@ -85,7 +92,7 @@ class SchemaIntegration(unittest.TestCase):
         criteria and both end up removed, dropping the constraint entirely.
         """
         for table in list(database.BaseTable.metadata.tables.values()):
-            groups: dict[tuple[str, tuple[str, ...]], list] = {}
+            groups: dict[tuple[str, tuple[str, ...]], list[Constraint]] = {}
             for constraint in table.constraints:
                 if type(constraint).__name__ != 'UniqueConstraint':
                     continue
@@ -140,6 +147,7 @@ class AsyncDatabaseIntegration(SchemaIntegration, unittest.IsolatedAsyncioTestCa
     ``async with self.db.begin_session()``. Every row is deleted after each test.
     """
 
+    @override
     async def asyncTearDown(self):
         await delete_all_rows(self.db)
         # Each test runs on its own event loop. A pooled async connection is

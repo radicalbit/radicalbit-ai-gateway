@@ -18,10 +18,13 @@ from radicalbit_ai_gateway.utils.trace_attributes import (
     set_operation_category,
 )
 
+#: A decision request: it serves and stores the decision response as a dict.
+DecisionScope = RequestScope[dict[str, Any], dict[str, Any]]
+
 SCREENED_FIELDS = ('state', 'questions')
 
 
-async def decide(scope: RequestScope, body: dict) -> DecisionResponse:
+async def decide(scope: DecisionScope, body: dict[str, Any]) -> DecisionResponse:
     """Answer a decision request, Typesafe's body passed through (ADR 0004)."""
     route = scope.route
     config = route.gateway_route_config

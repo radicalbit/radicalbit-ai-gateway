@@ -7,6 +7,8 @@ import time
 from typing import NamedTuple
 import uuid
 
+from typing_extensions import override
+
 from radicalbit_ai_gateway.limiter.storage.base import Storage
 
 
@@ -42,24 +44,28 @@ class InMemoryStorage(Storage):
 
         return entry
 
+    @override
     async def get(self, key: str) -> int | None:
         """Get current counter value or None if expired/missing."""
         async with self._lock:
             entry = self._get_valid_entry(key)
             return entry.value if entry else None
 
+    @override
     async def get_ttl(self, key: str) -> int | None:
         """Get expiration timestamp or None if key doesn't exist."""
         async with self._lock:
             entry = self._get_valid_entry(key)
             return entry.expires_at if entry else None
 
+    @override
     async def get_window_id(self, key: str) -> str | None:
         """Get the window ID for a key."""
         async with self._lock:
             entry = self._get_valid_entry(key)
             return entry.window_id if entry else None
 
+    @override
     async def increment(
         self,
         key: str,
@@ -97,6 +103,7 @@ class InMemoryStorage(Storage):
             )
             return new_value, window_id
 
+    @override
     async def delete(self, key: str) -> None:
         """Delete a key's counter, if present."""
         async with self._lock:

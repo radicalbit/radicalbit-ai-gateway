@@ -1,6 +1,8 @@
-from typing import Annotated, Literal, Union
+from typing import Annotated, Generic, Literal, Union
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationInfo, field_validator
+
+from radicalbit_ai_gateway.models.credentials import SecretValue
 
 # Header names that may never be sent to an upstream MCP server, regardless
 # of source: the mcp-* headers are owned by the SDK transport, the rest are
@@ -140,14 +142,14 @@ class McpServerBase(BaseModel):
         return alias
 
 
-class McpHttpServer(McpServerBase):
+class McpHttpServer(McpServerBase, Generic[SecretValue]):
     transport: Literal['streamable_http'] = 'streamable_http'
     url: str = Field(
         ...,
         description='Upstream Streamable HTTP endpoint of the MCP server.',
         examples=['https://api.githubcopilot.com/mcp/'],
     )
-    headers: dict[str, str] | None = Field(
+    headers: dict[str, SecretValue] | None = Field(
         default=None,
         description=(
             'Static headers sent to the upstream server. Sensitive values must '
@@ -187,7 +189,7 @@ class McpHttpServer(McpServerBase):
         return normalized
 
 
-class McpStdioServer(McpServerBase):
+class McpStdioServer(McpServerBase, Generic[SecretValue]):
     transport: Literal['stdio'] = 'stdio'
     command: str = Field(
         ...,
@@ -198,7 +200,7 @@ class McpStdioServer(McpServerBase):
         default_factory=list,
         description='Arguments passed to the command.',
     )
-    env: dict[str, str] | None = Field(
+    env: dict[str, SecretValue] | None = Field(
         default=None,
         description=(
             'Environment variables for the subprocess, merged over the SDK '

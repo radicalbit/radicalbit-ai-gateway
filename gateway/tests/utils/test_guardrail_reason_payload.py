@@ -2,11 +2,12 @@ import json
 from unittest.mock import MagicMock
 
 from radicalbit_ai_gateway.models.guardrails import (
+    CheckGuardrail,
     CheckParameter,
-    Guardrail,
     GuardrailBehaviorType,
     GuardrailType,
     GuardrailWhereType,
+    JudgeGuardrail,
     JudgeParameter,
 )
 from radicalbit_ai_gateway.utils.exceptions import (
@@ -23,7 +24,7 @@ def _mock_request():
 
 
 def test_guardrail_reason_is_included_in_error_param_payload():
-    gr = Guardrail(
+    gr = CheckGuardrail(
         name='gr_contains',
         type=GuardrailType.CONTAINS,
         where=GuardrailWhereType.INPUT,
@@ -52,7 +53,7 @@ def test_guardrail_reason_is_included_in_error_param_payload():
 
 
 def test_guardrail_judge_reason_does_not_expose_prompt_or_model_in_response():
-    gr = Guardrail(
+    gr = JudgeGuardrail(
         name='gr_judge',
         type=GuardrailType.JUDGE,
         where=GuardrailWhereType.INPUT,

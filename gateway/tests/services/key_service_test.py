@@ -7,6 +7,7 @@ import uuid
 from freezegun import freeze_time
 import pytest
 from sqlalchemy.exc import IntegrityError
+from typing_extensions import override
 
 from tests.common import db_mock
 
@@ -63,11 +64,12 @@ def _fake_insert_many(limits):
 
 
 class KeyServiceTest(unittest.IsolatedAsyncioTestCase):
+    @override
     def setUp(self):
-        self.key_dao: KeyDAO = MagicMock(spec_set=KeyDAO)
-        self.group_dao: GroupDAO = MagicMock(spec_set=GroupDAO)
-        self.api_key_security: ApiKeySecurity = MagicMock(spec_set=ApiKeySecurity)
-        self.key_limit_dao: KeyLimitDAO = MagicMock(spec_set=KeyLimitDAO)
+        self.key_dao: MagicMock = MagicMock(spec_set=KeyDAO)
+        self.group_dao: MagicMock = MagicMock(spec_set=GroupDAO)
+        self.api_key_security: MagicMock = MagicMock(spec_set=ApiKeySecurity)
+        self.key_limit_dao: MagicMock = MagicMock(spec_set=KeyLimitDAO)
         self.key_service = KeyService(
             key_dao=self.key_dao,
             api_key_security=self.api_key_security,
@@ -84,7 +86,9 @@ class KeyServiceTest(unittest.IsolatedAsyncioTestCase):
         key_in = db_mock.get_sample_key_create_in()
         res = await self.key_service.create_key(key_in)
         self.key_dao.insert.assert_called_once()
-        assert res == KeyFullOut.from_key(key=key, plain_api_key=api_key_sec.plain_key)
+        assert res == KeyFullOut.from_new_key(
+            key=key, plain_api_key=api_key_sec.plain_key
+        )
 
     async def test_get_all(self):
         group_one, group_two = uuid.uuid4(), uuid.uuid4()

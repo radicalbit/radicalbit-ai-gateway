@@ -1,5 +1,6 @@
 from collections.abc import Sequence
 import datetime
+from typing import Any
 from uuid import UUID
 
 from sqlalchemy import ColumnElement, select
@@ -107,7 +108,7 @@ class AlertRuleDAO:
             return rule
 
     async def update_rule(
-        self, alert_rule_uuid: UUID, update_fields: dict
+        self, alert_rule_uuid: UUID, update_fields: dict[str, Any]
     ) -> AlertRule | None:
         UTC = getattr(datetime, 'UTC', datetime.timezone.utc)
         now = datetime.datetime.now(tz=UTC)

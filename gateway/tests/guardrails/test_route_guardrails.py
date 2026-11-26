@@ -15,9 +15,9 @@ from radicalbit_ai_gateway.guardrails.guardrails import (
 )
 from radicalbit_ai_gateway.guardrails.judges.judge_engine import JudgeEngine
 from radicalbit_ai_gateway.guardrails.presidio import PresidioEngine
-from radicalbit_ai_gateway.llm.messages import HumanMessage, SystemMessage
+from radicalbit_ai_gateway.llm.messages import BaseMessage, HumanMessage, SystemMessage
 from radicalbit_ai_gateway.models.gateway_route_config import GatewayRouteConfig
-from radicalbit_ai_gateway.models.guardrails import Guardrail
+from radicalbit_ai_gateway.models.guardrails import Guardrail, guardrail_adapter
 from radicalbit_ai_gateway.models.request_identity import RequestIdentity
 from radicalbit_ai_gateway.prompt_manager import PromptManager
 from radicalbit_ai_gateway.services.cost_service import CostService
@@ -38,7 +38,7 @@ IDENTITY = RequestIdentity(
 
 
 def _contains(name, where, behavior, value, **extra) -> Guardrail:
-    return Guardrail.model_validate(
+    return guardrail_adapter.validate_python(
         {
             'name': name,
             'type': 'contains',
@@ -51,7 +51,7 @@ def _contains(name, where, behavior, value, **extra) -> Guardrail:
 
 
 def _redact(name, where) -> Guardrail:
-    return Guardrail.model_validate(
+    return guardrail_adapter.validate_python(
         {
             'name': name,
             'type': 'presidio_anonymizer',
@@ -106,24 +106,27 @@ class TestRouteGuardrails:
     def test_a_route_picks_its_enabled_guardrails_by_phase_and_class(self):
         route = _route('soft_io', 'redact_in', 'warn_in', 'redact_out', 'off')
 
-        assert route.input_redact == (REDACT_IN,)
-        assert route.input_check == (SOFT_IO, WARN_IN)
-        assert route.output_redact == (REDACT_OUT,)
-        assert route.output_check == (SOFT_IO,)
+        assert route.input_redact.guardrails == (REDACT_IN,)
+        assert route.input_check.guardrails == (SOFT_IO, WARN_IN)
+        assert route.output_redact.guardrails == (REDACT_OUT,)
+        assert route.output_check.guardrails == (SOFT_IO,)
         assert route.has_output
 
     def test_names_the_project_does_not_define_are_kept_to_be_logged(self):
         route = _route('ghost', 'warn_in')
 
         assert route.unknown == ('ghost',)
-        assert route.input_check == (WARN_IN,)
+        assert route.input_check.guardrails == (WARN_IN,)
+        assert route.output_redact is None
+        assert route.output_check is None
         assert not route.has_output
 
     def test_a_route_without_guardrails_has_none(self):
         route = RouteGuardrails()
 
         assert not route.has_output
-        assert route.input_redact == route.input_check == ()
+        assert route.input_redact is None
+        assert route.input_check is None
 
 
 class TestGuardrailFlags:
@@ -146,7 +149,7 @@ class TestGuardrailFlags:
 
 class TestRequestGuardrails:
     async def test_without_redact_guardrails_the_payload_is_the_same(self):
-        messages = [HumanMessage(content=f'Mail {EMAIL}')]
+        messages: list[BaseMessage] = [HumanMessage(content=f'Mail {EMAIL}')]
         payload = Conversation(messages)
 
         screened = await _request(_route('warn_in')).redact_input(payload)
@@ -155,7 +158,7 @@ class TestRequestGuardrails:
         assert screened.flags == GuardrailFlags()
 
     async def test_redaction_flags_the_input_and_returns_a_new_list(self):
-        messages = [HumanMessage(content=f'Mail {EMAIL}')]
+        messages: list[BaseMessage] = [HumanMessage(content=f'Mail {EMAIL}')]
 
         screened = await _request(_route('redact_in')).redact_input(
             Conversation(messages)
@@ -186,7 +189,10 @@ class TestRequestGuardrails:
 
     async def test_check_skips_the_gateways_system_prompt(self):
         guardrails = _request(_route('soft_in'))
-        messages = [SystemMessage(content='softme'), HumanMessage(content='hi')]
+        messages: list[BaseMessage] = [
+            SystemMessage(content='softme'),
+            HumanMessage(content='hi'),
+        ]
 
         screened = await guardrails.check_input(Conversation(messages, skip=1))
 
@@ -205,11 +211,11 @@ class TestRequestGuardrails:
 
     async def test_an_empty_reply_is_checked_not_redacted(self):
         route = _route('redact_out', 'soft_io')
-        route.redact.apply = AsyncMock()
+        route.output_redact.engine.apply = AsyncMock()
 
         screened = await _request(route).screen_output(Reply(''))
 
-        route.redact.apply.assert_not_called()
+        route.output_redact.engine.apply.assert_not_called()
         assert screened.soft_block is None
 
     async def test_an_output_soft_block_flags_the_output_warned_and_blocked(self):
@@ -230,19 +236,19 @@ class TestRequestGuardrails:
 
     async def test_judge_calls_are_charged_to_the_request(self):
         route = _route('warn_in')
-        route.check.apply = AsyncMock(return_value=CheckResult())
+        route.input_check.engine.apply = AsyncMock(return_value=CheckResult())
         charge = AsyncMock()
 
         await _request(route, charge).check_input(Texts(['hi']))
 
-        kwargs = route.check.apply.call_args.kwargs
+        kwargs = route.input_check.engine.apply.call_args.kwargs
         assert kwargs['count_judge_usage'] is charge
         assert kwargs['identity'] is IDENTITY
         assert kwargs['windowed'] is False
 
     async def test_an_unexpected_error_becomes_an_internal_error(self):
         route = _route('warn_in')
-        route.check.apply = AsyncMock(side_effect=RuntimeError('boom'))
+        route.input_check.engine.apply = AsyncMock(side_effect=RuntimeError('boom'))
 
         with pytest.raises(GatewayInternalError, match='Error during guardrail') as e:
             await _request(route).check_input(Texts(['hi']))

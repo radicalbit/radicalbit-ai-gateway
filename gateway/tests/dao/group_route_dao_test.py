@@ -1,5 +1,7 @@
 import uuid
 
+from typing_extensions import override
+
 from tests.common import db_mock
 from tests.common.db_integration import AsyncDatabaseIntegration
 
@@ -9,6 +11,7 @@ from radicalbit_ai_gateway.db.dao.project_dao import ProjectDAO
 
 
 class GroupRouteDAOTest(AsyncDatabaseIntegration):
+    @override
     @classmethod
     def setUpClass(cls):
         super().setUpClass()
@@ -22,6 +25,7 @@ class GroupRouteDAOTest(AsyncDatabaseIntegration):
         )
         cls.project_uuid = uuid.uuid4()
 
+    @override
     async def asyncSetUp(self):
         await self.insert(
             db_mock.get_sample_project(uuid=self.project_uuid, name='my-project')

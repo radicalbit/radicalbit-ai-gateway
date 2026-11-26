@@ -1,6 +1,7 @@
 """A model with no price entry: the request succeeds and is costed at 0."""
 
 import logging
+from typing import Any
 
 import pytest
 
@@ -60,7 +61,7 @@ def gateway(caplog):
         yield gateway
 
 
-def _input_costs(gateway) -> list:
+def _input_costs(gateway) -> list[Any]:
     return [
         e['COST']
         for e in gateway.event_rows

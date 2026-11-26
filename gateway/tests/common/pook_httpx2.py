@@ -3,20 +3,15 @@ import contextlib
 from http.client import responses as http_reasons
 from unittest import mock
 
-try:
-    import httpx2
-except ImportError:
-    httpx2 = None
-
+import httpx2
 import pook
+import pook.interceptors
 from pook.interceptors.base import BaseInterceptor
 from pook.request import Request
+from typing_extensions import override
 
 
 def register_httpx2_interceptor():
-    if httpx2 is None:
-        return
-
     class MockedTransport2(httpx2.BaseTransport):
         def __init__(self, interceptor, client, orig_transport):
             self._interceptor = interceptor
@@ -59,6 +54,7 @@ def register_httpx2_interceptor():
             matched = self._interceptor.engine.match(pook_req)
             if not matched:
                 orig = self._orig(self._client, req.url)
+                assert isinstance(orig, httpx2.AsyncBaseTransport)
                 return await orig.handle_async_request(req)
 
             if matched._delay:
@@ -67,16 +63,18 @@ def register_httpx2_interceptor():
             return self._get_httpx2_response(req, matched._response)
 
     class SyncTransport2(MockedTransport2):
-        def handle_request(self, req: httpx2.Request) -> httpx2.Response:
-            pook_req = self._get_pook_request(req)
-            pook_req.body = req.read()
+        @override
+        def handle_request(self, request: httpx2.Request) -> httpx2.Response:
+            pook_req = self._get_pook_request(request)
+            pook_req.body = request.read()
 
             matched = self._interceptor.engine.match(pook_req)
             if not matched:
-                orig = self._orig(self._client, req.url)
-                return orig.handle_request(req)
+                orig = self._orig(self._client, request.url)
+                assert isinstance(orig, httpx2.BaseTransport)
+                return orig.handle_request(request)
 
-            return self._get_httpx2_response(req, matched._response)
+            return self._get_httpx2_response(request, matched._response)
 
     class Httpx2Interceptor(BaseInterceptor):
         def _patch(self, path: str):
@@ -93,6 +91,7 @@ def register_httpx2_interceptor():
             except Exception:
                 pass
 
+        @override
         def activate(self):
             for path in (
                 'httpx2.Client._transport_for_url',
@@ -100,6 +99,7 @@ def register_httpx2_interceptor():
             ):
                 self._patch(path)
 
+        @override
         def disable(self):
             for p in self.patchers:
                 p.stop()

@@ -4,13 +4,14 @@ from radicalbit_ai_gateway.caching.route_cache import cache_key
 from radicalbit_ai_gateway.endpoints.chat_completions.cache import ChatEntry
 from radicalbit_ai_gateway.endpoints.embeddings.cache import EmbeddingEntry
 from radicalbit_ai_gateway.endpoints.transcriptions.cache import TranscriptionEntry
+from radicalbit_ai_gateway.llm.messages import BaseMessage
 
 
 def chat_key(
     project_uuid: str,
     route_name: str,
     key_uuid: str,
-    messages: list,
+    messages: list[BaseMessage],
     tools=None,
     tool_choice=None,
     **params,

@@ -5,6 +5,7 @@ in the context of guardrail judges.
 """
 
 import logging
+from typing import Any
 
 from radicalbit_ai_gateway.llm.messages import AIMessage
 from radicalbit_ai_gateway.models.judge_result import JudgeResult
@@ -25,7 +26,7 @@ def validate_response_completeness(response: AIMessage, model_id: str) -> None:
     stopped generating due to reaching the max_tokens limit (finish_reason='length').
 
     Args:
-        response: The AIMessage response from the LLM.
+        response: The raw response from the LLM.
         model_id: The identifier of the model that generated the response.
 
     Raises:
@@ -33,7 +34,7 @@ def validate_response_completeness(response: AIMessage, model_id: str) -> None:
 
     """
     finish_reason = None
-    if isinstance(response, AIMessage) and response.response_metadata:
+    if response.response_metadata:
         finish_reason = response.response_metadata.get('finish_reason')
 
         if not finish_reason:
@@ -48,7 +49,9 @@ def validate_response_completeness(response: AIMessage, model_id: str) -> None:
         raise JudgeOutputTruncatedError(finish_reason=finish_reason, model_id=model_id)
 
 
-def extract_judge_result(structured_response: dict, model_id: str) -> JudgeResult:
+def extract_judge_result(
+    structured_response: dict[str, Any], model_id: str
+) -> JudgeResult:
     """Extract a JudgeResult from a with_structured_output(include_raw=True) response.
 
     Validates completeness, checks for parsing errors, and returns the parsed result.
@@ -66,14 +69,20 @@ def extract_judge_result(structured_response: dict, model_id: str) -> JudgeResul
         JudgeParsingError: If parsing failed or produced no result.
 
     """
-    raw_response: AIMessage | None = structured_response.get('raw')
-    parsed: JudgeResult | None = structured_response.get('parsed')
-    parsing_error: Exception | None = structured_response.get('parsing_error')
+    raw_response: object = structured_response.get('raw')
+    parsed_value = structured_response.get('parsed')
+    parsed = parsed_value if isinstance(parsed_value, JudgeResult) else None
+    error = structured_response.get('parsing_error')
+    parsing_error: Exception | None = None
+    if isinstance(error, Exception):
+        parsing_error = error
+    elif error:
+        parsing_error = ValueError(str(error))
 
-    if raw_response:
+    if isinstance(raw_response, AIMessage):
         validate_response_completeness(raw_response, model_id)
 
-    if parsing_error:
+    if parsing_error is not None:
         raw_content = getattr(raw_response, 'content', '') if raw_response else ''
         logger.warning(
             'Failed to parse structured judge response: model=%s, error=%s, content=%r',
@@ -87,7 +96,7 @@ def extract_judge_result(structured_response: dict, model_id: str) -> JudgeResul
             model_id=model_id,
         )
 
-    if not parsed:
+    if parsed is None:
         raw_content = getattr(raw_response, 'content', '') if raw_response else ''
         raise JudgeParsingError(
             raw_content=str(raw_content),

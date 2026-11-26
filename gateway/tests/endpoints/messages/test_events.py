@@ -1,4 +1,5 @@
 import json
+from typing import Any
 
 from anthropic.types import RawMessageStreamEvent
 from pydantic import TypeAdapter
@@ -26,7 +27,7 @@ TOOL_USE = {
 }
 
 
-def _message(content: list, **fields) -> dict:
+def _message(content: list[Any] | None, **fields) -> dict[str, Any]:
     return {
         'id': 'msg_provider_1',
         'type': 'message',
@@ -40,7 +41,7 @@ def _message(content: list, **fields) -> dict:
     }
 
 
-def _events(message: dict) -> list[dict]:
+def _events(message: dict[str, Any]) -> list[dict[str, Any]]:
     """Return the events of ``message``'s frames, each a valid Messages
     stream event named as its ``type``.
     """
@@ -55,9 +56,9 @@ def _events(message: dict) -> list[dict]:
     return events
 
 
-def _rebuilt(events: list[dict]) -> dict:
+def _rebuilt(events: list[dict[str, Any]]) -> dict[str, Any]:
     """Rebuild the answer a client reads from ``events``, as an SDK does."""
-    message: dict = {}
+    message: dict[str, Any] = {}
     partial_json: dict[int, str] = {}
     for event in events:
         if event['type'] == 'message_start':
@@ -269,7 +270,7 @@ def test_a_client_rebuilds_the_same_answer_from_the_events():
 
 
 def test_the_events_carry_the_usage_the_gateway_counts():
-    usage: dict = {}
+    usage: dict[str, Any] = {}
     for frame in message_events(_message([{'type': 'text', 'text': 'Hi'}])):
         event, data = frame.strip().split('\n')
         usage = stream_usage(

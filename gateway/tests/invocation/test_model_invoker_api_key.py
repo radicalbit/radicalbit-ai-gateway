@@ -15,7 +15,7 @@ class TestModelInvokerApiKey:
             model='openai/gpt-4o',
             credentials=Credentials(api_key='sk-real-key'),
         )
-        cost_service: CostService = MagicMock(spec_set=CostService)
+        cost_service = MagicMock(spec_set=CostService)
         invoker = ChatModelInvoker(
             models=[model], cost_service=cost_service, fallbacks=None
         )
@@ -29,7 +29,7 @@ class TestModelInvokerApiKey:
         self, mock_init_chat_model
     ):
         mock_init_chat_model.return_value = MagicMock()
-        cost_service: CostService = MagicMock(spec_set=CostService)
+        cost_service = MagicMock(spec_set=CostService)
         model = Model(
             model_id='openai-ollama',
             model='openai/llama3',
@@ -56,7 +56,7 @@ class TestModelInvokerApiKey:
                 base_url='http://custom.endpoint/v1', api_key='custom-key'
             ),
         )
-        cost_service: CostService = MagicMock(spec_set=CostService)
+        cost_service = MagicMock(spec_set=CostService)
         invoker = ChatModelInvoker(
             models=[model], cost_service=cost_service, fallbacks=None
         )
@@ -74,7 +74,7 @@ class TestModelInvokerApiKey:
             model='anthropic/claude-3',
             credentials=Credentials(),
         )
-        cost_service: CostService = MagicMock(spec_set=CostService)
+        cost_service = MagicMock(spec_set=CostService)
         invoker = ChatModelInvoker(
             models=[model], cost_service=cost_service, fallbacks=None
         )
@@ -91,7 +91,7 @@ class TestModelInvokerApiKey:
             model='azure/gpt-4',
             credentials=None,
         )
-        cost_service: CostService = MagicMock(spec_set=CostService)
+        cost_service = MagicMock(spec_set=CostService)
         invoker = ChatModelInvoker(
             models=[model], cost_service=cost_service, fallbacks=None
         )

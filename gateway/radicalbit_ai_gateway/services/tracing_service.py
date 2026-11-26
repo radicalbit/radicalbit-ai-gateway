@@ -9,6 +9,7 @@ from radicalbit_ai_gateway.db.dao.otel_traces_dao import (
     request_type_of_root_span,
 )
 from radicalbit_ai_gateway.db.database import run_from_worker
+from radicalbit_ai_gateway.db.models.trace import SpanRecord
 from radicalbit_ai_gateway.models.request_event_type import RequestType
 from radicalbit_ai_gateway.models.trace_dto import (
     ErrorEvents,
@@ -251,7 +252,7 @@ class TracingService:
         if not spans:
             raise GatewayNotFoundError(f"Trace '{trace_id}' not found")
 
-        children_map: dict[str, list] = {}
+        children_map: dict[str, list[SpanRecord]] = {}
         root_span = None
         total_duration = 0  # Spans always have positive duration
         error_count = 0
@@ -385,7 +386,7 @@ class TracingService:
         )
 
         if not traces_page.items:
-            return Page.create([], params, total=traces_page.total)
+            return Page[TraceDTO].create([], params, total=traces_page.total)
 
         # Enrich with span stats
         trace_ids = [row.trace_id for row in traces_page.items]
@@ -466,7 +467,7 @@ class TracingService:
                 )
             )
 
-        return Page.create(items, params, total=traces_page.total)
+        return Page[TraceDTO].create(items, params, total=traces_page.total)
 
     def get_span_by_id(
         self, project_uuid: UUID, trace_id: str, span_id: str

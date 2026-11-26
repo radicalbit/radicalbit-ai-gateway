@@ -37,7 +37,7 @@ def _spacy_nlp_engine(languages: tuple[str, ...]) -> NlpEngine:
 class PresidioEngine:
     def __init__(self, languages: list[str] = PRESIDIO_LANGUAGES):
         self._analyzer_local = None
-        self._anonymizer = None
+        self._anonymizer: AnonymizerEngine | None = None
         self._languages = languages
 
     def _get_nlp_engine(self) -> NlpEngine:
@@ -133,7 +133,7 @@ class PresidioEngine:
         return analyzer
 
     @property
-    def anonymizer(self):
+    def anonymizer(self) -> AnonymizerEngine:
         if not self._anonymizer:
             logger.info('Presidio Anonymizer initialization...')
             self._anonymizer = AnonymizerEngine()

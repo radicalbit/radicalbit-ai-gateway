@@ -15,6 +15,7 @@ route may not be cached at all — see :meth:`McpListCache.for_route`.
 import hashlib
 import json
 import logging
+from typing import Any
 
 from radicalbit_ai_gateway.caching.gateway_cache import GatewayCache
 from radicalbit_ai_gateway.events.events_processor import emit_event
@@ -141,7 +142,7 @@ class McpListCache:
             signature=servers_signature(servers),
         )
 
-    async def get(self, method: str) -> dict | None:
+    async def get(self, method: str) -> dict[str, Any] | None:
         """Return the cached result for ``method``, or ``None`` on a miss.
 
         Never returns a half-trusted entry: what comes back here is handed to
@@ -173,7 +174,7 @@ class McpListCache:
             return None
         return cached
 
-    async def set(self, method: str, result: dict) -> None:
+    async def set(self, method: str, result: dict[str, Any]) -> None:
         """Store ``result`` for ``method``. Never raises."""
         try:
             await self._cache.set(

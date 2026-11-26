@@ -9,7 +9,7 @@ Create Date: 2026-10-27 00:00:00.000000
 
 """
 import re
-from typing import Sequence, Union
+from typing import Any, Sequence, Union
 
 from alembic import op
 import sqlalchemy as sa
@@ -84,7 +84,7 @@ def _canonicalise(table: str, signature_columns: list[str]) -> None:
         sa.text(f'SELECT "UUID", {columns}, "WINDOW_SIZE", "MAX_VALUE" FROM "{table}"')
     ).all()
 
-    groups: dict[tuple, list] = {}
+    groups: dict[tuple[object, ...], list[sa.Row[Any]]] = {}
     for row in rows:
         canonical = _canonical(row.WINDOW_SIZE)
         if canonical is None:

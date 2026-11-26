@@ -17,6 +17,7 @@ OOM-killed.
 
 from collections.abc import Iterator
 from types import SimpleNamespace
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 import uuid
 
@@ -34,6 +35,7 @@ from radicalbit_ai_gateway.endpoints.common.admission import Admission
 from radicalbit_ai_gateway.endpoints.mcp.route import McpRoute
 from radicalbit_ai_gateway.mcp_proxy.errors import McpUpstreamError
 from radicalbit_ai_gateway.mcp_proxy.upstream_client import McpUpstreamClient
+from radicalbit_ai_gateway.middleware.exception_handlers import add_exception_handler
 from radicalbit_ai_gateway.middleware.request_event_middleware import (
     RequestEventMiddleware,
 )
@@ -81,7 +83,7 @@ def upstream() -> MagicMock:
     return client
 
 
-def _config(caching: dict | None = None) -> GatewayConfig:
+def _config(caching: dict[str, Any] | None = None) -> GatewayConfig:
     """Return the project's config; ``caching`` is my-route's ``caching:`` block
     (the routes then cache in memory: the tests build no Redis client).
     """
@@ -123,7 +125,7 @@ def _config(caching: dict | None = None) -> GatewayConfig:
 
 
 @pytest.fixture
-def client(exporter, upstream) -> TestClient:
+def app(exporter, upstream) -> FastAPI:
     exporter.clear()
     config = _config()
     group_service = MagicMock()
@@ -143,8 +145,8 @@ def client(exporter, upstream) -> TestClient:
             Admission(group_service, project_budget_limit_dao),
         )
     )
-    app.add_exception_handler(McpTransportError, mcp_transport_exception_handler)
-    app.add_exception_handler(ApiKeyError, api_key_exception_handler)
+    add_exception_handler(app, McpTransportError, mcp_transport_exception_handler)
+    add_exception_handler(app, ApiKeyError, api_key_exception_handler)
     project_uuid = uuid.uuid4()
     app.state.project_configs = {'proj': ProjectEntry(uuid=project_uuid, config=config)}
     # The project's routes, built from its config as the gateway registers them.
@@ -160,21 +162,24 @@ def client(exporter, upstream) -> TestClient:
             )
         )
     )
+    return app
+
+
+@pytest.fixture
+def client(app: FastAPI) -> TestClient:
     return TestClient(app)
 
 
 @pytest.fixture
-def cached_client(client) -> Iterator[TestClient]:
+def cached_client(app: FastAPI, client: TestClient) -> Iterator[TestClient]:
     """Return the same app, with the route declaring a ``caching:`` block.
 
     The base fixture's route declares none, so no list cache is built at all.
     """
-    entry = client.app.state.project_configs['proj']
+    entry = app.state.project_configs['proj']
     config = _config(caching={'type': 'exact', 'ttl': 60})
-    client.app.state.project_configs['proj'] = ProjectEntry(
-        uuid=entry.uuid, config=config
-    )
-    client.app.state.routes = build_routes(config, project_uuid=str(entry.uuid))
+    app.state.project_configs['proj'] = ProjectEntry(uuid=entry.uuid, config=config)
+    app.state.routes = build_routes(config, project_uuid=str(entry.uuid))
     # A hit reports itself to the events pipeline; that is asserted in
     # test_list_cache.py and only noise here.
     with (
@@ -184,7 +189,7 @@ def cached_client(client) -> Iterator[TestClient]:
         yield client
 
 
-def _post(client: TestClient, method: str, params: dict | None = None):
+def _post(client: TestClient, method: str, params: dict[str, Any] | None = None):
     body = {'jsonrpc': '2.0', 'id': 1, 'method': method}
     if params is not None:
         body['params'] = params
@@ -200,10 +205,12 @@ def _span(exporter, name: str):
 
 
 def _category(span) -> str | None:
-    return (span.attributes or {}).get(f'{ASSOC}rb.gateway.operation_category')
+    category = (span.attributes or {}).get(f'{ASSOC}rb.gateway.operation_category')
+    assert category is None or isinstance(category, str)
+    return category
 
 
-def _mcp_attrs(span) -> dict:
+def _mcp_attrs(span) -> dict[str, Any]:
     return {
         k.replace(f'{ASSOC}rb.gateway.mcp_', ''): v
         for k, v in (span.attributes or {}).items()
@@ -316,7 +323,7 @@ def test_a_partial_fanout_failure_reaches_both_spans_and_not_the_next_request(
     """
     upstream.list_tools = AsyncMock(
         side_effect=[
-            types.ListToolsResult(tools=[types.Tool(name='t', inputSchema={})]),
+            types.ListToolsResult(tools=[types.Tool(name='t', input_schema={})]),
             McpUpstreamError('jira', 'boom'),
             types.ListToolsResult(tools=[]),
             types.ListToolsResult(tools=[]),
@@ -388,7 +395,7 @@ GATED_RESOURCE = 'https://gh.example/readme'
 
 
 @pytest.fixture
-def gated_client(client) -> TestClient:
+def gated_client(client: TestClient) -> TestClient:
     """Rebuild the same wiring with github's allowlists opened for nothing."""
     config = GatewayConfig.model_validate(
         {
@@ -412,10 +419,10 @@ def gated_client(client) -> TestClient:
             ],
         }
     )
-    entry = client.app.state.project_configs['proj']
-    client.app.state.project_configs['proj'] = ProjectEntry(
-        uuid=entry.uuid, config=config
-    )
+    app = client.app
+    assert isinstance(app, FastAPI)
+    entry = app.state.project_configs['proj']
+    app.state.project_configs['proj'] = ProjectEntry(uuid=entry.uuid, config=config)
     return client
 
 

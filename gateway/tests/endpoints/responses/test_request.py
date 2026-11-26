@@ -51,7 +51,10 @@ class TestResponsesRequest:
             'print(1)',
             'a.py',
         ]
-        assert [m.tool_call_id for m in messages[3:]] == ['call_A', 'call_B']
+        assert [m.tool_call_id for m in messages[3:] if isinstance(m, ToolMessage)] == [
+            'call_A',
+            'call_B',
+        ]
 
     def test_string_input_is_a_user_message(self):
         messages = ResponsesRequest({'input': 'Hi'}).messages()
@@ -199,10 +202,10 @@ class TestResponsesRequest:
     def test_changed_texts_are_written_back_and_nothing_else(self):
         body = _body()
         request = ResponsesRequest(body)
-        messages = [
-            m.model_copy(update={'content': m.content.upper()})
-            for m in request.messages()
-        ]
+        messages = []
+        for m in request.messages():
+            assert isinstance(m.content, str)
+            messages.append(m.model_copy(update={'content': m.content.upper()}))
 
         request.write_back(messages)
 
@@ -383,6 +386,7 @@ class TestCache:
 
         signature = cache_signature(body)
 
+        assert signature is not None
         assert signature['input'] == OPENCODE_TURN
         assert signature['params'] == {'model': 'route', 'temperature': 0.1}
         # Streaming does not change the reply

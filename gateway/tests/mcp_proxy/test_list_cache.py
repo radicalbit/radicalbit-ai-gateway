@@ -17,11 +17,15 @@ from radicalbit_ai_gateway.mcp_proxy.list_cache import (
 from radicalbit_ai_gateway.models.auth_dto import KeyDetails
 from radicalbit_ai_gateway.models.event_type import EventType
 from radicalbit_ai_gateway.models.mcp_authorized_request import McpAuthorizedRequest
-from radicalbit_ai_gateway.models.mcp_server import McpHttpServer, McpStdioServer
+from radicalbit_ai_gateway.models.mcp_server import (
+    AnyMcpServer,
+    McpHttpServer,
+    McpStdioServer,
+)
 
 GITHUB = McpHttpServer(alias='github', url='https://github.example.com/mcp/')
 JIRA = McpHttpServer(alias='jira', url='https://jira.example.com/mcp/')
-SERVERS = [GITHUB, JIRA]
+SERVERS: list[AnyMcpServer] = [GITHUB, JIRA]
 
 PROJECT = 'project-uuid'
 ROUTE = 'my-route'
@@ -35,7 +39,7 @@ def _in_memory_cache() -> GatewayCache:
 
 
 def _authorized(
-    servers: list = SERVERS,
+    servers: list[AnyMcpServer] = SERVERS,
     key_uuid: str = KEY,
     route_name: str = ROUTE,
     project_uuid: str = PROJECT,
@@ -59,7 +63,7 @@ def _authorized(
 
 def _for_route(
     gateway_cache: GatewayCache | None = None,
-    servers: list = SERVERS,
+    servers: list[AnyMcpServer] = SERVERS,
     ttl: int | None = None,
     key_uuid: str = KEY,
     route_name: str = ROUTE,

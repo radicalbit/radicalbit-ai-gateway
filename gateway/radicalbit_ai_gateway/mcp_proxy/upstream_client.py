@@ -1,8 +1,8 @@
 import asyncio
-from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
+from collections.abc import AsyncGenerator, Awaitable, Callable, Mapping
 from contextlib import asynccontextmanager
 import logging
-from typing import TypeVar
+from typing import Any, TypeVar
 
 from mcp import ClientSession, types
 from mcp.client.stdio import (
@@ -70,7 +70,7 @@ class McpUpstreamClient:
         self,
         server: AnyMcpServer,
         name: str,
-        arguments: dict | None = None,
+        arguments: dict[str, Any] | None = None,
         *,
         client_headers: Mapping[str, str] | None = None,
     ) -> types.CallToolResult:
@@ -136,7 +136,7 @@ class McpUpstreamClient:
         self,
         server: AnyMcpServer,
         client_headers: Mapping[str, str] | None,
-    ) -> AsyncIterator[ClientSession]:
+    ) -> AsyncGenerator[ClientSession]:
         if isinstance(server, McpHttpServer):
             # The transport no longer takes headers: they belong to the httpx
             # client, which we own and therefore have to close ourselves.

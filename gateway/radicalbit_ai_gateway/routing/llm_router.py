@@ -4,7 +4,7 @@ import json
 import logging
 import time
 
-from pydantic import BaseModel, ConfigDict, Field, create_model
+from pydantic import BaseModel, ConfigDict, Field
 
 from radicalbit_ai_gateway.invocation.fallback_chain import (
     Candidate,
@@ -96,22 +96,25 @@ def build_system_prompt(config: LLMRoutingConfig) -> str:
 
 
 def build_response_schema(config: LLMRoutingConfig) -> type[BaseModel]:
-    """One required float per option, keyed by the option key."""
-    fields = {
-        o.key: (
-            float,
-            Field(
-                description=f'How pertinent the query is to {o.key}, from 0.0 to 1.0.'
-            ),
+    """One required float per option, keyed by the option key.
+
+    Built as a class body, not with ``create_model``: an option key passed
+    as a keyword argument could clash with its own (``__config__``...).
+    """
+    options = _options(config)
+    namespace: dict[str, object] = {
+        o.key: Field(
+            description=f'How pertinent the query is to {o.key}, from 0.0 to 1.0.'
         )
-        for o in _options(config)
+        for o in options
     }
-    return create_model(
-        'routing_distribution',
+    namespace.update(
+        __annotations__={o.key: float for o in options},
         __doc__='Pertinence score of the query for each option.',
-        __config__=ConfigDict(extra='forbid'),
-        **fields,
+        __module__=__name__,
+        model_config=ConfigDict(extra='forbid'),
     )
+    return type('routing_distribution', (BaseModel,), namespace)
 
 
 class LLMRouter:
@@ -188,7 +191,7 @@ class LLMRouter:
         fallback_id = self._config.fallback_model_id
         _set_attributes(model_id=model_id, fallback_used=False)
 
-        async def ask(candidate: Candidate) -> Reply:
+        async def ask(candidate: Candidate) -> Reply[object]:
             if candidate.is_fallback:
                 logger.warning(
                     'LLM routing falls back from model %s to model %s',
@@ -208,7 +211,14 @@ class LLMRouter:
         ).call(ask)
         if not isinstance(parsed, BaseModel):
             raise _BadAnswer
-        return parsed.model_dump()
+        # The schema holds one float per option (see build_response_schema).
+        scores: dict[str, float] = {}
+        for option in self._options:
+            score = getattr(parsed, option.key, None)
+            if not isinstance(score, float):
+                raise _BadAnswer
+            scores[option.key] = score
+        return scores
 
     async def _ask_model(
         self, model_id: str, state: str, record_spend: RoutingSpendRecorder | None

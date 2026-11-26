@@ -1,3 +1,5 @@
+from typing import Any
+
 from radicalbit_ai_gateway.caching.gateway_cache import GatewayCache
 from radicalbit_ai_gateway.caching.route_cache import RouteCache
 from radicalbit_ai_gateway.gateway_route.scope import RequestScope
@@ -105,7 +107,7 @@ class GatewayRoute:
 
     def for_request(
         self, identity: RequestIdentity, limits: RequestLimits
-    ) -> RequestScope:
+    ) -> RequestScope[Any, Any]:
         """Return the scope of one request to this route: its limits, and the
         route's guardrails and cache bound to it. Judge and semantic cache
         calls are charged to its limits (ADR 0006).

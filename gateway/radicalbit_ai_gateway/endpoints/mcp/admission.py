@@ -5,6 +5,7 @@ and a key not bound to the route answers 403.
 """
 
 from fastapi import Request
+from typing_extensions import override
 
 from radicalbit_ai_gateway.endpoints.common.admission import (
     AdmissionRules,
@@ -25,7 +26,7 @@ class McpAdmissionRules(AdmissionRules):
     """The admission rules of one MCP request to ``project_name/route_name``.
 
     ``authenticate`` is the request's credential check: the Origin first,
-    then the bearer token. It keeps the caller's key, for the dispatch.
+    then the bearer token.
     """
 
     # Project budgets cap cost, which an MCP call does not spend: reading them
@@ -37,8 +38,8 @@ class McpAdmissionRules(AdmissionRules):
         self.project_name = project_name
         self.route_name = route_name
         self.project_uuid = ''
-        self.key_details: KeyDetails | None = None
 
+    @override
     def opened(
         self,
         request: Request,
@@ -55,9 +56,9 @@ class McpAdmissionRules(AdmissionRules):
     ) -> KeyDetails:
         self._service.validate_origin(request)
         set_operation_category(OperationCategory.AUTH)
-        self.key_details = await set_api_key_uuid(request, project_uuid, project_name)
-        return self.key_details
+        return await set_api_key_uuid(request, project_uuid, project_name)
 
+    @override
     async def unknown_route(
         self, request: Request, route_key: str | None, authenticate: Authenticate
     ) -> Exception:
@@ -70,6 +71,7 @@ class McpAdmissionRules(AdmissionRules):
             code='mcp_route_not_found',
         )
 
+    @override
     def not_member(self, route: GatewayRoute) -> Exception:
         return McpTransportError(
             f'API Key not associated with route {self.route_name}',

@@ -30,10 +30,9 @@ import datetime
 import functools
 import json
 import logging
-import operator
 import os
 import time
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, ParamSpec, TypeVar
 from urllib.parse import urlparse
 
 from opentelemetry import context as context_api, metrics, trace
@@ -47,17 +46,19 @@ from opentelemetry.semconv.attributes.server_attributes import (
 )
 from opentelemetry.trace import Span, SpanKind, Status, StatusCode
 from pydantic import BaseModel
+from typing_extensions import override
 
 from radicalbit_ai_gateway.llm.messages import (
     AIMessage,
     AIMessageChunk,
     BaseMessage,
+    ToolMessage,
     tool_call_chunk,
 )
 from radicalbit_ai_gateway.llm.messages_stream import MessageBuilder
 from radicalbit_ai_gateway.llm.providers._openai_common import _image_block
 from radicalbit_ai_gateway.llm.providers._schema import is_data_content_block
-from radicalbit_ai_gateway.llm.usage import MessagesCost, messages_usage
+from radicalbit_ai_gateway.llm.usage import MessagesCost, add_usage, messages_usage
 from radicalbit_ai_gateway.telemetry.attributes import (
     ENTITY_PATH,
     OPERATION_DURATION_METRIC,
@@ -113,15 +114,20 @@ _ROLES = {
 }
 
 
-def _dont_throw(func: Callable) -> Callable:
+_P = ParamSpec('_P')
+_R = TypeVar('_R')
+
+
+def _dont_throw(func: Callable[_P, _R]) -> Callable[_P, _R | None]:
     """Tracing never fails a model call: errors are logged and swallowed."""
+    name = getattr(func, '__name__', repr(func))
 
     @functools.wraps(func)
-    def wrapper(*args: Any, **kwargs: Any) -> Any:
+    def wrapper(*args: _P.args, **kwargs: _P.kwargs) -> _R | None:
         try:
             return func(*args, **kwargs)
         except Exception:
-            logger.debug('Failed to trace %s', func.__name__, exc_info=True)
+            logger.debug('Failed to trace %s', name, exc_info=True)
             return None
 
     return wrapper
@@ -135,9 +141,10 @@ def _should_send_prompts() -> bool:
 
 
 class _JSONEncoder(json.JSONEncoder):
+    @override
     def default(self, o: Any) -> Any:
-        if dataclasses.is_dataclass(o):
-            return dataclasses.asdict(o)  # type: ignore[arg-type]
+        if dataclasses.is_dataclass(o) and not isinstance(o, type):
+            return dataclasses.asdict(o)
         if hasattr(o, 'to_json'):
             return o.to_json()
         if isinstance(o, BaseModel):
@@ -198,7 +205,7 @@ def _format_for_tracing(message: BaseMessage) -> BaseMessage:
     return message.model_copy(update={'content': content})
 
 
-def _content_to_parts(content: Any) -> list[dict]:
+def _content_to_parts(content: Any) -> list[dict[str, Any]]:
     if isinstance(content, str):
         return [{'type': 'text', 'content': content}] if content else []
     if isinstance(content, list):
@@ -234,7 +241,7 @@ def _content_to_parts(content: Any) -> list[dict]:
     return [{'type': 'text', 'content': str(content)}] if content else []
 
 
-def _tool_calls_to_parts(tool_calls: Sequence[Any]) -> list[dict]:
+def _tool_calls_to_parts(tool_calls: Sequence[Any]) -> list[dict[str, Any]]:
     parts = []
     for tc in tool_calls or []:
         tc_dict = dict(tc)
@@ -256,13 +263,13 @@ def _tool_calls_to_parts(tool_calls: Sequence[Any]) -> list[dict]:
 
 def _input_attributes(messages: Sequence[BaseMessage]) -> dict[str, str]:
     input_messages = []
-    system_instructions: list[dict] = []
+    system_instructions: list[dict[str, Any]] = []
     for message in map(_format_for_tracing, messages):
         role = _ROLES.get(message.type, 'unknown')
         if role == 'system':
             system_instructions.extend(_content_to_parts(message.content))
             continue
-        if role == 'tool' and hasattr(message, 'tool_call_id'):
+        if isinstance(message, ToolMessage):
             content = message.content
             parts = [
                 {
@@ -277,7 +284,7 @@ def _input_attributes(messages: Sequence[BaseMessage]) -> dict[str, str]:
             parts = _content_to_parts(message.content)
             tool_calls = (
                 message.tool_calls
-                if hasattr(message, 'tool_calls')
+                if isinstance(message, AIMessage)
                 else message.additional_kwargs.get('tool_calls')
             )
             if tool_calls:
@@ -306,10 +313,8 @@ def _generation_text(message: AIMessage) -> str:
             b if isinstance(b, str) else b.get('text', '')
             for b in content
             if isinstance(b, str)
-            or (
-                isinstance(b, dict)
-                and (b.get('type') == 'text' or (b.get('type') is None and 'text' in b))
-            )
+            or b.get('type') == 'text'
+            or (b.get('type') is None and 'text' in b)
         )
     return message.text
 
@@ -350,7 +355,7 @@ def _merge_dicts(left: dict[str, Any], *others: dict[str, Any]) -> dict[str, Any
     return merged
 
 
-def _merge_lists(left: list | None, *others: list | None) -> list | None:
+def _merge_lists(left: list[Any] | None, *others: list[Any] | None) -> list[Any] | None:
     merged = left.copy() if left is not None else None
     for other in others:
         if other is None:
@@ -412,29 +417,6 @@ def _merge_content(first: Any, *contents: Any) -> Any:
     return merged
 
 
-def _add_ints(left: dict[str, Any], right: dict[str, Any]) -> dict[str, Any]:
-    combined: dict[str, Any] = {}
-    for key in set(left).union(right):
-        lv, rv = left.get(key, 0), right.get(key, 0)
-        if isinstance(lv, int) and isinstance(rv, int):
-            combined[key] = operator.add(lv, rv)
-        elif isinstance(left.get(key, {}), dict) and isinstance(
-            right.get(key, {}), dict
-        ):
-            combined[key] = _add_ints(left.get(key, {}), right.get(key, {}))
-        else:
-            raise ValueError(f'Cannot add usage {key!r}')  # noqa: TRY004
-    return combined
-
-
-def _add_usage(left: dict | None, right: dict | None) -> dict:
-    if not (left or right):
-        return {'input_tokens': 0, 'output_tokens': 0, 'total_tokens': 0}
-    if not (left and right):
-        return left or right  # type: ignore[return-value]
-    return _add_ints(left, right)
-
-
 def merge_chunks(chunks: list[AIMessageChunk]) -> AIMessageChunk:
     """Add a stream's chunks up into one: content, tool calls, extra fields
     (reasoning), metadata and usage.
@@ -449,7 +431,7 @@ def merge_chunks(chunks: list[AIMessageChunk]) -> AIMessageChunk:
     if first.usage_metadata or any(o.usage_metadata is not None for o in others):
         usage = first.usage_metadata
         for other in others:
-            usage = _add_usage(usage, other.usage_metadata)
+            usage = add_usage(usage, other.usage_metadata)
     return AIMessageChunk(
         content=_merge_content(first.content, *(o.content for o in others)),
         additional_kwargs=_merge_dicts(
@@ -484,7 +466,7 @@ class ChatTrace:
         self,
         model: 'ChatModel',
         messages: Sequence[BaseMessage],
-        kwargs: dict,
+        kwargs: dict[str, Any],
         stream: bool = False,
     ):
         kwargs = dict(kwargs)
@@ -493,7 +475,7 @@ class ChatTrace:
         self._provider = model._gen_ai_provider
         self._start_time = time.time()
         self._request_model: str | None = None
-        self._chunk_infos: list[dict | None] = []
+        self._chunk_infos: list[dict[str, Any] | None] = []
         self.span = _start_span(model, stream)
         span = self.span
         if not span.is_recording():
@@ -516,7 +498,7 @@ class ChatTrace:
         cls,
         model: 'ChatModel',
         messages: Sequence[BaseMessage],
-        kwargs: dict,
+        kwargs: dict[str, Any],
         stream: bool = False,
     ) -> 'ChatTrace':
         return cls(model, messages, kwargs, stream)
@@ -599,8 +581,8 @@ class ChatTrace:
     def _end(
         self,
         message: AIMessage,
-        generation_info: dict | None,
-        llm_output: dict | None,
+        generation_info: dict[str, Any] | None,
+        llm_output: dict[str, Any] | None,
     ) -> None:
         span = self.span
         model_name = None
@@ -689,7 +671,9 @@ class ChatTrace:
         if record:
             self._record_tokens(input_tokens, output_tokens, model_name)
 
-    def _set_output(self, message: AIMessage, generation_info: dict | None) -> None:
+    def _set_output(
+        self, message: AIMessage, generation_info: dict[str, Any] | None
+    ) -> None:
         span = self.span
         finish_reason = None
         if generation_info and (raw := generation_info.get('finish_reason')):
@@ -792,13 +776,13 @@ _RESPONSES_FINAL_EVENTS = frozenset(
     {'response.completed', 'response.incomplete', 'response.failed'}
 )
 _RESPONSES_ROLES = {'developer': 'system'}
-_RESPONSES_INCOMPLETE_REASONS = {
+_RESPONSES_INCOMPLETE_REASONS: dict[str, str] = {
     'max_output_tokens': 'length',
     'content_filter': 'content_filter',
 }
 
 
-def _responses_content_parts(content: Any) -> list[dict]:
+def _responses_content_parts(content: Any) -> list[dict[str, Any]]:
     """Return the parts of a Responses message's ``content``, a string or blocks."""
     if not isinstance(content, list):
         return _content_to_parts(content)
@@ -815,7 +799,7 @@ def _responses_content_parts(content: Any) -> list[dict]:
     return parts
 
 
-def _responses_item(item: dict) -> tuple[str, list[dict]]:
+def _responses_item(item: dict[str, Any]) -> tuple[str, list[dict[str, Any]]]:
     """Return the role and the parts of a Responses input or output item."""
     item_type = item.get('type', 'message')
     if item_type == 'message':
@@ -847,7 +831,7 @@ def _responses_item(item: dict) -> tuple[str, list[dict]]:
     return 'assistant', [item]
 
 
-def _responses_input_attributes(body: dict) -> dict[str, str]:
+def _responses_input_attributes(body: dict[str, Any]) -> dict[str, str]:
     """Return the system instructions and input messages of a Responses request.
 
     Consecutive items of a role are one message, as a chat message carries
@@ -857,7 +841,7 @@ def _responses_input_attributes(body: dict) -> dict[str, str]:
     if isinstance(items, str):
         items = [{'role': 'user', 'content': items}]
     system_instructions = _responses_content_parts(body.get('instructions'))
-    input_messages: list[dict] = []
+    input_messages: list[dict[str, Any]] = []
     for item in items or []:
         if not isinstance(item, dict):
             continue
@@ -878,11 +862,13 @@ def _responses_input_attributes(body: dict) -> dict[str, str]:
     return attributes
 
 
-def _responses_finish_reason(response: dict) -> str | None:
+def _responses_finish_reason(response: dict[str, Any]) -> str | None:
     status = response.get('status')
     if status == 'incomplete':
         reason = (response.get('incomplete_details') or {}).get('reason')
-        return _RESPONSES_INCOMPLETE_REASONS.get(reason, reason)
+        if not isinstance(reason, str):
+            return None
+        return _RESPONSES_INCOMPLETE_REASONS.get(reason) or reason
     if status == 'completed':
         output = response.get('output') or []
         if any(item.get('type') == 'function_call' for item in output):
@@ -902,13 +888,13 @@ class ResponsesTrace:
     to start.
     """
 
-    def __init__(self, model: 'ChatModel', body: dict, stream: bool = False):
+    def __init__(self, model: 'ChatModel', body: dict[str, Any], stream: bool = False):
         self._model = model
         self._provider = model._gen_ai_provider
         self._start_time = time.time()
         # A stream's final response object, or its error event.
-        self._response: dict | None = None
-        self._error: dict | None = None
+        self._response: dict[str, Any] | None = None
+        self._error: dict[str, Any] | None = None
         self._first_event = True
         settings = model._serialized_kwargs()
         self._request_model = (
@@ -961,7 +947,7 @@ class ResponsesTrace:
     @classmethod
     @_dont_throw
     def start(
-        cls, model: 'ChatModel', body: dict, stream: bool = False
+        cls, model: 'ChatModel', body: dict[str, Any], stream: bool = False
     ) -> 'ResponsesTrace':
         return cls(model, body, stream)
 
@@ -988,7 +974,7 @@ class ResponsesTrace:
         self.end(self._response)
 
     @_dont_throw
-    def end(self, response: dict | None) -> None:
+    def end(self, response: dict[str, Any] | None) -> None:
         span = self.span
         if not span.is_recording() or response is None:
             span.end()
@@ -1029,7 +1015,7 @@ class ResponsesTrace:
             return
         span.end()
 
-    def _set_usage(self, usage: dict | None, model_name: str) -> None:
+    def _set_usage(self, usage: dict[str, Any] | None, model_name: str) -> None:
         if not usage:
             return
         span = self.span
@@ -1078,7 +1064,7 @@ class ResponsesTrace:
 # ── Messages API ─────────────────────────────────────────────────────────────
 
 
-def _messages_block_parts(block: dict) -> list[dict]:
+def _messages_block_parts(block: dict[str, Any]) -> list[dict[str, Any]]:
     """Return the parts of one content block of a Messages API message."""
     block_type = block.get('type')
     if block_type in ('tool_use', 'server_tool_use'):
@@ -1110,7 +1096,7 @@ def _messages_block_parts(block: dict) -> list[dict]:
     return _content_to_parts([block])
 
 
-def _messages_content_parts(content: Any) -> list[dict]:
+def _messages_content_parts(content: Any) -> list[dict[str, Any]]:
     """Return the parts of a Messages API ``content``, a string or blocks."""
     if not isinstance(content, list):
         return _content_to_parts(content)
@@ -1123,7 +1109,7 @@ def _messages_content_parts(content: Any) -> list[dict]:
     return parts
 
 
-def _messages_input_attributes(body: dict) -> dict[str, str]:
+def _messages_input_attributes(body: dict[str, Any]) -> dict[str, str]:
     """Return the system instructions and input messages of a Messages request."""
     attributes = {}
     if system_instructions := _messages_content_parts(body.get('system')):
@@ -1158,7 +1144,7 @@ class MessagesTrace:
     def __init__(
         self,
         model: 'ChatModel',
-        body: dict,
+        body: dict[str, Any],
         stream: bool = False,
         cost: MessagesCost | None = None,
     ):
@@ -1204,7 +1190,7 @@ class MessagesTrace:
     def start(
         cls,
         model: 'ChatModel',
-        body: dict,
+        body: dict[str, Any],
         stream: bool = False,
         cost: MessagesCost | None = None,
     ) -> 'MessagesTrace':
@@ -1227,7 +1213,7 @@ class MessagesTrace:
         self.end(self._reply.message())
 
     @_dont_throw
-    def end(self, message: dict | None) -> None:
+    def end(self, message: dict[str, Any] | None) -> None:
         span = self.span
         if not span.is_recording() or message is None:
             span.end()
@@ -1258,7 +1244,7 @@ class MessagesTrace:
         )
         span.end()
 
-    def _set_usage(self, usage: dict | None, model_name: str) -> None:
+    def _set_usage(self, usage: dict[str, Any] | None, model_name: str) -> None:
         if not usage:
             return
         span = self.span
@@ -1294,7 +1280,9 @@ class MessagesTrace:
         _fail(self.span, self._model._error_type(error), str(error), error)
 
 
-def _tool_definition(function: dict, tool: dict | None = None) -> dict:
+def _tool_definition(
+    function: dict[str, Any], tool: dict[str, Any] | None = None
+) -> dict[str, Any]:
     definition = {'name': function.get('name')}
     if function.get('description'):
         definition['description'] = function.get('description')

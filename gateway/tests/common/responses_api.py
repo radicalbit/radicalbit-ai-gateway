@@ -1,10 +1,13 @@
 """Responses API test helpers shared by the tests of ``endpoints/responses``."""
 
+from collections.abc import Sequence
 import json
+from typing import Any
 
-import httpx
+import httpx2
 from httpx_aiohttp import HttpxAiohttpClient
 import openai
+from typing_extensions import override
 
 from radicalbit_ai_gateway.llm.chat_model import ChatModel
 from radicalbit_ai_gateway.llm.factory import init_chat_model
@@ -66,16 +69,24 @@ class FakeChatModel(ChatModel):
     ``fail_after`` events.
     """
 
-    def __init__(self, native=True, events=(), error=None, fail_after=None):
+    def __init__(
+        self,
+        native=True,
+        events: Sequence[dict[str, Any]] = (),
+        error: Exception | None = None,
+        fail_after: int | None = None,
+    ):
         self.native = native
         self.events = events
         self.error = error
         self.fail_after = fail_after
         self.bodies = []
 
+    @override
     def supports_native_responses(self):
         return self.native
 
+    @override
     async def _astream_native_responses(self, body):
         self.bodies.append(body)
         if self.error:
@@ -85,28 +96,31 @@ class FakeChatModel(ChatModel):
                 raise RuntimeError('connection reset')
             yield event['type'], json.dumps(event)
 
+    @override
     async def _ainvoke_native_responses(self, body):
         self.bodies.append(body)
         if self.error:
             raise self.error
         return self.events[-1]['response']
 
+    @override
     async def _agenerate(self, messages, **kwargs):
         raise NotImplementedError
 
+    @override
     async def _astream(self, messages, **kwargs):
         raise NotImplementedError
         yield
 
 
-def status_error(status: int, body: dict):
+def status_error(status: int, body: dict[str, Any]):
     """Return the error the OpenAI SDK raises for an HTTP error ``status``."""
-    request = httpx.Request('POST', 'https://api.openai.com/v1/responses')
-    response = httpx.Response(status, json=body, request=request)
+    request = httpx2.Request('POST', 'https://api.openai.com/v1/responses')
+    response = httpx2.Response(status, json=body, request=request)
     return openai.APIStatusError(body['error']['message'], response=response, body=body)
 
 
-def events_of(frames: list[str]) -> list[dict]:
+def events_of(frames: list[str]) -> list[dict[str, Any]]:
     """Parse SSE frames, checking each one's ``event:`` line matches its type."""
     events = []
     for frame in frames:

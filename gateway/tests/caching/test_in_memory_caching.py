@@ -2,11 +2,13 @@ import unittest
 
 from freezegun import freeze_time
 import pytest
+from typing_extensions import override
 
 from radicalbit_ai_gateway.caching.in_memory_cache import CacheToolsInMemory
 
 
 class TestCacheToolsInMemory(unittest.IsolatedAsyncioTestCase):
+    @override
     def setUp(self):
         self.cache = CacheToolsInMemory(maxsize=10)
         self.cache_key = 'test-info'

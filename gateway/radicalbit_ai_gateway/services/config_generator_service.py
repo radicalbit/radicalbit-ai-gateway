@@ -1,9 +1,10 @@
 from importlib import resources
 import logging
+from typing import Any
 
 from pydantic import BaseModel
 
-from radicalbit_ai_gateway.llm.messages import HumanMessage, SystemMessage
+from radicalbit_ai_gateway.llm.messages import BaseMessage, HumanMessage, SystemMessage
 from radicalbit_ai_gateway.llm.providers.openai import ChatOpenAI
 from radicalbit_ai_gateway.utils.app_config import get_app_config
 from radicalbit_ai_gateway.utils.exceptions import (
@@ -33,7 +34,7 @@ class ConfigGeneratorService:
                 'Config generator is not configured (missing API key)'
             )
 
-        llm_kwargs: dict = {
+        llm_kwargs: dict[str, Any] = {
             'api_key': config.config_generator_openai_api_key.get_secret_value(),
             'model': config.config_generator_openai_model,
         }
@@ -50,7 +51,7 @@ class ConfigGeneratorService:
                 f'\n\nCurrent draft config (use as starting point):\n{current_draft}'
             )
 
-        messages: list = [
+        messages: list[BaseMessage] = [
             SystemMessage(content=system_prompt),
             HumanMessage(content=user_content),
         ]
@@ -68,9 +69,13 @@ class ConfigGeneratorService:
                 )
 
             try:
-                result: YamlOut = await structured_llm.ainvoke(messages)
+                result = await structured_llm.ainvoke(messages)
             except Exception as e:
                 raise ProjectInternalError(f'Config generation failed: {e}') from e
+            if not isinstance(result, YamlOut):
+                raise ProjectInternalError(
+                    f'Config generation failed: unexpected output {type(result).__name__}'
+                )
 
             try:
                 return validate_gateway_config(result.yaml_content, check_secrets=False)

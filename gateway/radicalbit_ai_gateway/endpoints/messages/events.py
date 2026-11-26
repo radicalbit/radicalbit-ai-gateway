@@ -10,6 +10,7 @@ answer an upstream stream carries.
 from __future__ import annotations
 
 import json
+from typing import Any
 
 from radicalbit_ai_gateway.llm.messages_stream import MESSAGE_DELTA, MESSAGE_START
 
@@ -51,7 +52,9 @@ def _json(value: object) -> str:
     return json.dumps(value, ensure_ascii=False, separators=(',', ':'))
 
 
-def _block_start_and_deltas(block: dict) -> tuple[dict, list[dict]]:
+def _block_start_and_deltas(
+    block: dict[str, Any],
+) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     """Return a content block as ``content_block_start`` shows it, before
     its content, and the deltas that fill it.
 
@@ -86,7 +89,7 @@ def _block_start_and_deltas(block: dict) -> tuple[dict, list[dict]]:
     return block, []
 
 
-def message_events(message: dict) -> list[str]:
+def message_events(message: dict[str, Any]) -> list[str]:
     """Return the SSE frames Anthropic streams for ``message``, a complete
     answer: each block in one delta, a tool use with its full input.
 

@@ -5,6 +5,7 @@ from freezegun import freeze_time
 from openai.types.create_embedding_response import CreateEmbeddingResponse, Usage
 from openai.types.embedding import Embedding
 import pytest
+from typing_extensions import override
 
 from tests.common.cache_keys import chat_key
 from tests.common.db_mock import GROUP_UUID
@@ -17,14 +18,19 @@ from tests.common.scope import scope_of
 
 from radicalbit_ai_gateway.caching.gateway_cache import GatewayCache
 from radicalbit_ai_gateway.caching.in_memory_cache import CacheToolsInMemory
-from radicalbit_ai_gateway.caching.route_cache import RouteCache
+from radicalbit_ai_gateway.caching.route_cache import EnabledCache, RouteCache
 from radicalbit_ai_gateway.endpoints.chat_completions import pipeline as chat_pipeline
 from radicalbit_ai_gateway.endpoints.chat_completions.pipeline import ChatRequest
 from radicalbit_ai_gateway.gateway_route.route import GatewayRoute
 from radicalbit_ai_gateway.guardrails.guardrails import Guardrails
 from radicalbit_ai_gateway.guardrails.judges.judge_engine import JudgeEngine
 from radicalbit_ai_gateway.guardrails.presidio import PresidioEngine
-from radicalbit_ai_gateway.llm.messages import AIMessage, HumanMessage, SystemMessage
+from radicalbit_ai_gateway.llm.messages import (
+    AIMessage,
+    BaseMessage,
+    HumanMessage,
+    SystemMessage,
+)
 from radicalbit_ai_gateway.models.caching import CacheConfig, CacheType, SemanticCaching
 from radicalbit_ai_gateway.models.credentials import Credentials
 from radicalbit_ai_gateway.models.gateway_config import GatewayConfig
@@ -36,13 +42,16 @@ from radicalbit_ai_gateway.services.cost_service import CostService
 
 class FakeSemanticGatewayCache(GatewayCache):
     @property
+    @override
     def cache_type(self) -> CacheType:
         return CacheType.SEMANTIC
 
     # Avoid touching real client storage in this semantic unit test
+    @override
     async def get(self, cache_key: str, **kwargs) -> str | None:
         return None
 
+    @override
     async def set(self, cache_key: str, response: str, ttl: int | None, **kwargs):
         return None
 
@@ -57,8 +66,8 @@ class FakeSemanticGatewayCache(GatewayCache):
 async def test_exact_cache_hit_with_different_history(
     mock_model_invoker_emit_event, mock_emit_event, mock_complete
 ):
-    cost_service: CostService = MagicMock(spec_set=CostService)
-    prompt_manager: PromptManager = MagicMock(spec_set=PromptManager)
+    cost_service = MagicMock(spec_set=CostService)
+    prompt_manager = MagicMock(spec_set=PromptManager)
     chat_registry = [
         Model(
             model_id='openai-o4-mini',
@@ -114,14 +123,14 @@ async def test_exact_cache_hit_with_different_history(
     )
     with freeze_time(initial_datetime):
         # History A + same last user question
-        messages_a = [
+        messages_a: list[BaseMessage] = [
             SystemMessage(content='You are helpful.'),
             HumanMessage(content='Hi'),
             AIMessage(content='Hello!'),
             HumanMessage(content='What is the capital of France?'),
         ]
         # History B different, but same last user question
-        messages_b = [
+        messages_b: list[BaseMessage] = [
             SystemMessage(content='Assist the user.'),
             HumanMessage(content='Hello there'),
             AIMessage(content='Hi!'),
@@ -194,8 +203,8 @@ async def test_semantic_cache_uses_only_last_user_for_key_and_embedding():
             dim=1536,
         ),
     )
-    cost_service: CostService = MagicMock(spec_set=CostService)
-    prompt_manager: PromptManager = MagicMock(spec_set=PromptManager)
+    cost_service = MagicMock(spec_set=CostService)
+    prompt_manager = MagicMock(spec_set=PromptManager)
     project_guardrails = Guardrails(
         presidio_engine=PresidioEngine(),
         judge_engine=JudgeEngine(prompt_manager=prompt_manager),
@@ -238,13 +247,15 @@ async def test_semantic_cache_uses_only_last_user_for_key_and_embedding():
         )
     )
     ai_gateway.cache = RouteCache(
-        backend=backend,
-        cost_service=cost_service,
-        embedder=embedder,
-        embedding_model=embedding_models[0],
+        EnabledCache(
+            backend=backend,
+            cost_service=cost_service,
+            embedder=embedder,
+            embedding_model=embedding_models[0],
+        )
     )
 
-    messages = [
+    messages: list[BaseMessage] = [
         SystemMessage(content='Sys'),
         HumanMessage(content='Earlier question'),
         AIMessage(content='Earlier answer'),

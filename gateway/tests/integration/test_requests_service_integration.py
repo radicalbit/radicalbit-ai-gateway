@@ -9,6 +9,7 @@ from unittest.mock import MagicMock
 import uuid
 
 from fastapi_pagination import Params
+from typing_extensions import override
 
 from tests.common.db_integration_ch import DatabaseIntegrationClickhouse
 from tests.common.db_mock import (
@@ -64,6 +65,7 @@ def _root_span(request_uuid, trace_id, timestamp=T0):
 
 
 class TestRequestsServiceIntegration(DatabaseIntegrationClickhouse):
+    @override
     @classmethod
     def setUpClass(cls):
         super().setUpClass()
@@ -76,17 +78,29 @@ class TestRequestsServiceIntegration(DatabaseIntegrationClickhouse):
             otel_traces_dao=cls.otel_traces_dao,
         )
 
-    def _list(self, page=1, size=50, **filters):
-        kwargs = {
-            'route_names': None,
-            'group_uuids': None,
-            'key_uuids': None,
-            '_from': LONG_AGO,
-            '_to': None,
-            **filters,
-        }
+    def _list(
+        self,
+        page: int = 1,
+        size: int = 50,
+        *,
+        route_names: list[str] | None = None,
+        group_uuids: list[uuid.UUID] | None = None,
+        key_uuids: list[uuid.UUID] | None = None,
+        _from: datetime.datetime | None = LONG_AGO,
+        _to: datetime.datetime | None = None,
+        tags: list[str] | None = None,
+        request_types: list[RequestType] | None = None,
+    ):
         return self.service.get_requests(
-            project_uuid=PROJECT, params=Params(page=page, size=size), **kwargs
+            project_uuid=PROJECT,
+            route_names=route_names,
+            group_uuids=group_uuids,
+            key_uuids=key_uuids,
+            _from=_from,
+            _to=_to,
+            params=Params(page=page, size=size),
+            tags=tags,
+            request_types=request_types,
         )
 
     def test_a_request_with_no_trace_is_a_row_with_a_null_trace_id(self):

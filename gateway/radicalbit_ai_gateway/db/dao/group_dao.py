@@ -4,6 +4,7 @@ from uuid import UUID
 
 from sqlalchemy import delete, select, update
 
+from radicalbit_ai_gateway.db.dao.dml import rows_matched
 from radicalbit_ai_gateway.db.database import Database
 from radicalbit_ai_gateway.db.tables.group_route_table import GroupRoute
 from radicalbit_ai_gateway.db.tables.group_table import Group
@@ -21,7 +22,7 @@ class GroupDAO:
             await session.flush()
             return group
 
-    async def get_by_uuid(self, group_uuid: UUID) -> Group:
+    async def get_by_uuid(self, group_uuid: UUID) -> Group | None:
         async with self.db.begin_session() as session:
             stmt = select(Group).where(Group.uuid == group_uuid)
             return await session.scalar(stmt)
@@ -54,7 +55,7 @@ class GroupDAO:
                 .where(Group.uuid == group_uuid)
                 .values(name=name, updated_at=now)
             )
-            return (await session.execute(query)).rowcount
+            return await rows_matched(session, query)
 
     async def add_route(self, group_route: GroupRoute) -> GroupRoute:
         async with self.db.begin_session() as session:
@@ -71,7 +72,7 @@ class GroupDAO:
                 GroupRoute.project_uuid == project_uuid,
                 GroupRoute.route_name == route_name,
             )
-            return (await session.execute(query)).rowcount
+            return await rows_matched(session, query)
 
     async def get_by_name_and_owner(self, name: str, owner: str) -> Group | None:
         async with self.db.begin_session() as session:
@@ -116,7 +117,7 @@ class GroupDAO:
                 GroupRoute.project_uuid == project_uuid,
                 GroupRoute.route_name.notin_(valid_route_names),
             )
-            return (await session.execute(query)).rowcount
+            return await rows_matched(session, query)
 
     async def get_route_names_by_group_uuid(self, group_uuid: UUID) -> list[str]:
         """Return fully-qualified route names (project_name/route_name) for a group."""

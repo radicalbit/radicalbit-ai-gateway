@@ -8,7 +8,9 @@ from fastapi import FastAPI
 from fastapi_pagination import Page, Params
 import pytest
 from starlette.testclient import TestClient
+from typing_extensions import override
 
+from radicalbit_ai_gateway.middleware.exception_handlers import add_exception_handler
 from radicalbit_ai_gateway.models.request_event_type import RequestType
 from radicalbit_ai_gateway.models.trace_dto import (
     ErrorEvents,
@@ -42,6 +44,7 @@ def _r(name: str) -> str:
 
 
 class TestTracingRoute(unittest.TestCase):
+    @override
     @classmethod
     def setUpClass(cls):
         cls.prefix = '/public/api/v1'
@@ -66,7 +69,7 @@ class TestTracingRoute(unittest.TestCase):
             project_service=cls.project_service,
         )
         app = FastAPI(title='AI Gateway', debug=True)
-        app.add_exception_handler(GatewayError, gateway_exception_handler)
+        add_exception_handler(app, GatewayError, gateway_exception_handler)
         app.state.project_configs = {PROJECT_NAME: project_entry_mock}
         app.include_router(router, prefix=cls.prefix)
         cls.client = TestClient(app)

@@ -3,7 +3,7 @@
 """
 
 from collections.abc import Callable
-from typing import Any
+from typing import Any, TypeVar
 
 from radicalbit_ai_gateway.llm.chat_model import ChatModel
 from radicalbit_ai_gateway.llm.embeddings import Embeddings
@@ -42,6 +42,8 @@ EMBEDDING_PROVIDERS: dict[str, Callable[..., Embeddings]] = {
     'google_genai': google_genai.build_embeddings,
     'mistralai': mistralai.build_embeddings,
 }
+M = TypeVar('M')
+
 # Gateway params that are not the provider's.
 _GATEWAY_PARAMS = frozenset({ENABLE_PROMPT_CACHE_PARAM})
 # Providers whose models open their own HTTP client.
@@ -53,7 +55,9 @@ def normalize_provider(provider: str) -> str:
     return provider.replace('-', '_').lower()
 
 
-def _builder(registry: dict[str, Callable], provider: str, kind: str) -> Callable:
+def _builder(
+    registry: dict[str, Callable[..., M]], provider: str, kind: str
+) -> Callable[..., M]:
     try:
         return registry[provider]
     except KeyError:
@@ -81,7 +85,7 @@ def build_chat_model(
     model: Model,
     http_client: Any = None,
     *,
-    params: dict | None = None,
+    params: dict[str, Any] | None = None,
     mock: bool = True,
 ) -> ChatModel:
     """Build the chat model of a configured ``model``.
@@ -132,5 +136,5 @@ def _underscored(provider: str) -> str:
     return provider.replace('-', '_')
 
 
-def _credentials(model: Model) -> dict:
+def _credentials(model: Model) -> dict[str, Any]:
     return model.credentials.model_dump(exclude_none=True) if model.credentials else {}

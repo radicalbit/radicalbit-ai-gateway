@@ -1,13 +1,13 @@
 import asyncio
-from collections.abc import Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass, field
+from enum import Enum
 import logging
 from typing import Annotated, Any
 from uuid import UUID
 
 from fastapi import APIRouter, File, Query, Request, Response, UploadFile
 from fastapi.sse import EventSourceResponse
-from starlette.responses import StreamingResponse
 
 from radicalbit_ai_gateway.models.auth_dto import (
     GroupFullOut,
@@ -93,8 +93,8 @@ class ProjectRoute:
 
         filter_project_uuids_fn = config.filter_project_uuids_fn or _all_project_uuids
         router = APIRouter()
-        projects = ['projects']
-        configs = ['configs']
+        projects: list[str | Enum] = ['projects']
+        configs: list[str | Enum] = ['configs']
 
         @router.post(
             '/projects',
@@ -232,29 +232,37 @@ class ProjectRoute:
             )
             return project
 
-        @router.post(
-            '/projects/{project_uuid}/configs/{config_uuid}/generate-config',
-            status_code=200,
-            response_model=GenerateConfigOut,
-            tags=configs,
-        )
-        @route_meta(entity_type='PROJECT', entity_uuid_param='project_uuid')
-        async def generate_config(
-            project_uuid: UUID, config_uuid: UUID, gen_in: GenerateConfigIn
-        ):
-            config_slot = await project_service.get_config(project_uuid, config_uuid)
-            # A served slot is read-only: generating against it is pointless
-            # since the result could not be saved back (see update_config).
-            if config_slot.config_status == ConfigStatus.SERVED:
-                raise ProjectConfigValidationError(
-                    f'Config {config_uuid} is served and cannot be used to '
-                    'generate a new configuration'
-                )
-            yaml_str = await config_generator_service.generate_config(
-                gen_in.description, config_slot.config_file
+        # The endpoint exists only on a gateway given a config generator.
+        if config_generator_service is not None:
+            generator = config_generator_service
+
+            @router.post(
+                '/projects/{project_uuid}/configs/{config_uuid}/generate-config',
+                status_code=200,
+                response_model=GenerateConfigOut,
+                tags=configs,
             )
-            logger.info('Generated config %s for project %s', config_uuid, project_uuid)
-            return GenerateConfigOut(config_file=yaml_str)
+            @route_meta(entity_type='PROJECT', entity_uuid_param='project_uuid')
+            async def generate_config(
+                project_uuid: UUID, config_uuid: UUID, gen_in: GenerateConfigIn
+            ):
+                config_slot = await project_service.get_config(
+                    project_uuid, config_uuid
+                )
+                # A served slot is read-only: generating against it is pointless
+                # since the result could not be saved back (see update_config).
+                if config_slot.config_status == ConfigStatus.SERVED:
+                    raise ProjectConfigValidationError(
+                        f'Config {config_uuid} is served and cannot be used to '
+                        'generate a new configuration'
+                    )
+                yaml_str = await generator.generate_config(
+                    gen_in.description, config_slot.config_file
+                )
+                logger.info(
+                    'Generated config %s for project %s', config_uuid, project_uuid
+                )
+                return GenerateConfigOut(config_file=yaml_str)
 
         @router.get(
             '/projects/{project_uuid}/configs/{config_uuid}/export',
@@ -398,7 +406,7 @@ class ProjectRoute:
         async def stream_budget_limits_consumption(
             request: Request,
             projects: Annotated[list[UUID] | None, Query()] = None,
-        ) -> StreamingResponse:
+        ) -> AsyncIterator[dict[str, dict[str, Any]]]:
             while True:
                 visible = await filter_project_uuids_fn(request, projects or [])
                 consumption = await project_service.get_budget_limits_consumption(

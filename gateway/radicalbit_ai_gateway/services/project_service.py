@@ -69,7 +69,7 @@ def route_budget_conflicts(
     budget_routing: list[str] = []
     draft_configs: list[ProjectBudgetLimitDraftConflictOut] = []
     for config in configs:
-        if not config.config_file:
+        if config.config_file is None or config.config_file == '':
             continue
         try:
             budgets = find_route_budgets(config.config_file)
@@ -215,7 +215,11 @@ class ProjectService:
     async def approve_config(self, project_uuid: UUID, config_uuid: UUID) -> ProjectOut:
         config = await self._get_config_or_raise(project_uuid, config_uuid)
 
-        if config.config_status != ConfigStatus.DRAFT.value or not config.config_file:
+        if (
+            config.config_status != ConfigStatus.DRAFT.value
+            or config.config_file is None
+            or config.config_file == ''
+        ):
             raise ProjectConfigStateError(
                 f'Config {config_uuid} has no draft configuration to approve',
                 'config_no_draft_to_approve',
@@ -248,7 +252,7 @@ class ProjectService:
     async def serve_config(self, project_uuid: UUID, config_uuid: UUID) -> ProjectOut:
         config = await self._get_config_or_raise(project_uuid, config_uuid)
 
-        if not config.config_file:
+        if config.config_file is None or config.config_file == '':
             raise ProjectConfigValidationError(
                 f'Config {config_uuid} has no configuration to serve'
             )
@@ -331,13 +335,14 @@ class ProjectService:
 
     @staticmethod
     def _build_configs_zip(
-        project_name: str, configs: list[ProjectConfig]
+        project_name: str, configs: list[tuple[ProjectConfig, str]]
     ) -> tuple[bytes, str]:
+        """Zip each config's file, given with the config it is read from."""
         buffer = io.BytesIO()
         with zipfile.ZipFile(buffer, 'w', zipfile.ZIP_DEFLATED) as archive:
-            for config in configs:
+            for config, config_file in configs:
                 entry = ProjectService._config_entry_name(project_name, config)
-                archive.writestr(f'{entry}.yaml', config.config_file)
+                archive.writestr(f'{entry}.yaml', config_file)
         zip_name = _sanitize_filename(f'{project_name}_config')
         return buffer.getvalue(), f'{zip_name}.zip'
 
@@ -346,18 +351,18 @@ class ProjectService:
     ) -> tuple[bytes, str]:
         project = await self._get_project_or_raise(project_uuid)
         config = await self._get_config_or_raise(project_uuid, config_uuid)
-        if not config.config_file:
+        if config.config_file is None or config.config_file == '':
             raise ProjectConfigValidationError(
                 f'Config {config_uuid} has no configuration to export'
             )
-        return self._build_configs_zip(project.name, [config])
+        return self._build_configs_zip(project.name, [(config, config.config_file)])
 
     async def export_all_configs(self, project_uuid: UUID) -> tuple[bytes, str]:
         project = await self._get_project_or_raise(project_uuid)
         configs = [
-            config
+            (config, config.config_file)
             for config in await self.project_config_dao.list_by_project(project_uuid)
-            if config.config_file
+            if config.config_file is not None and config.config_file != ''
         ]
         if not configs:
             raise ProjectConfigValidationError(
@@ -491,6 +496,11 @@ class ProjectService:
             value_in.value,
         )
         updated = await self.project_budget_limit_dao.get_by_uuid(limit_uuid)
+        if updated is None:
+            # Deleted by a concurrent request after the update.
+            raise ProjectBudgetLimitNotFoundError(
+                f'Budget limit {limit_uuid} not found for project {project_uuid}'
+            )
         return ProjectBudgetLimitUpdatedOut(
             **ProjectBudgetLimitOut.from_project_budget_limit(updated).model_dump(),
             previous_value=previous_value,

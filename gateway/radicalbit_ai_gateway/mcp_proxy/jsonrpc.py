@@ -21,7 +21,7 @@ def is_valid_request_id(request_id: Any) -> bool:
     return isinstance(request_id, RequestId) and not isinstance(request_id, bool)
 
 
-def result_message(request_id: RequestId, result: dict) -> dict:
+def result_message(request_id: RequestId, result: dict[str, Any]) -> dict[str, Any]:
     return {'jsonrpc': '2.0', 'id': request_id, 'result': result}
 
 
@@ -30,7 +30,7 @@ def error_message(
     code: int,
     message: str,
     data: Any = None,
-) -> dict:
+) -> dict[str, Any]:
     error: dict[str, Any] = {'code': code, 'message': message}
     if data is not None:
         error['data'] = data

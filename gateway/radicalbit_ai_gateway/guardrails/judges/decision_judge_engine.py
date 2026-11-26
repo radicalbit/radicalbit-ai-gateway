@@ -2,6 +2,7 @@ from dataclasses import dataclass
 import json
 import logging
 import time
+from typing import Any
 
 import httpx
 from opentelemetry import trace
@@ -11,7 +12,6 @@ from radicalbit_ai_gateway.invocation.decision_model_invoker import (
     DECISION_MODEL_TYPE,
     DecisionModelInvoker,
     billed_input_tokens,
-    is_number,
 )
 from radicalbit_ai_gateway.invocation.fallback_chain import (
     CallContext,
@@ -146,7 +146,7 @@ class DecisionJudgeEngine:
         Every answer with usage is judge spend: it emits cost events and
         consumes the request's limits through `count_judge_usage`.
         """
-        question: dict = {'type': 'noul', 'instructions': params.instructions}
+        question: dict[str, Any] = {'type': 'noul', 'instructions': params.instructions}
         if params.criteria:
             question['criteria'] = params.criteria.model_dump()
         body = {
@@ -156,28 +156,29 @@ class DecisionJudgeEngine:
 
         _set_judge_request_attributes(params, body['state'])
 
-        if self._invoker is None:
+        invoker = self._invoker
+        if invoker is None:
             raise self._error(params.model_id, 'no decision models are configured')
         spend = _JudgeSpend(
             target_model_id=params.model_id,
             identity={k: kwargs.get(k, '') for k in _IDENTITY_KEYS},
             count_usage=count_judge_usage,
         )
-        target = self._model(params.model_id)
+        target = self._model(invoker, params.model_id)
         fallback = (
-            [(self._model(params.fallback_model_id), None)]
+            [(self._model(invoker, params.fallback_model_id), None)]
             if params.fallback_model_id
             else []
         )
 
-        async def ask(candidate: Candidate) -> Reply:
+        async def ask(candidate: Candidate) -> Reply[float]:
             if candidate.is_fallback:
                 logger.warning(
                     'Decision judge falls back from model %s to model %s',
                     params.model_id,
                     params.fallback_model_id,
                 )
-            noul = await self._ask_model(candidate.model.model_id, body, spend)
+            noul = await self._ask_model(invoker, candidate.model.model_id, body, spend)
             _set_judge_answer_attributes(
                 candidate.model.model_id,
                 fallback_triggered=candidate.is_fallback,
@@ -194,7 +195,7 @@ class DecisionJudgeEngine:
                     target_model_id=params.model_id,
                     is_judge=True,
                 ),
-                recorder=self._invoker.recorder,
+                recorder=invoker.recorder,
                 # A model that rejects the request (a 4xx other than 429)
                 # would reject it on the fallback too.
                 final=lambda error: (
@@ -204,22 +205,28 @@ class DecisionJudgeEngine:
             ),
         ).call(ask)
 
-    def _model(self, model_id: str) -> Model:
+    def _model(self, invoker: DecisionModelInvoker, model_id: str) -> Model:
         """Return the decision model ``model_id``. One the project does not
         define gives no answer when asked (see ``DecisionModelInvoker.call``).
         """
-        if model_id in self._invoker.model_map:
-            return self._invoker.model_map[model_id][0]
+        if model_id in invoker.model_map:
+            return invoker.model_map[model_id][0]
         return Model(model_id=model_id, model=f'typesafe/{model_id}')
 
-    async def _ask_model(self, model_id: str, body: dict, spend: _JudgeSpend) -> float:
-        if model_id not in self._invoker.model_map:
+    async def _ask_model(
+        self,
+        invoker: DecisionModelInvoker,
+        model_id: str,
+        body: dict[str, Any],
+        spend: _JudgeSpend,
+    ) -> float:
+        if model_id not in invoker.model_map:
             # Never called: the chain records no call, and raises this error
             # when no other model answers.
             raise Skip(self._error(model_id, f'Decision model {model_id} not defined'))
         start_time = time.monotonic()
         try:
-            response = await self._invoker.call(model_id, body)
+            response = await invoker.call(model_id, body)
         except ModelInvokerBadRequest as e:
             raise self._error(model_id, str(e)) from e
         latency_ms = (time.monotonic() - start_time) * 1000
@@ -239,7 +246,7 @@ class DecisionJudgeEngine:
         except ValueError:
             payload = None
         # Count before reading the noul. A bad answer still spent tokens.
-        spent = await self._count_spend(model_id, payload, latency_ms, spend)
+        spent = await self._count_spend(invoker, model_id, payload, latency_ms, spend)
         try:
             return self._read_noul(payload, model_id)
         except JudgeInternalError as e:
@@ -247,6 +254,7 @@ class DecisionJudgeEngine:
 
     async def _count_spend(
         self,
+        invoker: DecisionModelInvoker,
         model_id: str,
         payload: object,
         latency_ms: float,
@@ -260,8 +268,8 @@ class DecisionJudgeEngine:
         input_tokens = billed_input_tokens(payload)
         if input_tokens == 0:
             return False
-        model = self._invoker.model_map[model_id][0]
-        self._invoker.recorder.invocation(
+        model = invoker.model_map[model_id][0]
+        invoker.recorder.invocation(
             Call(
                 identity=RequestIdentity(**spend.identity),
                 model_type=DECISION_MODEL_TYPE,
@@ -281,11 +289,13 @@ class DecisionJudgeEngine:
         return True
 
     def _read_noul(self, payload: object, model_id: str) -> float:
-        try:
-            noul = payload['answers'][QUESTION_ID]['noul']
-        except (KeyError, TypeError):
-            raise self._error(model_id, 'the answer has no noul') from None
-        if not is_number(noul):
+        answers = payload.get('answers') if isinstance(payload, dict) else None
+        answer = answers.get(QUESTION_ID) if isinstance(answers, dict) else None
+        if not isinstance(answer, dict) or 'noul' not in answer:
+            raise self._error(model_id, 'the answer has no noul')
+        noul = answer['noul']
+        # bool is an int: it is not a number.
+        if isinstance(noul, bool) or not isinstance(noul, int | float):
             raise self._error(model_id, f'noul is not a number: {noul!r}')
         return float(noul)
 

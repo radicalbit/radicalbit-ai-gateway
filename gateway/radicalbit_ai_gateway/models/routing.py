@@ -1,8 +1,19 @@
 from enum import Enum
-from typing import Annotated, Literal, Union
+from typing import Annotated, Generic, Literal, Protocol, Union
 
 from cron_converter import Cron
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Discriminator,
+    Field,
+    Tag,
+    field_validator,
+    model_validator,
+)
+
+# typing_extensions: a TypeVar default needs Python 3.13.
+from typing_extensions import TypeVar
 
 from radicalbit_ai_gateway.models.guardrails import GuardrailMessageRole
 
@@ -34,89 +45,141 @@ class BudgetConditions(BaseModel):
     threshold: float = Field(ge=0.0, le=1.0)
 
 
-class OutputMappingEntry(BaseModel):
+Conditions = list[str] | TokenLengthConditions | BudgetConditions
+
+# The conditions an entry holds: the configuration's, or a response's.
+ConditionsT = TypeVar('ConditionsT', bound=Conditions, default=Conditions)
+
+
+class OutputMappingEntry(BaseModel, Generic[ConditionsT]):
     model_config = ConfigDict(extra='forbid')
 
     model_id: str
-    conditions: list[str] | TokenLengthConditions | BudgetConditions
+    conditions: ConditionsT
 
 
-class RoutingConfig(BaseModel):
+ConditionsT_co = TypeVar(
+    'ConditionsT_co', bound=Conditions, default=Conditions, covariant=True
+)
+
+
+class ConditionsEntry(Protocol[ConditionsT_co]):
+    """What the routing configs read of an output_mapping entry with conditions."""
+
+    @property
+    def model_id(self) -> str: ...
+
+    @property
+    def conditions(self) -> ConditionsT_co: ...
+
+
+# The output_mapping entries of a routing config: the configuration's, or a
+# response's.
+EntryT = TypeVar('EntryT')
+ConditionsEntryT = TypeVar(
+    'ConditionsEntryT', bound=ConditionsEntry, default=OutputMappingEntry
+)
+# Deterministic rules read conditions of one kind each.
+StringConditionsEntryT = TypeVar(
+    'StringConditionsEntryT',
+    bound=ConditionsEntry[list[str]],
+    default=OutputMappingEntry[list[str]],
+)
+TokenLengthConditionsEntryT = TypeVar(
+    'TokenLengthConditionsEntryT',
+    bound=ConditionsEntry[TokenLengthConditions],
+    default=OutputMappingEntry[TokenLengthConditions],
+)
+BudgetConditionsEntryT = TypeVar(
+    'BudgetConditionsEntryT',
+    bound=ConditionsEntry[BudgetConditions],
+    default=OutputMappingEntry[BudgetConditions],
+)
+
+
+class RoutingConfig(BaseModel, Generic[EntryT]):
     """Base class for all routing configurations."""
 
     model_config = ConfigDict(extra='forbid')
 
     name: str
     default_model_id: str
-    output_mapping: list[OutputMappingEntry]
+    output_mapping: list[EntryT]
 
     @field_validator('output_mapping')
     @classmethod
-    def validate_output_mapping(
-        cls, v: list[OutputMappingEntry]
-    ) -> list[OutputMappingEntry]:
+    def validate_output_mapping(cls, v: list[EntryT]) -> list[EntryT]:
         if not v:
             raise ValueError('output_mapping must not be empty')
         return v
 
 
-class DeterministicRoutingConfig(RoutingConfig):
+class DeterministicRoutingConfigBase(RoutingConfig[EntryT], Generic[EntryT]):
+    """A fixed rule picks the model; each rule has its own config class."""
+
     type: Literal['deterministic'] = 'deterministic'
-    rule: RoutingRuleType
+
+
+class KeywordRoutingConfig(
+    DeterministicRoutingConfigBase[StringConditionsEntryT],
+    Generic[StringConditionsEntryT],
+):
+    """The first entry with a keyword in the last human message wins."""
+
+    rule: Literal[RoutingRuleType.KEYWORD]
+
+
+class TimeRoutingConfig(
+    DeterministicRoutingConfigBase[StringConditionsEntryT],
+    Generic[StringConditionsEntryT],
+):
+    """The first entry with a cron expression matching the current time wins."""
+
+    rule: Literal[RoutingRuleType.TIME]
 
     @model_validator(mode='after')
-    def validate_conditions_match_rule(self) -> Self:
+    def validate_cron_expressions(self) -> Self:
         for entry in self.output_mapping:
-            if self.rule in (RoutingRuleType.KEYWORD, RoutingRuleType.TIME):
-                if not isinstance(entry.conditions, list):
+            for cron_str in entry.conditions:
+                try:
+                    Cron(cron_str)
+                except Exception as e:  # noqa: PERF203
                     raise ValueError(
-                        f"Rule '{self.rule.value}': conditions for model '{entry.model_id}' must be a list of strings"
-                    )
-                if self.rule == RoutingRuleType.TIME:
-                    for cron_str in entry.conditions:
-                        try:
-                            Cron(cron_str)
-                        except Exception as e:  # noqa: PERF203
-                            raise ValueError(
-                                f"invalid cron expression '{cron_str}' for model '{entry.model_id}': {e}"
-                            ) from e
-            elif self.rule in (
-                RoutingRuleType.TOKEN_LENGTH,
-                RoutingRuleType.CONTEXT_LENGTH,
-            ):
-                if not isinstance(entry.conditions, TokenLengthConditions):
-                    raise ValueError(
-                        f"Rule '{self.rule.value}': conditions for model '{entry.model_id}' must be a TokenLengthConditions object"
-                    )
-                set_fields = sum(
-                    f is not None
-                    for f in (
-                        entry.conditions.gte,
-                        entry.conditions.lte,
-                        entry.conditions.between,
-                    )
+                        f"invalid cron expression '{cron_str}' for model '{entry.model_id}': {e}"
+                    ) from e
+        return self
+
+
+class TokenLengthRoutingConfig(
+    DeterministicRoutingConfigBase[TokenLengthConditionsEntryT],
+    Generic[TokenLengthConditionsEntryT],
+):
+    """Routes on the token count: of the last human message (token_length) or
+    of the whole conversation (context_length).
+    """
+
+    rule: Literal[RoutingRuleType.TOKEN_LENGTH, RoutingRuleType.CONTEXT_LENGTH]
+
+    @model_validator(mode='after')
+    def validate_conditions(self) -> Self:
+        for entry in self.output_mapping:
+            conditions = entry.conditions
+            set_fields = sum(
+                f is not None
+                for f in (conditions.gte, conditions.lte, conditions.between)
+            )
+            if set_fields != 1:
+                raise ValueError(
+                    f"Rule '{self.rule.value}': conditions for model '{entry.model_id}' must have exactly one of gte, lte, or between set"
                 )
-                if set_fields != 1:
-                    raise ValueError(
-                        f"Rule '{self.rule.value}': conditions for model '{entry.model_id}' must have exactly one of gte, lte, or between set"
-                    )
-                if (
-                    entry.conditions.between is not None
-                    and entry.conditions.between[0] > entry.conditions.between[1]
-                ):
-                    raise ValueError(
-                        f"Rule '{self.rule.value}': conditions for model '{entry.model_id}' must have between[0] <= between[1]"
-                    )
-
-            elif self.rule == RoutingRuleType.BUDGET:
-                if not isinstance(entry.conditions, BudgetConditions):
-                    raise ValueError(
-                        f"Rule 'budget': conditions for model '{entry.model_id}' must be a BudgetConditions object"
-                    )
-
-        if self.rule in (RoutingRuleType.TOKEN_LENGTH, RoutingRuleType.CONTEXT_LENGTH):
-            self._validate_no_overlapping_ranges()
-
+            if (
+                conditions.between is not None
+                and conditions.between[0] > conditions.between[1]
+            ):
+                raise ValueError(
+                    f"Rule '{self.rule.value}': conditions for model '{entry.model_id}' must have between[0] <= between[1]"
+                )
+        self._validate_no_overlapping_ranges()
         return self
 
     def _validate_no_overlapping_ranges(self) -> None:
@@ -130,8 +193,6 @@ class DeterministicRoutingConfig(RoutingConfig):
         other_ranges: list[tuple[str, float, float]] = []
         for entry in self.output_mapping:
             cond = entry.conditions
-            if not isinstance(cond, TokenLengthConditions):
-                continue
             if cond.between is not None:
                 between_ranges.append(
                     (entry.model_id, cond.between[0], cond.between[1])
@@ -159,7 +220,61 @@ class DeterministicRoutingConfig(RoutingConfig):
                     )
 
 
-class TextClassificationRoutingConfig(RoutingConfig):
+class BudgetRoutingConfig(
+    DeterministicRoutingConfigBase[BudgetConditionsEntryT],
+    Generic[BudgetConditionsEntryT],
+):
+    """The entry with the highest threshold the route's budget usage reached wins."""
+
+    rule: Literal[RoutingRuleType.BUDGET]
+
+
+def deterministic_rule(value: object) -> object:
+    """Return the rule of a deterministic routing config: its input's or a model's."""
+    rule = (
+        value.get('rule') if isinstance(value, dict) else getattr(value, 'rule', None)
+    )
+    return rule.value if isinstance(rule, RoutingRuleType) else rule
+
+
+def routing_tag(value: object) -> object:
+    """Return the tag of a routing config in one flat union: its rule for
+    deterministic routing, its type otherwise.
+    """
+    routing_type = (
+        value.get('type') if isinstance(value, dict) else getattr(value, 'type', None)
+    )
+    if routing_type == 'deterministic':
+        return deterministic_rule(value)
+    return routing_type
+
+
+# Picks the config class by rule. A callable, not 'rule', for an error that
+# lists the rules' values: the default lists the enum members' reprs.
+RULE_DISCRIMINATOR = Discriminator(
+    deterministic_rule,
+    custom_error_type='invalid_routing_rule',
+    custom_error_message=(
+        'rule must be one of: '
+        + ', '.join(repr(rule.value) for rule in RoutingRuleType)
+    ),
+)
+
+DeterministicRoutingConfig = Annotated[
+    Union[
+        Annotated[KeywordRoutingConfig, Tag(RoutingRuleType.KEYWORD.value)],
+        Annotated[TokenLengthRoutingConfig, Tag(RoutingRuleType.TOKEN_LENGTH.value)],
+        Annotated[TokenLengthRoutingConfig, Tag(RoutingRuleType.CONTEXT_LENGTH.value)],
+        Annotated[TimeRoutingConfig, Tag(RoutingRuleType.TIME.value)],
+        Annotated[BudgetRoutingConfig, Tag(RoutingRuleType.BUDGET.value)],
+    ],
+    RULE_DISCRIMINATOR,
+]
+
+
+class TextClassificationRoutingConfig(
+    RoutingConfig[ConditionsEntryT], Generic[ConditionsEntryT]
+):
     type: Literal['text_classification'] = 'text_classification'
     url: str
     timeout: float = Field(
@@ -174,7 +289,7 @@ class TextClassificationRoutingConfig(RoutingConfig):
         return v
 
 
-class SemanticRoutingConfig(RoutingConfig):
+class SemanticRoutingConfig(RoutingConfig[ConditionsEntryT], Generic[ConditionsEntryT]):
     type: Literal['semantic'] = 'semantic'
     embedding_model_id: str
     similarity_threshold: float = Field(default=0.35, ge=0.0, le=1.0)
@@ -205,10 +320,15 @@ class DecisionOutputMappingEntry(BaseModel):
         return v
 
 
-class ModelChoiceRoutingConfig(RoutingConfig):
+# The options of a routing model: the configuration's, or a response's.
+ChoiceEntryT = TypeVar(
+    'ChoiceEntryT', bound=DecisionOutputMappingEntry, default=DecisionOutputMappingEntry
+)
+
+
+class ModelChoiceRoutingConfig(RoutingConfig[ChoiceEntryT], Generic[ChoiceEntryT]):
     """A routing model reads the request and picks among described options."""
 
-    output_mapping: list[DecisionOutputMappingEntry]
     history: Literal['last', 'all'] = 'last'
     message_roles: list[GuardrailMessageRole] | None = None
 
@@ -230,7 +350,9 @@ class ModelChoiceRoutingConfig(RoutingConfig):
         return self
 
 
-class DecisionRoutingConfig(ModelChoiceRoutingConfig):
+class DecisionRoutingConfig(
+    ModelChoiceRoutingConfig[ChoiceEntryT], Generic[ChoiceEntryT]
+):
     """A decision model chooses the chat model among the output_mapping options."""
 
     type: Literal['decision'] = 'decision'
@@ -248,16 +370,14 @@ class DecisionRoutingConfig(ModelChoiceRoutingConfig):
 
     @field_validator('output_mapping')
     @classmethod
-    def validate_at_least_two_options(
-        cls, v: list[DecisionOutputMappingEntry]
-    ) -> list[DecisionOutputMappingEntry]:
+    def validate_at_least_two_options(cls, v: list[ChoiceEntryT]) -> list[ChoiceEntryT]:
         # The base validator only rejects an empty list.
         if len(v) < 2:
             raise ValueError('decision routing needs at least 2 output_mapping entries')
         return v
 
 
-class LLMRoutingConfig(ModelChoiceRoutingConfig):
+class LLMRoutingConfig(ModelChoiceRoutingConfig[ChoiceEntryT], Generic[ChoiceEntryT]):
     """A chat model scores the request against every output_mapping option."""
 
     type: Literal['llm'] = 'llm'

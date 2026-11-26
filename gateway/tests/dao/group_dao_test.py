@@ -1,5 +1,7 @@
 import uuid
 
+from typing_extensions import override
+
 from tests.common import db_mock
 from tests.common.db_integration import AsyncDatabaseIntegration
 
@@ -11,6 +13,7 @@ from radicalbit_ai_gateway.db.tables.group_route_table import GroupRoute
 
 
 class GroupDAOTest(AsyncDatabaseIntegration):
+    @override
     @classmethod
     def setUpClass(cls):
         super().setUpClass()
@@ -20,6 +23,7 @@ class GroupDAOTest(AsyncDatabaseIntegration):
         cls.project_dao = ProjectDAO(cls.db)
         cls.project_uuid = uuid.uuid4()
 
+    @override
     async def asyncSetUp(self):
         await self.insert(
             db_mock.get_sample_project(uuid=self.project_uuid, name='my-project')
@@ -60,6 +64,7 @@ class GroupDAOTest(AsyncDatabaseIntegration):
         res = await self.group_dao.get_all()
         assert len(res) == 2
         deleted_group = await self.group_dao.delete_by_uuid(groups[0].uuid)
+        assert deleted_group is not None
         assert deleted_group.uuid == groups[0].uuid
         res = await self.group_dao.get_all()
         assert len(res) == 1
@@ -75,6 +80,7 @@ class GroupDAOTest(AsyncDatabaseIntegration):
         await self.group_dao.delete_by_uuid(group.uuid)
 
         kept = await self.key_dao.get_by_uuid(key.uuid)
+        assert kept is not None
         assert kept.group_uuid is None
         assert [
             item.uuid for item in await self.key_limit_dao.get_by_key_uuid(key.uuid)
@@ -85,6 +91,7 @@ class GroupDAOTest(AsyncDatabaseIntegration):
         inserted = await self.group_dao.insert(group)
         assert inserted.uuid == group.uuid
         retrieved_group = await self.group_dao.get_by_uuid(group.uuid)
+        assert retrieved_group is not None
         assert retrieved_group.uuid == group.uuid
         assert retrieved_group.name == group.name
 
@@ -96,6 +103,7 @@ class GroupDAOTest(AsyncDatabaseIntegration):
         update_rows = await self.group_dao.update_group_name(group.uuid, new_name)
         assert update_rows == 1
         retrieved_group = await self.group_dao.get_by_uuid(group.uuid)
+        assert retrieved_group is not None
         assert retrieved_group.uuid == group.uuid
         assert retrieved_group.name == new_name
 
@@ -260,6 +268,19 @@ class GroupDAOTest(AsyncDatabaseIntegration):
         assert await self.group_dao.get_route_names_by_group_uuid(group.uuid) == [
             'my-project/route-B'
         ]
+        # A route the group no longer has matches nothing.
+        assert (
+            await self.group_dao.remove_project_route(
+                group.uuid, self.project_uuid, 'route-A'
+            )
+            == 0
+        )
+        assert (
+            await self.group_dao.remove_project_route(
+                group.uuid, uuid.uuid4(), 'route-B'
+            )
+            == 0
+        )
 
     async def test_get_by_name_and_owner(self):
         group = db_mock.get_sample_group(uuid=uuid.uuid4(), name='finance')
@@ -267,6 +288,7 @@ class GroupDAOTest(AsyncDatabaseIntegration):
 
         found = await self.group_dao.get_by_name_and_owner('finance', 'gateway')
 
+        assert found is not None
         assert found.uuid == group.uuid
         assert await self.group_dao.get_by_name_and_owner('finance', 'idp') is None
 
@@ -287,6 +309,7 @@ class GroupDAOTest(AsyncDatabaseIntegration):
             self.project_uuid, 'route-A', key.uuid
         )
 
+        assert found is not None
         assert found.uuid == group.uuid
 
     async def test_check_key_uuid_for_route_is_none_off_the_groups_routes(self):

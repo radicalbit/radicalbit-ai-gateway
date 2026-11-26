@@ -6,6 +6,7 @@ over HTTP with pook, and sends as an Anthropic client does.
 """
 
 import json
+from typing import Any
 
 import pook
 
@@ -76,12 +77,12 @@ MODEL_EVENTS = {
 }
 
 
-def error_body(error_type: str, message: str) -> dict:
+def error_body(error_type: str, message: str) -> dict[str, Any]:
     """Return a Messages API error body."""
     return {'type': 'error', 'error': {'type': error_type, 'message': message}}
 
 
-def error_shape(body: dict) -> dict:
+def error_shape(body: dict[str, Any]) -> dict[str, Any]:
     """Return a Messages API error body without its message."""
     return {'type': body['type'], 'error': {'type': body['error']['type']}}
 
@@ -93,14 +94,14 @@ OVERLOADED = error_body('overloaded_error', 'busy')
 
 
 def messages_routes(
-    *models: dict,
+    *models: dict[str, Any],
     route_models: list[str] | None = None,
     fallbacks: list[str] | None = None,
-    routing: dict | None = None,
-    config: dict | None = None,
+    routing: dict[str, Any] | None = None,
+    config: dict[str, Any] | None = None,
     project_uuid: str = '',
     **route: object,
-) -> dict:
+) -> dict[str, Any]:
     """Build the ``assistant`` route over ``models``: by default, on the first.
 
     ``route`` holds more keys of the route, ``config`` more top-level sections
@@ -108,7 +109,7 @@ def messages_routes(
     ``project_uuid`` is the project of the routes: the semantic cache needs one.
     """
     route_models = route_models or [models[0]['model_id']]
-    config_route: dict = {'chat_models': route_models, **route}
+    config_route: dict[str, Any] = {'chat_models': route_models, **route}
     if fallbacks:
         config_route['fallback'] = [{'target': route_models[0], 'fallbacks': fallbacks}]
     if routing:
@@ -124,15 +125,40 @@ def messages_routes(
     )
 
 
-def serve(*models: dict, **route: object) -> GatewayRoute:
+def serve(*models: dict[str, Any], **route: object) -> GatewayRoute:
     """Serve the ``assistant`` route over ``models`` for the rest of the test
     (``open_gateway`` puts the routes back) and return it.
+
+    ``route`` takes the keywords of ``messages_routes`` and more keys of the
+    route.
     """
-    app.state.routes = messages_routes(*models, **route)
-    return app.state.routes[ROUTE_KEY]
+    route_models = route.pop('route_models', None)
+    fallbacks = route.pop('fallbacks', None)
+    routing = route.pop('routing', None)
+    config = route.pop('config', None)
+    project_uuid = route.pop('project_uuid', '')
+    assert route_models is None or isinstance(route_models, list)
+    assert fallbacks is None or isinstance(fallbacks, list)
+    assert routing is None or isinstance(routing, dict)
+    assert config is None or isinstance(config, dict)
+    assert isinstance(project_uuid, str)
+    app.state.routes = messages_routes(
+        *models,
+        route_models=route_models,
+        fallbacks=fallbacks,
+        routing=routing,
+        config=config,
+        project_uuid=project_uuid,
+        **route,
+    )
+    served = app.state.routes[ROUTE_KEY]
+    assert isinstance(served, GatewayRoute)
+    return served
 
 
-def serve_with_fallback(fallback: dict = HAIKU, **route: object) -> GatewayRoute:
+def serve_with_fallback(
+    fallback: dict[str, Any] = HAIKU, **route: object
+) -> GatewayRoute:
     """Serve the route on Claude, with ``fallback`` as its fallback."""
     return serve(
         CLAUDE,
@@ -146,7 +172,9 @@ def serve_with_fallback(fallback: dict = HAIKU, **route: object) -> GatewayRoute
 # ── The client ──────────────────────────────────────────────────────────────
 
 
-def send(gateway, body: dict | None = None, headers: dict | None = None):
+def send(
+    gateway, body: dict[str, Any] | None = None, headers: dict[str, Any] | None = None
+):
     """Send a Messages request, with the credential as Anthropic clients send it."""
     return gateway.post(
         '/v1/messages',
@@ -156,12 +184,12 @@ def send(gateway, body: dict | None = None, headers: dict | None = None):
     )
 
 
-def send_stream(gateway, body: dict | None = None):
+def send_stream(gateway, body: dict[str, Any] | None = None):
     """Send a streaming Messages request."""
     return send(gateway, {**(body or BODY), 'stream': True})
 
 
-def stream_frames(text: str) -> list[tuple[str, dict]]:
+def stream_frames(text: str) -> list[tuple[str, dict[str, Any]]]:
     """Return the ``(event, data)`` pairs of an SSE body."""
     frames = []
     for block in text.strip().split('\n\n'):
@@ -173,7 +201,7 @@ def stream_frames(text: str) -> list[tuple[str, dict]]:
 # ── The Anthropic mock ──────────────────────────────────────────────────────
 
 
-def mock_anthropic(reply: dict | None = None, url: str = ANTHROPIC_URL):
+def mock_anthropic(reply: dict[str, Any] | None = None, url: str = ANTHROPIC_URL):
     """Mock one Anthropic answer: ``reply``, or the canned message."""
     mock = pook.post(url).times(1)
     mock.reply(200).json(reply or canned.anthropic_message().json_body)
@@ -196,6 +224,7 @@ def cut_off_tool_stream() -> str:
     events = canned.anthropic_stream(
         ['Let me check.'], tool_use=[canned.ANTHROPIC_WEATHER_TOOL_USE]
     ).sse_events
+    assert events is not None
     # The second half of the tool's input never comes.
     last_input = max(
         index
@@ -209,16 +238,16 @@ def cut_off_tool_stream() -> str:
     return ''.join(f'event: {e["type"]}\ndata: {json.dumps(e)}\n\n' for e in events)
 
 
-def refuse(status: int, body: dict):
+def refuse(status: int, body: dict[str, Any]):
     """Mock one Anthropic refusal."""
     mock = pook.post(ANTHROPIC_URL).times(1)
     mock.reply(status).json(body)
     return mock
 
 
-def mock_every_upstream() -> list:
+def mock_every_upstream() -> list[pook.Mock]:
     """Mock every upstream, to check later that none was called."""
-    mocks = []
+    mocks: list[pook.Mock] = []
     for url in UPSTREAM_URLS:
         mock = pook.post(url).times(1)
         mock.reply(500).json({})
@@ -248,7 +277,7 @@ def mock_openai(content: str, prompt_tokens: int = 9, completion_tokens: int = 4
     return mock
 
 
-def mock_typesafe(answers: dict, input_tokens: int = 280):
+def mock_typesafe(answers: dict[str, Any], input_tokens: int = 280):
     """Mock one Typesafe answer: ``answers`` by question id."""
     mock = pook.post(TYPESAFE_URL).times(1)
     mock.reply(200).json(
@@ -275,7 +304,7 @@ def mock_embedding(*vector: float):
     return mock
 
 
-def sent_body(mock, index: int = 0) -> dict:
+def sent_body(mock, index: int = 0) -> dict[str, Any]:
     """Return the JSON body of a request a pook mock matched."""
     return mock.matches[index].json
 
@@ -283,7 +312,7 @@ def sent_body(mock, index: int = 0) -> dict:
 # ── What the gateway records ────────────────────────────────────────────────
 
 
-def spend_events(gateway) -> list[tuple]:
+def spend_events(gateway) -> list[tuple[Any, ...]]:
     """Return the token events with their cost: who spent (the request's
     model, a judge or a router), the type, the model, the cache type, the
     tokens and the cost in dollars.
@@ -303,7 +332,7 @@ def spend_events(gateway) -> list[tuple]:
     ]
 
 
-def limit_events(gateway) -> list[tuple]:
+def limit_events(gateway) -> list[tuple[Any, ...]]:
     """Return the limit and threshold events: type, scope, category and,
     for a threshold, its percentage.
     """
@@ -320,7 +349,7 @@ def limit_events(gateway) -> list[tuple]:
     ]
 
 
-def routing_events(gateway) -> list[tuple]:
+def routing_events(gateway) -> list[tuple[Any, ...]]:
     """Return the routing events: the routing's name and the model selected."""
     return [
         (e['ROUTING_NAME'], e['ROUTING_SELECTED_MODEL_ID'])
@@ -329,7 +358,7 @@ def routing_events(gateway) -> list[tuple]:
     ]
 
 
-def model_events(gateway) -> list[tuple]:
+def model_events(gateway) -> list[tuple[Any, ...]]:
     """Return the model events: type, model, target, fallback, value, cache type."""
     return [
         (

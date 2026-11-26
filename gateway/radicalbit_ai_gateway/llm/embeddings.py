@@ -2,8 +2,13 @@
 
 from abc import ABC, abstractmethod
 import asyncio
+from collections.abc import Callable
 import contextvars
 import functools
+from typing import TypeVar, TypeVarTuple
+
+R = TypeVar('R')
+Ts = TypeVarTuple('Ts')
 
 
 class Embeddings(ABC):
@@ -29,7 +34,7 @@ class Embeddings(ABC):
         return await _run_in_executor(self.embed_query, text)
 
 
-async def _run_in_executor(func, *args):
+async def _run_in_executor(func: Callable[[*Ts], R], *args: *Ts) -> R:
     # Carry the caller's context variables into the worker thread.
     ctx = contextvars.copy_context()
     return await asyncio.get_running_loop().run_in_executor(

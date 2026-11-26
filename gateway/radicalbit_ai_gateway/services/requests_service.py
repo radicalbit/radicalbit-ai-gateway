@@ -1,8 +1,8 @@
 from datetime import date, datetime, timedelta, timezone
+from typing import Any
 from uuid import UUID
 
 from fastapi_pagination import Page, Params
-from pydantic import BaseModel
 from sqlalchemy import Row
 
 from radicalbit_ai_gateway.db.dao.event_dao import EventDAO
@@ -27,6 +27,7 @@ from radicalbit_ai_gateway.models.request_dto import (
     RequestDTO,
     RequestIcons,
     RoutingTooltip,
+    TooltipT,
 )
 from radicalbit_ai_gateway.models.request_event_type import RequestStatus, RequestType
 from radicalbit_ai_gateway.utils.exceptions import GatewayNotFoundError
@@ -64,11 +65,14 @@ def _is_blocking(event_type: str, guardrail_behavior: str) -> bool:
     return event_type in LIMIT_BLOCK_EVENT_TYPES
 
 
-def _event_dto(event: dict) -> EventDTO:
+def _event_dto(event: dict[str, Any]) -> EventDTO:
     # Promoted string columns default to '' in ClickHouse: '' means absent.
-    return EventDTO(
-        **{k: (None if v == '' else v) for k, v in event.items()},
-        blocking=_is_blocking(event['event_type'], event['guardrail_behavior']),
+    # The row's columns are validated into the DTO by name.
+    return EventDTO.model_validate(
+        {
+            **{k: (None if v == '' else v) for k, v in event.items()},
+            'blocking': _is_blocking(event['event_type'], event['guardrail_behavior']),
+        }
     )
 
 
@@ -77,7 +81,9 @@ def _or_none(value: str) -> str | None:
     return value or None
 
 
-def _icon(tones_and_details: list[tuple[IconTone, BaseModel]]) -> EventIcon | None:
+def _icon(
+    tones_and_details: list[tuple[IconTone, TooltipT]],
+) -> EventIcon[TooltipT] | None:
     """Build the icon of one kind of event: None if none fired, else its top tone."""
     if not tones_and_details:
         return None
@@ -160,7 +166,7 @@ def _icons(summary: EventsSummary) -> RequestIcons:
     )
 
 
-def _request_fields(row: Row) -> dict:
+def _request_fields(row: Row[*tuple[Any, ...]]) -> dict[str, Any]:
     """Return the fields a request_event row gives the Requests list and detail."""
     return {
         'request_uuid': row.request_uuid,
@@ -229,7 +235,7 @@ class RequestsService:
         )
         rows = requests_page.items
         if not rows:
-            return Page.create([], params, total=requests_page.total)
+            return Page[RequestDTO].create([], params, total=requests_page.total)
 
         request_uuids = [str(row.request_uuid) for row in rows]
         date_from, date_to = _events_date_range([row.date for row in rows])
@@ -252,7 +258,7 @@ class RequestsService:
                     icons=_icons(summary),
                 )
             )
-        return Page.create(items, params, total=requests_page.total)
+        return Page[RequestDTO].create(items, params, total=requests_page.total)
 
     def get_request(self, project_uuid: UUID, request_uuid: UUID) -> RequestDetailDTO:
         """One request by its UUID, traced or not."""

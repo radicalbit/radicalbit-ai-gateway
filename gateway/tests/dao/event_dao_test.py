@@ -1,5 +1,8 @@
 import datetime
+from typing import Literal
 import uuid
+
+from typing_extensions import override
 
 from tests.common import db_mock
 from tests.common.db_integration_ch import DatabaseIntegrationClickhouse
@@ -22,6 +25,9 @@ from radicalbit_ai_gateway.db.models.event import (
 UTC = datetime.timezone.utc
 H = datetime.timedelta(hours=1)
 D = datetime.timedelta(days=1)
+Granularity = Literal['hours', 'days', 'weeks', 'months']
+CostGroupBy = Literal['keys', 'groups', 'models']
+PROJECT = db_mock.TEST_PROJECT_UUID
 KEY_0 = uuid.UUID(int=0)
 KEY_1 = uuid.UUID(int=1)
 # Base-data timestamps: the 14th is also get_sample_event's default timestamp.
@@ -41,18 +47,24 @@ INVOCATION = 'MODEL_INVOCATION'
 
 def _ev(event_type, route='rb-gateway', at=NOON, cost=0.0, **kwargs):
     return db_mock.get_sample_event(
-        event_type=event_type, route_name=route, timestamp=at, cost=cost, **kwargs
+        event_type=event_type,
+        route_name=route,
+        timestamp=at,
+        cost=cost,
+        project_uuid=PROJECT,
+        **kwargs,
     )
 
 
 class EventDAOCountersTest(DatabaseIntegrationClickhouse):
     """Read-only queries over one data set, seeded once for the class."""
 
+    @override
     @classmethod
     def setUpClass(cls):
         super().setUpClass()
         cls.event_dao = EventDAO(cls.db)
-        DatabaseIntegrationClickhouse.clean(cls)
+        cls.clean()
         key = {'api_key_uuid': KEY_0}
         tokens = [
             (INPUT, 'route-A', 100, 'model-A'),
@@ -68,8 +80,7 @@ class EventDAOCountersTest(DatabaseIntegrationClickhouse):
             (CACHE_IN, 'route-B', 45, 'model-A'),
             (CACHE_OUT, 'route-B', 60, 'model-B'),
         ]
-        DatabaseIntegrationClickhouse.insert(
-            cls,
+        cls.insert(
             [
                 _ev(
                     'GUARDRAIL',
@@ -103,24 +114,26 @@ class EventDAOCountersTest(DatabaseIntegrationClickhouse):
             ],
         )
 
+    @override
     def tearDown(self) -> None:
         pass  # read-only tests share the class seed
 
+    @override
     @classmethod
     def tearDownClass(cls):
-        DatabaseIntegrationClickhouse.clean(cls)
+        cls.clean()
         super().tearDownClass()
 
     def test_counters_and_last_events(self):
         dao = self.event_dao
-        assert dao.get_all_counters(None, None, None) == Counters(
+        assert dao.get_all_counters(PROJECT, None, None) == Counters(
             guardrail_value=2,
             fallback_value=3,
             rate_limit_triggered=2,
             cache_triggered=1,
         )
         assert dao.get_all_counters_by_route(
-            None, route_name='route-A', _from=None, _to=None
+            PROJECT, route_name='route-A', _from=None, _to=None
         ) == Counters(
             guardrail_value=1,
             fallback_value=2,
@@ -147,12 +160,12 @@ class EventDAOCountersTest(DatabaseIntegrationClickhouse):
         )
         for event_type, expected in (('GUARDRAIL', guardrail), ('FALLBACK', fallback)):
             assert (
-                dao.get_last_event(None, event_type=event_type, _from=None, _to=None)
+                dao.get_last_event(PROJECT, event_type=event_type, _from=None, _to=None)
                 == expected
             )
             assert (
                 dao.get_last_event_route(
-                    None,
+                    PROJECT,
                     event_type=event_type,
                     route_name='route-A',
                     _from=None,
@@ -160,6 +173,20 @@ class EventDAOCountersTest(DatabaseIntegrationClickhouse):
                 )
                 == expected
             )
+
+    def test_last_event_of_a_route_is_kept_only_for_guardrails_and_fallbacks(self):
+        # route-A has a rate limit event, but only guardrail and fallback
+        # events have a last-event model.
+        assert (
+            self.event_dao.get_last_event_route(
+                PROJECT,
+                event_type='RATE_LIMIT',
+                route_name='route-A',
+                _from=None,
+                _to=None,
+            )
+            is None
+        )
 
     def test_get_tokens_by_model(self):
         def counter(event_type, route, model, value):
@@ -185,11 +212,11 @@ class EventDAOCountersTest(DatabaseIntegrationClickhouse):
                 counters, key=lambda x: (x.event_type, x.route_name, x.model_id)
             )
 
-        assert ordered(self.event_dao.get_tokens_by_model(None, None, None)) == (
+        assert ordered(self.event_dao.get_tokens_by_model(PROJECT, None, None)) == (
             ordered(route_a + route_b)
         )
         assert ordered(
-            self.event_dao.get_tokens_by_model_per_route(None, 'route-A', None, None)
+            self.event_dao.get_tokens_by_model_per_route(PROJECT, 'route-A', None, None)
         ) == ordered(route_a)
 
     def test_get_latest_n_per_event_type(self):
@@ -220,7 +247,7 @@ class EventDAOCountersTest(DatabaseIntegrationClickhouse):
         )
         rate_limit = detail(OCT_13, 'RATE_LIMIT')
         latest_n = self.event_dao.get_latest_n_per_event_type
-        assert latest_n(None, 'route-A', 10, _from, _to) == [
+        assert latest_n(PROJECT, 'route-A', 10, _from, _to) == [
             cache_hit,
             latest_fallback,
             detail(OCT_13, 'FALLBACK'),
@@ -228,21 +255,46 @@ class EventDAOCountersTest(DatabaseIntegrationClickhouse):
             rate_limit,
         ]
         # n caps the rows per event type, keeping the most recent.
-        assert latest_n(None, 'route-A', 1, _from, _to) == [
+        assert latest_n(PROJECT, 'route-A', 1, _from, _to) == [
             cache_hit,
             latest_fallback,
             guardrail,
             rate_limit,
         ]
-        assert latest_n(None, 'route-C', 10, _from, _to) == []
-        assert latest_n(None, 'route-A', 10, FUTURE + H, FUTURE) == []
+        assert latest_n(PROJECT, 'route-C', 10, _from, _to) == []
+        assert latest_n(PROJECT, 'route-A', 10, FUTURE + H, FUTURE) == []
 
 
 class EventDAOTest(DatabaseIntegrationClickhouse):
+    @override
     @classmethod
     def setUpClass(cls):
         super().setUpClass()
         cls.event_dao = EventDAO(cls.db)
+
+    def test_routing_model_counters_count_the_choices_of_one_route_or_all(self):
+        self.insert(
+            [
+                _ev('ROUTING', 'route-A', selected_model_id='gpt'),
+                _ev('ROUTING', 'route-A', selected_model_id='gpt'),
+                _ev('ROUTING', 'route-A', selected_model_id='claude'),
+                _ev('ROUTING', 'route-B', selected_model_id='claude'),
+                _ev(INVOCATION, 'route-A', model_id='gpt'),
+            ]
+        )
+
+        def counts(route_name):
+            counters = self.event_dao.get_routing_model_counters(
+                PROJECT, None, None, route_name=route_name
+            )
+            return {c.model_id: c.value for c in counters}
+
+        assert counts('route-A') == {'gpt': 2, 'claude': 1}
+        assert counts('route-B') == {'claude': 1}
+        assert counts('route-idle') == {}
+        # No route, or an empty one, counts the choices of every route.
+        assert counts(None) == {'gpt': 2, 'claude': 2}
+        assert counts('') == {'gpt': 2, 'claude': 2}
 
     def test_get_latest_n_per_event_type_reads_limit_blocks(self):
         """A limit block carries the scope and category that blocked it; a
@@ -320,7 +372,7 @@ class EventDAOTest(DatabaseIntegrationClickhouse):
             )
 
         assert self.event_dao.get_latest_n_per_event_type(
-            None, route, 10, at(0), at(23)
+            PROJECT, route, 10, at(0), at(23)
         ) == [
             block('BUDGET_LIMIT', 10, 'route', 'budget'),
             block('CREDENTIAL_RATE_LIMIT', 11, 'credential', 'request_rate'),
@@ -352,6 +404,7 @@ class EventDAOTest(DatabaseIntegrationClickhouse):
         self.insert(
             [
                 db_mock.get_sample_event(
+                    project_uuid=PROJECT,
                     event_type=f'{kind}_TOKEN_PROCESSED',
                     timestamp=datetime.datetime(*ts, tzinfo=UTC),
                     api_key_uuid=key,
@@ -365,7 +418,9 @@ class EventDAOTest(DatabaseIntegrationClickhouse):
         _from = datetime.datetime(2025, 1, 6, tzinfo=UTC)
         _to = datetime.datetime(2025, 3, 1, tzinfo=UTC)
 
-        cases = {
+        cases: dict[
+            tuple[Granularity, CostGroupBy], list[tuple[tuple[int, ...], str, float]]
+        ] = {
             ('hours', 'keys'): [
                 ((2025, 1, 6, 10), k1, 1.0),
                 ((2025, 1, 6, 10), k2, 2.0),
@@ -425,7 +480,7 @@ class EventDAOTest(DatabaseIntegrationClickhouse):
         for (granularity, group_by), expected in cases.items():
             with self.subTest(granularity=granularity, group_by=group_by):
                 res = self.event_dao.get_costs_chart_data(
-                    None, ['rb-gateway'], _from, _to, granularity, group_by
+                    PROJECT, ['rb-gateway'], _from, _to, granularity, group_by
                 )
                 # Week and month buckets come back as naive dates.
                 tz = None if granularity in ('weeks', 'months') else UTC
@@ -467,7 +522,7 @@ class EventDAOTest(DatabaseIntegrationClickhouse):
 
         def chart(routes, _from, _to, group_by='keys'):
             res = self.event_dao.get_costs_chart_data(
-                None, routes, _from, _to, 'hours', group_by
+                PROJECT, routes, _from, _to, 'hours', group_by
             )
             return [(r.bucket, r.group_by_value, r.total_cost) for r in res]
 
@@ -524,7 +579,7 @@ class EventDAOTest(DatabaseIntegrationClickhouse):
 
         def summary(route, cache_enabled=False, with_tokens=False):
             return self.event_dao.get_summary_costs(
-                None, [route], NOON, NOON + 2 * H, cache_enabled, with_tokens
+                PROJECT, [route], NOON, NOON + 2 * H, cache_enabled, with_tokens
             )
 
         assert summary('sum-plain') == CostData(
@@ -587,7 +642,7 @@ class EventDAOTest(DatabaseIntegrationClickhouse):
 
         def details(route, with_tokens=False):
             return self.event_dao.get_semantic_cache_details(
-                None, [route], NOON, NOON + 2 * H, with_tokens
+                PROJECT, [route], NOON, NOON + 2 * H, with_tokens
             )
 
         assert details('sem-costs') == SemanticCacheCostData(
@@ -714,7 +769,7 @@ class EventDAOTest(DatabaseIntegrationClickhouse):
 
         def summaries(with_tokens, _from=NOON, _to=NOON + 2 * H):
             res = self.event_dao.get_all_routes_summary_costs(
-                None, _from, _to, with_tokens
+                PROJECT, _from, _to, with_tokens
             )
             return sorted(res, key=lambda r: r.route_name)
 
@@ -839,7 +894,9 @@ class EventDAOTest(DatabaseIntegrationClickhouse):
             decision_input=0.0000109, chat_input_direct=1.0
         )
         assert {
-            route: self.event_dao.get_detailed_cost_breakdown(None, [route], _from, _to)
+            route: self.event_dao.get_detailed_cost_breakdown(
+                PROJECT, [route], _from, _to
+            )
             for route in ('det-full', 'det-transcription', 'det-decision')
         } == {
             'det-full': full,
@@ -873,7 +930,7 @@ class EventDAOTest(DatabaseIntegrationClickhouse):
 
         def all_routes(_from, _to):
             res = self.event_dao.get_all_routes_detailed_cost_breakdown(
-                None, _from, _to
+                PROJECT, _from, _to
             )
             return sorted(res, key=lambda r: r.route_name)
 
@@ -902,7 +959,7 @@ class EventDAOTest(DatabaseIntegrationClickhouse):
 
         def chart(_from, _to):
             res = self.event_dao.get_token_chart_data(
-                None, ['rb-gateway'], _from, _to, 'hours', 0
+                PROJECT, ['rb-gateway'], _from, _to, 'hours', 0
             )
             return [(r.bucket, r.event_type, r.total_tokens) for r in res]
 
@@ -949,7 +1006,7 @@ class EventDAOTest(DatabaseIntegrationClickhouse):
 
         def chart(route, _to, granularity='hours', include_models=True, _from=t0):
             res = self.event_dao.get_invocation_chart_data(
-                None, [route], _from, _to, granularity, include_models=include_models
+                PROJECT, [route], _from, _to, granularity, include_models=include_models
             )
             return [(r.bucket, r.group_by_value, r.value) for r in res]
 
@@ -995,11 +1052,11 @@ class EventDAOTest(DatabaseIntegrationClickhouse):
         )
         most = self.event_dao.get_most_expensive_route
         assert {
-            'exp': most(None, ['exp-A', 'exp-B', 'exp-C'], NOON, NOON + H),
-            'tf': most(None, ['tf-A', 'tf-B'], jan_11 - H, jan_11 + H),
-            'nf': most(None, ['nf'], None, None),
-            'empty': most(None, ['route-x'], FUTURE, FUTURE + H),
-            'no_routes': most(None, [], None, None),
+            'exp': most(PROJECT, ['exp-A', 'exp-B', 'exp-C'], NOON, NOON + H),
+            'tf': most(PROJECT, ['tf-A', 'tf-B'], jan_11 - H, jan_11 + H),
+            'nf': most(PROJECT, ['nf'], None, None),
+            'empty': most(PROJECT, ['route-x'], FUTURE, FUTURE + H),
+            'no_routes': most(PROJECT, [], None, None),
         } == {
             'exp': MostExpensiveRoute(route_name='exp-B', total_cost=5.0),
             'tf': MostExpensiveRoute(route_name='tf-B', total_cost=2.0),
@@ -1028,7 +1085,9 @@ class EventDAOTest(DatabaseIntegrationClickhouse):
         )
 
         def chart(route, _from=feb_1, _to=feb_1 + H):
-            res = self.event_dao.get_cost_chart_data(None, route, _from, _to, 'hours')
+            res = self.event_dao.get_cost_chart_data(
+                PROJECT, route, _from, _to, 'hours'
+            )
             return [(r.bucket, r.cost) for r in res]
 
         assert chart('chart-cost', _to=feb_1 + 2 * H) == [

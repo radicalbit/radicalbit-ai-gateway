@@ -1,3 +1,5 @@
+from typing import Annotated, Any
+
 from pydantic import BaseModel, ConfigDict, Field
 
 from radicalbit_ai_gateway.models.caching import Caching, SemanticCaching
@@ -10,15 +12,34 @@ from radicalbit_ai_gateway.models.limiting import (
 )
 from radicalbit_ai_gateway.models.responses import ResponsesSettings
 
+# Fields a route response shows as configured (GatewayRouteConfigOut).
+RouteName = Annotated[
+    str,
+    Field(
+        description='Unique name for the route configuration.',
+        examples=['example_route', 'production_route'],
+    ),
+]
+RouteBudgetLimiting = Annotated[
+    BudgetLimiting | None,
+    Field(
+        description='Shared budget limiting configuration for the route, covering input and output costs.',
+    ),
+]
+RoutePlugins = Annotated[
+    dict[str, Any] | None,
+    Field(description=('Plugins configuration for the route.')),
+]
+RouteResponses = Annotated[
+    ResponsesSettings | None,
+    Field(description='Governance of the OpenAI Responses API on this route.'),
+]
+
 
 class GatewayRouteConfig(BaseModel):
     model_config = ConfigDict(extra='forbid')
 
-    route_name: str = Field(
-        ...,
-        description='Unique name for the route configuration.',
-        examples=['example_route', 'production_route'],
-    )
+    route_name: RouteName
     chat_models: list[str] | None = Field(
         default=None,
         description='List of chat model IDs for the route.',
@@ -56,10 +77,7 @@ class GatewayRouteConfig(BaseModel):
         description='Caching configuration to apply to the route.',
         discriminator='type',
     )
-    budget_limiting: BudgetLimiting | None = Field(
-        default=None,
-        description='Shared budget limiting configuration for the route, covering input and output costs.',
-    )
+    budget_limiting: RouteBudgetLimiting = None
     duration_limiting: AudioDurationLimiting | None = Field(
         default=None,
         description='Audio duration limiting configuration for transcription routes (WAV only).',
@@ -68,15 +86,9 @@ class GatewayRouteConfig(BaseModel):
         default=None,
         description='Name of a top-level routing config.',
     )
-    plugins: dict | None = Field(
-        default=None,
-        description=('Plugins configuration for the route.'),
-    )
+    plugins: RoutePlugins = None
     mcp_servers: list[str] | None = Field(
         default=None,
         description='Aliases of top-level MCP servers exposed on this route.',
     )
-    responses: ResponsesSettings | None = Field(
-        default=None,
-        description='Governance of the OpenAI Responses API on this route.',
-    )
+    responses: RouteResponses = None

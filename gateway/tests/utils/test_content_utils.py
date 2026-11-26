@@ -87,6 +87,12 @@ def test_extract_text_content(content, strip, expected):
         pytest.param(
             'Just a regular string', 'Just a regular string', id='non-json-string-as-is'
         ),
+        pytest.param(
+            ' [{"type": "text", "text": unquoted}] ',
+            ' [{"type": "text", "text": unquoted}] ',
+            id='invalid-json-array-string-as-is',
+        ),
+        pytest.param('[1, 2]', '[1, 2]', id='json-array-of-non-blocks-as-is'),
     ],
 )
 def test_normalize_openai_message_content(content, expected):

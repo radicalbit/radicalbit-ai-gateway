@@ -7,7 +7,7 @@ and the generation settings a ``GenerateContentConfig``.
 """
 
 import base64
-from collections.abc import AsyncIterator, Iterator, Mapping, Sequence
+from collections.abc import AsyncIterator, Generator, Mapping, Sequence
 from contextlib import contextmanager
 from copy import deepcopy
 import io
@@ -17,7 +17,7 @@ import mimetypes
 import os
 import re
 import string
-from typing import Any
+from typing import Any, Literal, NoReturn, overload
 from urllib.parse import urlparse
 import uuid
 import warnings
@@ -28,6 +28,7 @@ from google.genai import errors, types
 from google.genai.client import Client
 import httpx
 from pydantic import BaseModel
+from typing_extensions import override
 
 from radicalbit_ai_gateway.llm.chat_model import ChatModel, StructuredChatModel
 from radicalbit_ai_gateway.llm.embeddings import Embeddings
@@ -48,6 +49,7 @@ from radicalbit_ai_gateway.llm.providers._schema import (
     OutputParserError,
     is_data_content_block,
 )
+from radicalbit_ai_gateway.llm.usage import add_usage, subtract_usage
 from radicalbit_ai_gateway.utils.app_config import get_app_config
 
 app_config = get_app_config()
@@ -58,7 +60,9 @@ _DEFAULT_TEMPERATURE = 0.7
 _DEFAULT_MAX_RETRIES = 6
 _NATIVE_PROVIDERS = frozenset({'google_genai', 'google_vertexai'})
 # Placeholder accepted by Gemini 3+ in place of a missing thought signature.
-_SKIP_THOUGHT_SIGNATURE = 'skip_thought_signature_validator'
+# The SDK sends a signature's bytes as URL-safe base64: these bytes go on the
+# wire as the placeholder's text.
+_SKIP_THOUGHT_SIGNATURE = base64.urlsafe_b64decode('skip_thought_signature_validator')
 _FUNCTION_CALL_SIGNATURES_KEY = '__gemini_function_call_thought_signatures__'
 # These models ignore custom sampling parameters and reject model prefills.
 _FIXED_SAMPLING_MODELS = frozenset({'gemini-3.5-flash-lite', 'gemini-3.6-flash'})
@@ -92,13 +96,25 @@ class ChatGoogleGenerativeAIError(GoogleGenerativeAIError):
 
 def _api_key(params: dict[str, Any]) -> str | None:
     if 'api_key' in params or 'google_api_key' in params:
-        return params.get('api_key', params.get('google_api_key'))
+        api_key = params.get('api_key', params.get('google_api_key'))
+        # A key the config typed as a number or a boolean is sent as text.
+        return str(api_key) if api_key else None
     return os.getenv('GOOGLE_API_KEY') or os.getenv('GEMINI_API_KEY')
 
 
 def _base_url(value: Any) -> str | None:
-    if not isinstance(value, dict):
+    if isinstance(value, dict):
+        value = _api_endpoint(value)
+    if value is None or isinstance(value, str):
         return value
+    # The SDK's options read bytes as text: anything else is no URL.
+    if isinstance(value, bytes):
+        return value.decode()
+    msg = 'base_url must be a string or a dict containing the api_endpoint key.'
+    raise ValueError(msg)
+
+
+def _api_endpoint(value: dict[str, Any]) -> Any:
     keys = list(value)
     if keys == ['api_endpoint']:
         return value['api_endpoint']
@@ -228,11 +244,15 @@ class ChatGoogleGenerativeAI(ChatModel):
 
     _gen_ai_provider = 'gcp.gen_ai'
 
+    @override
     def _server_url(self) -> str | None:
         # The SDK resolves it (Gemini API or Vertex AI) but does not expose it.
         return self._client._api_client._http_options.base_url
 
-    def _invocation_params(self, stop: list[str] | None = None, **kwargs: Any) -> dict:
+    @override
+    def _invocation_params(
+        self, stop: list[str] | None = None, **kwargs: Any
+    ) -> dict[str, Any]:
         return {
             'model': self.model,
             'temperature': self.temperature,
@@ -243,7 +263,8 @@ class ChatGoogleGenerativeAI(ChatModel):
             **kwargs,
         }
 
-    def _generation_info(self, message: AIMessage) -> dict | None:
+    @override
+    def _generation_info(self, message: AIMessage) -> dict[str, Any] | None:
         return {'finish_reason': message.response_metadata.get('finish_reason')}
 
     def _validate(self) -> None:
@@ -264,6 +285,7 @@ class ChatGoogleGenerativeAI(ChatModel):
         clone._bound = {**self._bound, **bound}
         return clone
 
+    @override
     def _adapt_kwargs(self, kwargs: dict[str, Any]) -> dict[str, Any]:
         if 'max_completion_tokens' not in kwargs:
             return kwargs
@@ -271,8 +293,9 @@ class ChatGoogleGenerativeAI(ChatModel):
         adapted['max_output_tokens'] = adapted.pop('max_completion_tokens')
         return adapted
 
+    @override
     def bind_tools(
-        self, tools: list[dict], tool_choice: Any = None
+        self, tools: Sequence[Mapping[str, Any]], tool_choice: Any = None
     ) -> 'ChatGoogleGenerativeAI':
         # Tools are converted per call, so a bad tool fails the call (where
         # fallbacks apply) rather than the bind.
@@ -281,6 +304,7 @@ class ChatGoogleGenerativeAI(ChatModel):
             bound['tool_choice'] = tool_choice
         return self._with(**bound)
 
+    @override
     def with_structured_output(
         self, schema: type[BaseModel], include_raw: bool = False
     ) -> StructuredChatModel:
@@ -295,8 +319,8 @@ class ChatGoogleGenerativeAI(ChatModel):
         stop: list[str] | None = None,
         tools: Sequence[Any] | None = None,
         functions: Sequence[Any] | None = None,
-        safety_settings: dict | None = None,
-        tool_config: dict | types.ToolConfig | None = None,
+        safety_settings: dict[str, Any] | None = None,
+        tool_config: dict[str, Any] | types.ToolConfig | None = None,
         tool_choice: Any = None,
         generation_config: dict[str, Any] | None = None,
         cached_content: str | None = None,
@@ -503,6 +527,7 @@ class ChatGoogleGenerativeAI(ChatModel):
 
     # ── Calls ──
 
+    @override
     async def _agenerate(self, messages: list[BaseMessage], **kwargs: Any) -> AIMessage:
         request = await self._prepare_request(messages, **{**self._bound, **kwargs})
         try:
@@ -519,6 +544,7 @@ class ChatGoogleGenerativeAI(ChatModel):
             }
         return message
 
+    @override
     async def _astream(
         self, messages: list[BaseMessage], **kwargs: Any
     ) -> AsyncIterator[AIMessageChunk]:
@@ -539,14 +565,14 @@ class ChatGoogleGenerativeAI(ChatModel):
                 prev_usage = (
                     message.usage_metadata
                     if prev_usage is None
-                    else _add_usage(prev_usage, message.usage_metadata)
+                    else add_usage(prev_usage, message.usage_metadata)
                 )
                 yield message
         except errors.ClientError as e:
             _raise_client_error(e, request['model'])
 
 
-def _raise_client_error(e: errors.ClientError, model: str) -> None:
+def _raise_client_error(e: errors.ClientError, model: str) -> NoReturn:
     text = str(e)
     if (
         'exceeds the maximum number of tokens allowed' in text
@@ -598,6 +624,7 @@ class _JsonSchemaStructuredModel(StructuredChatModel):
         self.include_raw = include_raw
         self._json_schema = schema.model_json_schema()
 
+    @override
     async def ainvoke(self, input: Sequence[BaseMessage], **kwargs: Any) -> Any:  # noqa: A002
         raw = await self.model.ainvoke(
             input,
@@ -707,13 +734,13 @@ def _tool_names(tools: list[types.Tool]) -> list[str]:
     names: list[str] = []
     for t in tools:
         if t.function_declarations:
-            names.extend(f.name for f in t.function_declarations)
+            names.extend(f.name for f in t.function_declarations if f.name)
     return names
 
 
 def _process_tool_config(
     tool_choice: Any,
-    tool_config: dict | types.ToolConfig | None,
+    tool_config: dict[str, Any] | types.ToolConfig | None,
     formatted_tools: list[types.Tool] | None,
 ) -> types.ToolConfig | None:
     normalized = None
@@ -751,6 +778,13 @@ def _process_tool_config(
     return choice
 
 
+def _function_names(value: object) -> list[str] | None:
+    """Return the function names a tool choice allows: the strings of a list."""
+    if not isinstance(value, list | tuple):
+        return None
+    return [name for name in value if isinstance(name, str)]
+
+
 def _tool_choice_to_tool_config(tool_choice: Any, names: list[str]) -> types.ToolConfig:
     allowed: list[str] | None = None
     if tool_choice is True or tool_choice in ('any', 'required'):
@@ -765,16 +799,16 @@ def _tool_choice_to_tool_config(tool_choice: Any, names: list[str]) -> types.Too
         allowed = [tool_choice]
     elif isinstance(tool_choice, list):
         mode = 'ANY'
-        allowed = tool_choice
+        allowed = _function_names(tool_choice)
     elif isinstance(tool_choice, dict):
         function = tool_choice.get('function')
         if 'mode' in tool_choice:
             mode = tool_choice['mode']
-            allowed = tool_choice.get('allowed_function_names')
+            allowed = _function_names(tool_choice.get('allowed_function_names'))
         elif 'function_calling_config' in tool_choice:
             mode = tool_choice['function_calling_config']['mode']
-            allowed = tool_choice['function_calling_config'].get(
-                'allowed_function_names'
+            allowed = _function_names(
+                tool_choice['function_calling_config'].get('allowed_function_names')
             )
         elif (
             tool_choice.get('type') == 'function'
@@ -1161,7 +1195,9 @@ async def _download(url: str, http_client: httpx.AsyncClient | None) -> bytes:
     return response.content
 
 
-def _media_resolution(part: Mapping[str, Any], model: str | None, kwargs: dict) -> None:
+def _media_resolution(
+    part: Mapping[str, Any], model: str | None, kwargs: dict[str, Any]
+) -> None:
     if 'media_resolution' in part:
         if _is_gemini_25(model):
             warnings.warn(
@@ -1238,7 +1274,7 @@ async def _data_block_part(
         mime_type = part.get('mime_type')
         if not mime_type:
             source = part.get('url') or part.get('base64') or part.get('data')
-            mime_type, _ = mimetypes.guess_type(source)
+            mime_type = mimetypes.guess_type(source)[0] if source else None
             if not mime_type and (kind := filetype.guess(data)):
                 mime_type = kind.mime
         blob: dict[str, Any] = {'data': data}
@@ -1416,7 +1452,7 @@ def _ai_content(message: AIMessage, *, exclude_function_calls: bool) -> list[Any
         filtered: list[Any] = []
         for block in content:
             if not isinstance(block, dict):
-                if not (isinstance(block, str) and not block):
+                if block:
                     filtered.append(block)
                 continue
             block_type = block.get('type')
@@ -1509,7 +1545,8 @@ async def _tool_message_parts(
     model: str | None,
     http_client: httpx.AsyncClient | None,
 ) -> list[types.Part]:
-    name = message.name or name or message.additional_kwargs.get('name')
+    extra_name = message.additional_kwargs.get('name')
+    name = message.name or name or (extra_name if isinstance(extra_name, str) else None)
     parts: list[types.Part] = []
     response: Any
     if isinstance(message.content, list):
@@ -1670,9 +1707,7 @@ def _patch_missing_thought_signatures(contents: list[types.Content]) -> None:
         for part in content.parts or []:
             if part.function_call:
                 if not part.thought_signature:
-                    # Assigned after construction so it stays a str: the SDK
-                    # would base64-encode bytes and hide the placeholder.
-                    part.thought_signature = _SKIP_THOUGHT_SIGNATURE  # type: ignore[assignment]
+                    part.thought_signature = _SKIP_THOUGHT_SIGNATURE
                 break
 
 
@@ -1706,6 +1741,26 @@ def _server_tool_name(tool_type: Any) -> str:
     return str(getattr(tool_type, 'value', tool_type)).lower()
 
 
+@overload
+def _parse_candidate(
+    candidate: types.Candidate,
+    *,
+    streaming: Literal[True],
+    model_name: str | None,
+    content_model: str | None,
+) -> AIMessageChunk: ...
+
+
+@overload
+def _parse_candidate(
+    candidate: types.Candidate,
+    *,
+    streaming: bool,
+    model_name: str | None,
+    content_model: str | None,
+) -> AIMessage: ...
+
+
 def _parse_candidate(
     candidate: types.Candidate,
     *,
@@ -1713,6 +1768,7 @@ def _parse_candidate(
     model_name: str | None,
     content_model: str | None,
 ) -> AIMessage:
+    """Return the candidate as a message: a chunk when ``streaming``."""
     content: str | list[Any] | None = None
     additional_kwargs: dict[str, Any] = {}
     response_metadata: dict[str, Any] = {'model_provider': 'google_genai'}
@@ -1876,41 +1932,6 @@ def _parse_candidate(
     )
 
 
-def _usage_op(left: dict[str, Any], right: dict[str, Any], op) -> dict[str, Any]:
-    combined: dict[str, Any] = {}
-    for k in [*left, *(k for k in right if k not in left)]:
-        lv, rv = left.get(k, 0), right.get(k, 0)
-        if isinstance(lv, int) and isinstance(rv, int):
-            combined[k] = op(lv, rv)
-        elif isinstance(left.get(k, {}), dict) and isinstance(right.get(k, {}), dict):
-            combined[k] = _usage_op(left.get(k, {}), right.get(k, {}), op)
-        else:
-            types_ = [type(d[k]) for d in (left, right) if k in d]
-            msg = f'Unknown value types: {types_}. Only dict and int values are supported.'
-            raise ValueError(msg)  # noqa: TRY004
-    return combined
-
-
-def _add_usage(
-    left: UsageMetadata | None, right: UsageMetadata | None
-) -> UsageMetadata:
-    if not (left or right):
-        return UsageMetadata(input_tokens=0, output_tokens=0, total_tokens=0)
-    if not (left and right):
-        return left or right  # type: ignore[return-value]
-    return UsageMetadata(**_usage_op(left, right, lambda a, b: a + b))  # type: ignore[typeddict-item]
-
-
-def _subtract_usage(
-    left: UsageMetadata | None, right: UsageMetadata | None
-) -> UsageMetadata:
-    if not (left or right):
-        return UsageMetadata(input_tokens=0, output_tokens=0, total_tokens=0)
-    if not (left and right):
-        return left or right  # type: ignore[return-value]
-    return UsageMetadata(**_usage_op(left, right, lambda a, b: max(a - b, 0)))  # type: ignore[typeddict-item]
-
-
 def _usage(
     response: types.GenerateContentResponse, prev_usage: UsageMetadata | None
 ) -> UsageMetadata | None:
@@ -1936,7 +1957,7 @@ def _usage(
     )
     if thought_tokens > 0:
         cumulative['output_token_details'] = {'reasoning': thought_tokens}
-    usage = _subtract_usage(cumulative, prev_usage)
+    usage = subtract_usage(cumulative, prev_usage)
     if prev_usage and input_tokens < prev_usage.get('input_tokens', 0):
         # A lower final prompt count is the ground truth; compensate here
         # since the subtraction floors at zero.
@@ -1944,12 +1965,28 @@ def _usage(
     return usage
 
 
+@overload
+def _response_to_result(
+    response: types.GenerateContentResponse,
+    stream: Literal[True],
+    prev_usage: UsageMetadata | None = None,
+) -> Sequence[tuple[AIMessageChunk, dict[str, Any]]]: ...
+
+
+@overload
 def _response_to_result(
     response: types.GenerateContentResponse,
     stream: bool = False,
     prev_usage: UsageMetadata | None = None,
-) -> list[tuple[AIMessage, dict[str, Any]]]:
-    """One ``(message, generation_info)`` per candidate."""
+) -> Sequence[tuple[AIMessage, dict[str, Any]]]: ...
+
+
+def _response_to_result(
+    response: types.GenerateContentResponse,
+    stream: bool = False,
+    prev_usage: UsageMetadata | None = None,
+) -> Sequence[tuple[AIMessage, dict[str, Any]]]:
+    """One ``(message, generation_info)`` per candidate: chunks when ``stream``."""
     usage = _usage(response, prev_usage)
     results: list[tuple[AIMessage, dict[str, Any]]] = []
     for candidate in response.candidates or []:
@@ -2109,6 +2146,7 @@ class GoogleGenerativeAIEmbeddings(Embeddings):
         for batch in _prepare_batches(texts, _DEFAULT_BATCH_SIZE):
             yield [{'parts': [{'text': text}]} for text in batch], config
 
+    @override
     def embed_documents(self, texts: list[str]) -> list[list[float]]:
         embeddings: list[list[float]] = []
         for contents, config in self._batches(texts):
@@ -2116,9 +2154,10 @@ class GoogleGenerativeAIEmbeddings(Embeddings):
                 result = self._client.models.embed_content(
                     model=self.model, contents=contents, config=config
                 )
-            embeddings.extend(list(e.values) for e in result.embeddings)
+            embeddings.extend(_vectors(result))
         return embeddings
 
+    @override
     def embed_query(self, text: str) -> list[float]:
         with _embedding_errors():
             result = self._client.models.embed_content(
@@ -2126,8 +2165,9 @@ class GoogleGenerativeAIEmbeddings(Embeddings):
                 contents=text,
                 config=self._config(self.task_type or 'RETRIEVAL_QUERY'),
             )
-        return list(result.embeddings[0].values)
+        return _query_vector(result)
 
+    @override
     async def aembed_documents(self, texts: list[str]) -> list[list[float]]:
         embeddings: list[list[float]] = []
         for contents, config in self._batches(texts):
@@ -2135,9 +2175,10 @@ class GoogleGenerativeAIEmbeddings(Embeddings):
                 result = await self._client.aio.models.embed_content(
                     model=self.model, contents=contents, config=config
                 )
-            embeddings.extend(list(e.values) for e in result.embeddings)
+            embeddings.extend(_vectors(result))
         return embeddings
 
+    @override
     async def aembed_query(self, text: str) -> list[float]:
         with _embedding_errors():
             result = await self._client.aio.models.embed_content(
@@ -2145,11 +2186,31 @@ class GoogleGenerativeAIEmbeddings(Embeddings):
                 contents=text,
                 config=self._config(self.task_type or 'RETRIEVAL_QUERY'),
             )
-        return list(result.embeddings[0].values)
+        return _query_vector(result)
+
+
+def _vectors(result: types.EmbedContentResponse) -> list[list[float]]:
+    """Return the vectors of ``result``, one per content embedded."""
+    vectors: list[list[float]] = []
+    for embedding in result.embeddings or []:
+        if embedding.values is None:
+            raise GoogleGenerativeAIError(
+                'Error embedding content: an embedding has no values'
+            )
+        vectors.append(list(embedding.values))
+    return vectors
+
+
+def _query_vector(result: types.EmbedContentResponse) -> list[float]:
+    """Return the one vector of an embedded query."""
+    vectors = _vectors(result)
+    if not vectors:
+        raise GoogleGenerativeAIError('Error embedding content: no embedding returned')
+    return vectors[0]
 
 
 @contextmanager
-def _embedding_errors() -> Iterator[None]:
+def _embedding_errors() -> Generator[None, None, None]:
     """Wrap any embedding failure in a ``GoogleGenerativeAIError``."""
     try:
         yield

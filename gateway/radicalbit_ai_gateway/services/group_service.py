@@ -49,13 +49,14 @@ class GroupService:
         self._project_configs = project_configs if project_configs is not None else {}
 
     async def _validate_group(self, group_uuid: UUID) -> None:
-        if not await self.group_dao.get_by_uuid(group_uuid=group_uuid):
+        if await self.group_dao.get_by_uuid(group_uuid=group_uuid) is None:
             raise GroupNotFoundError(f'Group with UUID {group_uuid} not exists')
 
-    def _validate_route(self, project_name: str, route_name: str) -> None:
+    def _validate_route(self, project_name: str, route_name: str) -> ProjectEntry:
+        """Return the project's entry; raise if it does not serve the route."""
         entry = self._project_configs.get(project_name)
         if entry and route_name in entry.config.routes:
-            return
+            return entry
         raise RouteNotFoundError(f'Route {project_name}/{route_name} not exists')
 
     async def cleanup_orphaned_associations(
@@ -76,7 +77,7 @@ class GroupService:
         self, group_uuid: UUID, include_routes: bool = False, include_keys: bool = False
     ) -> GroupFullOut:
         group = await self.group_dao.get_by_uuid(group_uuid=group_uuid)
-        if not group:
+        if group is None:
             raise GroupNotFoundError(f'Group with UUID {group_uuid} not exists')
         return GroupFullOut.from_group(
             group=group,
@@ -139,7 +140,7 @@ class GroupService:
         self, group_uuid: UUID, include_routes: bool, include_keys: bool
     ) -> GroupFullOut:
         group = await self.group_dao.get_by_uuid(group_uuid=group_uuid)
-        if not group:
+        if group is None:
             raise GroupNotFoundError(f'Group with UUID {group_uuid} not exists')
         if group.owner != 'gateway':
             raise GroupExternallyManagedError(
@@ -168,7 +169,7 @@ class GroupService:
         self, group_uuid: UUID, group_in: GroupIn
     ) -> GroupFullOut:
         group = await self.group_dao.get_by_uuid(group_uuid=group_uuid)
-        if not group:
+        if group is None:
             raise GroupNotFoundError(f'Group with UUID {group_uuid} not exists')
         if group.owner != 'gateway':
             raise GroupExternallyManagedError(
@@ -227,7 +228,7 @@ class GroupService:
     ) -> GroupsRouteOut:
         self._validate_route(project_name, route_name)
         for group_uuid in route_groups_in.groups:
-            if not await self.group_dao.get_by_uuid(group_uuid):
+            if await self.group_dao.get_by_uuid(group_uuid) is None:
                 raise GroupNotFoundError(f'Group {group_uuid} not found')
         groups_route = route_groups_in.to_group_route(
             route_name=route_name, project_uuid=project_uuid
@@ -270,7 +271,7 @@ class GroupService:
         include_keys: bool,
     ) -> GroupFullOut:
         group = await self.group_dao.get_by_uuid(group_uuid)
-        if not group:
+        if group is None:
             raise GroupNotFoundError(f'Group with UUID {group_uuid} not exists')
         if group.owner != 'gateway':
             raise GroupExternallyManagedError(
@@ -298,7 +299,7 @@ class GroupService:
 
     async def remove_key(self, group_uuid: UUID, key_uuid: UUID) -> GroupFullOut:
         group = await self.group_dao.get_by_uuid(group_uuid)
-        if not group:
+        if group is None:
             raise GroupNotFoundError(f'Group with UUID {group_uuid} not exists')
         if group.owner != 'gateway':
             raise GroupExternallyManagedError(
@@ -316,7 +317,7 @@ class GroupService:
         self, group_uuid: UUID, project_name: str
     ) -> list[GroupRouteOut]:
         group = await self.group_dao.get_by_uuid(group_uuid)
-        if not group:
+        if group is None:
             raise GroupNotFoundError(f'Group with UUID {group_uuid} not exists')
         assigned = set(await self.group_dao.get_route_names_by_group_uuid(group_uuid))
         entry = self._project_configs.get(project_name)
@@ -339,9 +340,8 @@ class GroupService:
         include_routes: bool,
         include_keys: bool,
     ) -> list[GroupFullOut]:
-        self._validate_route(project_name, route_name)
+        entry = self._validate_route(project_name, route_name)
         all_groups = await self.group_dao.get_all()
-        entry = self._project_configs.get(project_name)
         groups_with_route = {
             g.uuid
             for g in await self.group_dao.get_all_group_by_route_name(
@@ -383,7 +383,7 @@ class GroupService:
         Externally managed groups too: the limits land on each credential.
         """
         group = await self.group_dao.get_by_uuid(group_uuid)
-        if not group:
+        if group is None:
             raise GroupNotFoundError(f'Group with UUID {group_uuid} not exists')
         if not group.keys:
             raise GroupHasNoCredentialsError(

@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Generic, TypeVar
 
-from radicalbit_ai_gateway.caching.route_cache import Cached, RequestCache
+from radicalbit_ai_gateway.caching.route_cache import Cached, CacheMiss, RequestCache
 from radicalbit_ai_gateway.guardrails.guardrails import (
     GuardrailFlags,
     RequestGuardrails,
@@ -13,8 +13,12 @@ from radicalbit_ai_gateway.models.request_identity import RequestIdentity
 if TYPE_CHECKING:
     from radicalbit_ai_gateway.gateway_route.route import GatewayRoute
 
+#: The reply a cache hit serves, and the reply a miss stores.
+V = TypeVar('V')
+S = TypeVar('S')
 
-class RequestScope:
+
+class RequestScope(Generic[V, S]):
     """One request to a route: who made it, and the route's limits,
     guardrails and cache bound to it.
 
@@ -40,7 +44,7 @@ class RequestScope:
         self.guardrails = guardrails
         self.cache = cache
         self.flags = GuardrailFlags()
-        self.cached = Cached()
+        self.cached: Cached[V, S] = CacheMiss()
 
     def headers(self) -> dict[str, str]:
         """Return the gateway's headers: the cache's, then the guardrails'."""

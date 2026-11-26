@@ -5,6 +5,7 @@ each model gets them reduced to what it accepts.
 """
 
 import copy
+from typing import Any
 
 from httpx_aiohttp import HttpxAiohttpClient
 import pytest
@@ -123,11 +124,11 @@ def _model(name: str):
     return init_chat_model(name, api_key='sk', http_async_client=HttpxAiohttpClient())
 
 
-def _without(item: dict, *keys: str) -> dict:
+def _without(item: dict[str, Any], *keys: str) -> dict[str, Any]:
     return {k: v for k, v in item.items() if k not in keys}
 
 
-def _assert_adapted(model, items: list, expected: list) -> None:
+def _assert_adapted(model, items: list[Any], expected: list[Any]) -> None:
     """Assert the adapted input is ``expected`` and the items are not mutated."""
     before = copy.deepcopy(items)
 
@@ -135,14 +136,14 @@ def _assert_adapted(model, items: list, expected: list) -> None:
     assert items == before
 
 
-def _summarised(*texts: str) -> dict:
+def _summarised(*texts: str) -> dict[str, Any]:
     return {
         **OPENAI_REASONING,
         'summary': [{'type': 'summary_text', 'text': t} for t in texts],
     }
 
 
-def _reasoning_text(text: str) -> dict:
+def _reasoning_text(text: str) -> dict[str, Any]:
     return {
         'type': 'reasoning',
         'summary': [],
@@ -154,7 +155,7 @@ _SECOND_CALL = {**OPENAI_CALL, 'id': 'fc_2', 'call_id': 'call_2'}
 _SECOND_OUTPUT = {**CALL_OUTPUT, 'call_id': 'call_2'}
 
 
-def _same(items: list) -> tuple[list, list]:
+def _same(items: list[Any]) -> tuple[list[Any], list[Any]]:
     return items, items
 
 

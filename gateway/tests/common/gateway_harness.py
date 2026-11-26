@@ -10,7 +10,7 @@ yields. A test file keeps only its config, its scenarios and the views of
 what was recorded that its golden values compare.
 """
 
-from collections.abc import Iterable, Iterator
+from collections.abc import Generator, Iterable
 from contextlib import ExitStack, contextmanager
 import logging
 from typing import Any
@@ -21,6 +21,7 @@ from fastapi.testclient import TestClient
 import openai
 import pook
 from starlette.requests import Request
+from typing_extensions import override
 
 from tests.common import db_mock
 from tests.common.audio import make_wav_bytes
@@ -42,6 +43,7 @@ from radicalbit_ai_gateway.guardrails.judges.judge_engine import JudgeEngine
 from radicalbit_ai_gateway.guardrails.presidio import PresidioEngine
 from radicalbit_ai_gateway.invocation import decision_model_invoker
 from radicalbit_ai_gateway.metrics import define_metrics
+from radicalbit_ai_gateway.models.event_payload import RequestEventPayload
 from radicalbit_ai_gateway.models.gateway_config import GatewayConfig
 from radicalbit_ai_gateway.prompt_manager import PromptManager
 from radicalbit_ai_gateway.server import app, group_service, key_service
@@ -62,12 +64,12 @@ _PRESIDIO = PresidioEngine()
 
 
 def build_routes(
-    config: dict | GatewayConfig,
+    config: dict[str, Any] | GatewayConfig,
     *,
     project_uuid: str = '',
     prompt_manager: PromptManager | None = None,
     cost_service: CostService | None = None,
-) -> dict:
+) -> dict[str, Any]:
     """Build a project's routes from its config, keyed ``proj/<route>`` as the
     gateway serves them. The routes cache in memory (no Redis client).
     """
@@ -116,6 +118,7 @@ class _RouteContext(logging.Filter):
         super().__init__()
         self.routes: list[str | None] = []
 
+    @override
     def filter(self, record: logging.LogRecord) -> bool:
         config = current_route_config_ctx.get()
         self.routes.append(config.route_name if config is not None else None)
@@ -134,19 +137,21 @@ class Gateway:
     text = 'Where is Paris?'
     embed_texts: tuple[str, ...] = ('Where is Paris?',)
 
-    def __init__(self, client: TestClient, routes: dict | None, api_key, caplog):
+    def __init__(
+        self, client: TestClient, routes: dict[str, Any] | None, api_key, caplog
+    ):
         self.client = client
         self.routes = routes
         self.api_key = api_key
         self.caplog = caplog
         self.headers = dict(HEADERS)
         self.member = True
-        self.event_rows: list[dict] = []
-        self.request_events: list = []
-        self.http_metrics: list[dict] = []
-        self.metrics: list[tuple] = []
+        self.event_rows: list[dict[str, Any]] = []
+        self.request_events: list[RequestEventPayload] = []
+        self.http_metrics: list[dict[str, Any]] = []
+        self.metrics: list[tuple[str, float, dict[str, Any]]] = []
         self.route_context = _RouteContext()
-        self.upstream: list[dict] = []
+        self.upstream: list[dict[str, Any]] = []
 
     def clear(self) -> None:
         self.event_rows.clear()
@@ -161,7 +166,7 @@ class Gateway:
         path: str,
         replies: list[CannedResponse] | None = None,
         key: bool = True,
-        headers: dict | None = None,
+        headers: dict[str, Any] | None = None,
         **kwargs,
     ):
         self.clear()
@@ -228,7 +233,7 @@ class Gateway:
 
 @contextmanager
 def open_gateway(
-    routes: dict | None = None,
+    routes: dict[str, Any] | None = None,
     *,
     caplog=None,
     metrics: Iterable[tuple[str, str]] = (),
@@ -236,7 +241,7 @@ def open_gateway(
     api_key=None,
     use_pook: bool = False,
     gateway_class: type[Gateway] = Gateway,
-) -> Iterator[Gateway]:
+) -> Generator[Gateway]:
     """Serve ``routes`` (when given) for the duration of the block.
 
     ``metrics`` names the ``define_metrics`` instruments and methods to record

@@ -1,6 +1,7 @@
 """Tests for the OpenAI Responses API path of the native OpenAI chat model."""
 
 import json
+from typing import Any
 
 from httpx_aiohttp import HttpxAiohttpClient
 from pydantic import BaseModel
@@ -43,10 +44,12 @@ WEATHER_TOOL = {
 def model(name='gpt-4o-mini', **kwargs) -> ChatOpenAI:
     kwargs.setdefault('http_async_client', HttpxAiohttpClient())
     kwargs.setdefault('use_responses_api', True)
-    return init_chat_model(f'openai:{name}', api_key='sk', **kwargs)
+    chat_model = init_chat_model(f'openai:{name}', api_key='sk', **kwargs)
+    assert isinstance(chat_model, ChatOpenAI)
+    return chat_model
 
 
-def build(messages, chat_model=None, **kwargs) -> dict:
+def build(messages, chat_model=None, **kwargs) -> dict[str, Any]:
     chat_model = chat_model or model()
     return chat_model._get_request_payload(messages, **chat_model._call_kwargs(kwargs))
 
@@ -721,10 +724,9 @@ async def test_stream_text_reasoning_and_tool_calls():
         'call_id': 'call_weather_1',
         'id': 'fc_golden_1',
     }
-    assert (
-        ''.join(c['arguments'] for c in calls)
-        == canned.WEATHER_TOOL_CALL['function']['arguments']
-    )
+    function = canned.WEATHER_TOOL_CALL['function']
+    assert isinstance(function, dict)
+    assert ''.join(c['arguments'] for c in calls) == function['arguments']
     last = chunks[-1]
     assert last.chunk_position == 'last'
     assert last.usage_metadata['input_token_details'] == {'cache_read': 4}
@@ -825,6 +827,47 @@ async def test_stream_annotations_refusal_and_passthrough_items():
     assert last.response_metadata['incomplete_details'] == {
         'reason': 'max_output_tokens'
     }
+
+
+async def test_stream_tool_call_keeps_namespace_and_async_and_skips_other_items():
+    events = events_stream(
+        {
+            'type': 'response.output_item.added',
+            'output_index': 0,
+            'item': {
+                'type': 'function_call',
+                'id': 'fc_1',
+                'call_id': 'call_1',
+                'name': 'lookup',
+                'arguments': '',
+                'namespace': 'crm',
+                'async': True,
+            },
+        },
+        {
+            'type': 'response.output_item.added',
+            'output_index': 1,
+            'item': {'type': 'web_search_call', 'id': 'ws_1', 'status': 'in_progress'},
+        },
+    )
+    chunks, _ = await stream(model(), [events])
+    content = [block for chunk in chunks for block in chunk.content]
+    assert content == [
+        {
+            'type': 'function_call',
+            'name': 'lookup',
+            'arguments': '',
+            'call_id': 'call_1',
+            'id': 'fc_1',
+            'index': 0,
+            'namespace': 'crm',
+            'async': True,
+        }
+    ]
+    # The web search added gives no chunk: the created and completed events,
+    # and the call, do.
+    assert len(chunks) == 3
+    assert chunks[-1].chunk_position == 'last'
 
 
 async def test_stream_structured_output_is_parsed_on_completion():

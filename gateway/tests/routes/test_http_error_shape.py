@@ -9,8 +9,9 @@ as ``{"error": {...}}``, like every other error of the management API, and
 import json
 import unittest
 
-from fastapi import HTTPException
+from fastapi import HTTPException, Request
 from fastapi.testclient import TestClient
+from typing_extensions import override
 
 from radicalbit_ai_gateway.server import app
 from radicalbit_ai_gateway.utils.exceptions import http_exception_handler
@@ -19,6 +20,7 @@ PREFIX = '/public/api/v1'
 
 
 class TestHttpErrorShape(unittest.TestCase):
+    @override
     @classmethod
     def setUpClass(cls):
         cls.client = TestClient(app, raise_server_exceptions=False)
@@ -83,13 +85,17 @@ class TestHttpErrorShape(unittest.TestCase):
         }
 
 
+# The handler answers from the exception alone: any request will do
+_REQUEST = Request({'type': 'http'})
+
+
 def test_a_status_without_a_body_answers_without_one():
-    res = http_exception_handler(None, HTTPException(status_code=304))
+    res = http_exception_handler(_REQUEST, HTTPException(status_code=304))
     assert res.status_code == 304
     assert res.body == b''
 
 
 def test_a_status_without_a_standard_name_uses_the_number_as_code():
-    res = http_exception_handler(None, HTTPException(status_code=599, detail='odd'))
+    res = http_exception_handler(_REQUEST, HTTPException(status_code=599, detail='odd'))
     assert res.status_code == 599
-    assert json.loads(res.body)['error']['code'] == 599
+    assert json.loads(bytes(res.body))['error']['code'] == 599

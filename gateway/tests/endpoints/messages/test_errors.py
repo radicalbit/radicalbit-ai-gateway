@@ -19,7 +19,7 @@ async def test_a_detail_becomes_the_error_message():
     response = await _shaped(JSONResponse({'detail': 'Too many requests'}, 429))
 
     assert response.status_code == 429
-    assert json.loads(response.body) == {
+    assert json.loads(bytes(response.body)) == {
         'type': 'error',
         'error': {'type': 'rate_limit_error', 'message': 'Too many requests'},
     }
@@ -29,13 +29,13 @@ async def test_a_body_that_is_not_json_gets_a_generic_message():
     response = await _shaped(PlainTextResponse('Bad gateway', 502))
 
     assert response.status_code == 502
-    assert json.loads(response.body)['error']['message'] == 'Error'
+    assert json.loads(bytes(response.body))['error']['message'] == 'Error'
 
 
 async def test_a_json_body_without_a_message_gets_a_generic_message():
     response = await _shaped(JSONResponse({'detail': ['a', 'list']}, 500))
 
-    assert json.loads(response.body)['error'] == {
+    assert json.loads(bytes(response.body))['error'] == {
         'type': 'api_error',
         'message': 'Error',
     }

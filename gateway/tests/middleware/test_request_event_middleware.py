@@ -7,6 +7,7 @@ differs from the ``/v1/*`` endpoints: a 202 notification is not an event, and a
 JSON-RPC error arrives over HTTP 200 rather than a 4xx.
 """
 
+from typing import Any
 from unittest.mock import patch
 import uuid
 
@@ -27,7 +28,7 @@ from radicalbit_ai_gateway.utils.request_context import get_current_request_tags
 EMIT = 'radicalbit_ai_gateway.middleware.request_event_middleware.emit_request_event'
 
 
-def _scope(path: str, method: str = 'POST') -> dict:
+def _scope(path: str, method: str = 'POST') -> dict[str, Any]:
     return {'type': 'http', 'path': path, 'method': method}
 
 

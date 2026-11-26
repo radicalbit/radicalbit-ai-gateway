@@ -36,7 +36,8 @@ class RequestEventContext:
     @classmethod
     def get(cls, request: Request) -> RequestEventContext | None:
         """Get context from request.scope, returns None if not set."""
-        return request.scope.get('request_event_context')
+        ctx = request.scope.get('request_event_context')
+        return ctx if isinstance(ctx, RequestEventContext) else None
 
     @classmethod
     def get_or_create(cls, request: Request) -> RequestEventContext:
@@ -45,6 +46,8 @@ class RequestEventContext:
         Uses scope directly instead of request.state to guarantee sharing
         between all Request objects created from the same ASGI scope.
         """
-        if 'request_event_context' not in request.scope:
-            request.scope['request_event_context'] = cls()
-        return request.scope['request_event_context']
+        ctx = request.scope.get('request_event_context')
+        if not isinstance(ctx, RequestEventContext):
+            ctx = cls()
+            request.scope['request_event_context'] = ctx
+        return ctx

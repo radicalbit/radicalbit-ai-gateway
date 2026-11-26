@@ -46,6 +46,7 @@ def test_every_row_falls_in_exactly_one_page():
         seen = []
         for offset in range(0, total, size):
             window = page_window(BUCKETS, offset, size)
+            assert window is not None
             first = starts[window.newest] + window.offset
             seen += range(first, min(first + size, total))
         assert seen == list(range(total))

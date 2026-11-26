@@ -1,5 +1,6 @@
 import asyncio
 import json
+from typing import Any
 from unittest.mock import ANY, AsyncMock, MagicMock, patch
 
 import pytest
@@ -36,7 +37,7 @@ def _routing_config(**updates):
     return routing_config.model_copy(update=updates)
 
 
-def _parsed(scores: dict | None):
+def _parsed(scores: dict[str, Any] | None):
     if scores is None:
         return None
     return build_response_schema(_routing_config()).model_validate(scores)
@@ -66,6 +67,7 @@ def _chat_model(structured) -> MagicMock:
 def _build_router(structured, fallback=None, **config_updates) -> LLMRouter:
     config = get_gateway_routing_llm()
     route = config.routes['smart_route']
+    assert route.chat_models is not None
     models_by_id = {mid: config.chat_models_by_id[mid] for mid in route.chat_models}
     router_models = {
         'router_model': RouterModel(
@@ -92,7 +94,7 @@ def span():
         yield span
 
 
-def _attributes(span) -> dict:
+def _attributes(span) -> dict[str, Any]:
     return {c.args[0]: c.args[1] for c in span.set_attribute.call_args_list}
 
 
@@ -251,6 +253,7 @@ class TestLLMRouter:
         record = AsyncMock()
         await router.select_model([HumanMessage(content='fix this bug')], record)
         record.assert_awaited_once()
+        assert record.await_args is not None
         model, input_tokens, _latency_ms = record.await_args.args
         assert model.model_id == 'router_model'
         assert input_tokens == 120
@@ -265,6 +268,7 @@ class TestLLMRouter:
         record = AsyncMock()
         await router.select_model([HumanMessage(content='fix this bug')], record)
         record.assert_awaited_once()
+        assert record.await_args is not None
         assert record.await_args.args[0].model_id == 'router_backup'
         assert record.await_args.kwargs['target_model_id'] == 'router_model'
 
@@ -378,6 +382,7 @@ async def test_a_router_model_without_structured_output_is_not_recorded_as_calle
     chat_model.with_structured_output = MagicMock(side_effect=NotImplementedError)
     config = get_gateway_routing_llm()
     route = config.routes['smart_route']
+    assert route.chat_models is not None
     router = LLMRouter(
         config=_routing_config(),
         models_by_id={mid: config.chat_models_by_id[mid] for mid in route.chat_models},

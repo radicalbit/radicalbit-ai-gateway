@@ -152,7 +152,7 @@ def build_gateway_routes_from_config(
                         config=routing_config,
                         models_by_id=route_models_by_id,
                         invoker=DecisionModelInvoker(
-                            models=gateway_config.decision_models,
+                            models=gateway_config.decision_models or [],
                             cost_service=cost_service,
                             httpx_client=httpx_client,
                         ),
@@ -204,6 +204,7 @@ def build_gateway_routes_from_config(
 def build_project_route_registrar(
     app: FastAPI,
     httpx_client,
+    prompt_manager: PromptManager,
 ) -> tuple[
     Callable[[UUID, str, str], Awaitable[None]], Callable[[UUID], Awaitable[None]]
 ]:
@@ -215,10 +216,12 @@ def build_project_route_registrar(
 
     The deregister callable removes all routes and the project config
     for a given project UUID.
+
+    The judges of the routes read their ``prompt_ref`` with ``prompt_manager``.
     """
     presidio_engine = PresidioEngine()
     judge_engine = JudgeEngine(
-        prompt_manager=PromptManager.get_global(),
+        prompt_manager=prompt_manager,
         httpx_client=httpx_client,
     )
 

@@ -88,7 +88,9 @@ def get_rotation_state(
     if last_rotated_at is None:
         return RotationState.NONE
     now = now or datetime.datetime.now(tz=UTC)
-    if not previous_value_authenticates(expires_on, grace_ends_at, now):
+    if grace_ends_at is None or not previous_value_authenticates(
+        expires_on, grace_ends_at, now
+    ):
         return RotationState.ROTATED
     if grace_ends_at - now <= GRACE_ENDING_WINDOW:
         return RotationState.GRACE_ENDING

@@ -1,4 +1,5 @@
 import json
+from typing import Any
 
 from radicalbit_ai_gateway.llm.messages import BaseMessage
 
@@ -20,11 +21,11 @@ def build_user_content_from_texts(input_texts: list[str]) -> str:
     return stringify_message_content(input_texts)
 
 
-def _stable_json_dumps(obj: dict) -> str:
+def _stable_json_dumps(obj: dict[str, Any]) -> str:
     return json.dumps(obj, ensure_ascii=False, separators=(',', ':'), sort_keys=True)
 
 
-def stringify_message_content(content: str | list) -> str:
+def stringify_message_content(content: object) -> str:
     """Deterministically convert BaseMessage.content into a single string.
     - str -> returned as-is
     - list[str|dict] -> join extracted parts

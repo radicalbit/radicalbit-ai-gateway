@@ -7,6 +7,8 @@ rule, which hour, how many alerts were sent and how many failed.
 import datetime
 import uuid
 
+from typing_extensions import override
+
 from tests.common.db_integration_ch import DatabaseIntegrationClickhouse
 
 from radicalbit_ai_gateway.db.dao.alert_dao import AlertDAO
@@ -66,6 +68,7 @@ def bucket(
 
 
 class AlertDAOHistoryTest(DatabaseIntegrationClickhouse):
+    @override
     @classmethod
     def setUpClass(cls):
         super().setUpClass()

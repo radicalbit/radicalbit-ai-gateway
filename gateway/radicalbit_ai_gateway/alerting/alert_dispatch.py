@@ -241,13 +241,13 @@ class AlertDispatcher:
     ) -> Sequence[AlertRule]:
         if scope is AlertRuleScope.ROUTE:
             if not event.project_uuid:
-                return []
+                return list[AlertRule]()
             return await self._alert_rule_dao.get_enabled_route_rules(
                 event.project_uuid, event.route_name
             )
         if scope is AlertRuleScope.PROJECT:
             if not event.project_uuid:
-                return []
+                return list[AlertRule]()
             return await self._alert_rule_dao.get_enabled_project_rules(
                 event.project_uuid
             )
@@ -255,7 +255,7 @@ class AlertDispatcher:
         try:
             credential_uuid = UUID(event.api_key_uuid)
         except ValueError:
-            return []
+            return list[AlertRule]()
         return await self._alert_rule_dao.get_enabled_credential_rules(credential_uuid)
 
     async def close_windows(self) -> None:

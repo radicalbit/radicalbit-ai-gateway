@@ -34,12 +34,12 @@ class DecisionEntry(ExactEntry):
             ensure_ascii=False,
         )
 
-    def parse(self, raw: str) -> dict:
+    def parse(self, raw: str) -> dict[str, Any]:
         return json.loads(raw)
 
-    def dump(self, value: dict) -> str:
+    def dump(self, value: dict[str, Any]) -> str:
         return json.dumps(value)
 
-    def hit(self, value: dict) -> Hit:
+    def hit(self, value: dict[str, Any]) -> Hit:
         # A hit costs nothing: its input tokens are reported at $0.
         return Hit(value['model_id'], free_input_tokens=value['input_tokens'])

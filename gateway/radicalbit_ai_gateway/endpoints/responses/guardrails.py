@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
+from typing import Any
 
 from radicalbit_ai_gateway.endpoints.responses.output import ResponsesOutput
 from radicalbit_ai_gateway.llm.messages import BaseMessage
@@ -19,7 +20,7 @@ class ResponsesReply:
     redactable = True
 
     @classmethod
-    def of(cls, response: dict) -> ResponsesReply:
+    def of(cls, response: dict[str, Any]) -> ResponsesReply:
         output = ResponsesOutput(response)
         return cls(output, output.messages())
 
@@ -29,7 +30,7 @@ class ResponsesReply:
     def with_messages(self, messages: list[BaseMessage]) -> ResponsesReply:
         return replace(self, items=messages)
 
-    def response(self) -> dict:
+    def response(self) -> dict[str, Any]:
         """Return the response with the texts of this reply written in."""
         self.output.write_back(self.items)
         return self.output.response

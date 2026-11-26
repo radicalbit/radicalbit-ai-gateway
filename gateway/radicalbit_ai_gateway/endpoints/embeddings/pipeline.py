@@ -22,13 +22,16 @@ from radicalbit_ai_gateway.utils.trace_attributes import (
     set_operation_category,
 )
 
+#: An embeddings request: it serves and stores embedding responses.
+EmbeddingsScope = RequestScope[CreateEmbeddingResponse, CreateEmbeddingResponse]
+
 logger = logging.getLogger(get_app_config().log_config.logger_name)
 
 
 _check_in_span = checked_in_span('check_embedding_limiters')
 
 
-async def embed(scope: RequestScope, texts: list[str]) -> CreateEmbeddingResponse:
+async def embed(scope: EmbeddingsScope, texts: list[str]) -> CreateEmbeddingResponse:
     """Embed the texts of a request."""
     route = scope.route
     route_name = route.gateway_route_config.route_name
@@ -70,7 +73,7 @@ async def embed(scope: RequestScope, texts: list[str]) -> CreateEmbeddingRespons
 
 
 @task(name='select_embedding_model')
-def _select_model(scope: RequestScope) -> Model:
+def _select_model(scope: EmbeddingsScope) -> Model:
     """Return the route's first embedding model: it serves its traffic."""
     models = scope.route.embedding_models
     if not models:

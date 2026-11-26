@@ -1,3 +1,4 @@
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from mcp import types
@@ -11,7 +12,7 @@ from radicalbit_ai_gateway.mcp_proxy.upstream_client import McpUpstreamClient
 from radicalbit_ai_gateway.models.auth_dto import KeyDetails
 from radicalbit_ai_gateway.models.event_type import EventType
 from radicalbit_ai_gateway.models.mcp_authorized_request import McpAuthorizedRequest
-from radicalbit_ai_gateway.models.mcp_server import McpHttpServer
+from radicalbit_ai_gateway.models.mcp_server import AnyMcpServer, McpHttpServer
 from radicalbit_ai_gateway.services.mcp_service import (
     LATEST_PROTOCOL_VERSION,
     MCP_SERVER_NAME,
@@ -27,7 +28,7 @@ from radicalbit_ai_gateway.utils.request_context import set_current_request_tags
 
 GITHUB = McpHttpServer(alias='github', url='https://github.example.com/mcp/')
 JIRA = McpHttpServer(alias='jira', url='https://jira.example.com/mcp/')
-SERVERS = [GITHUB, JIRA]
+SERVERS: list[AnyMcpServer] = [GITHUB, JIRA]
 
 MCP_SERVICE = 'radicalbit_ai_gateway.services.mcp_service'
 EVENTS_PROCESSOR = 'radicalbit_ai_gateway.events.events_processor'
@@ -42,7 +43,7 @@ def _tool(name: str) -> types.Tool:
     return types.Tool(
         name=name,
         description='a tool',
-        inputSchema={'type': 'object', 'properties': {}},
+        input_schema={'type': 'object', 'properties': {}},
     )
 
 
@@ -94,10 +95,10 @@ def _exposed(kind: str, alias: str, name: str) -> str:
 
 def _listing(kind: str, *names: str):
     _, result_type, item, _, _ = LISTS[kind]
-    return result_type(**{kind: [item(_raw(kind, n)) for n in names]})
+    return result_type.model_validate({kind: [item(_raw(kind, n)) for n in names]})
 
 
-def _ids(kind: str, payload: dict) -> list[str]:
+def _ids(kind: str, payload: dict[str, Any]) -> list[str]:
     return [item[LISTS[kind][3]] for item in payload['result'][kind]]
 
 
@@ -108,14 +109,14 @@ def _service(upstream_client=None) -> McpService:
     )
 
 
-def _request(method: str, request_id=1, params=None) -> dict:
+def _request(method: str, request_id=1, params=None) -> dict[str, Any]:
     body = {'jsonrpc': '2.0', 'id': request_id, 'method': method}
     if params is not None:
         body['params'] = params
     return body
 
 
-def _error(code: int, message: str, request_id=1) -> dict:
+def _error(code: int, message: str, request_id=1) -> dict[str, Any]:
     return {
         'jsonrpc': '2.0',
         'id': request_id,
@@ -173,9 +174,9 @@ def _invoking_client() -> MagicMock:
     return client
 
 
-def _attrs(mock_set_attrs) -> dict:
+def _attrs(mock_set_attrs) -> dict[str, Any]:
     """Every attribute dispatch set on the span, merged in call order."""
-    merged: dict = {}
+    merged: dict[str, Any] = {}
     for c in mock_set_attrs.call_args_list:
         merged.update(c.kwargs)
     return merged
@@ -187,11 +188,11 @@ def _recording_span() -> MagicMock:
     return span
 
 
-def _span_attrs(span: MagicMock) -> dict:
+def _span_attrs(span: MagicMock) -> dict[str, Any]:
     return {c.args[0]: c.args[1] for c in span.set_attribute.call_args_list}
 
 
-def _fanout(total: int, failed: str, count: int) -> dict:
+def _fanout(total: int, failed: str, count: int) -> dict[str, Any]:
     return {
         'rb.gateway.mcp_upstream_total': total,
         'rb.gateway.mcp_upstream_failed': failed,
@@ -210,7 +211,7 @@ def recorded_events():
     The dict is what the worker inserts. Asserting on it covers the payload
     dispatch builds and the column it maps to, in one place.
     """
-    recorded: list[dict] = []
+    recorded: list[dict[str, Any]] = []
     with patch(f'{EVENTS_PROCESSOR}._events_buffer') as buffer:
         buffer.add.side_effect = recorded.append
         yield recorded
@@ -238,17 +239,21 @@ def _forget_unadvertised_warnings():
     _warned_unadvertised.clear()
 
 
-def _mcp_events(recorded: list[dict]) -> list[dict]:
+def _mcp_events(recorded: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Return only the MCP invocation events out of everything recorded."""
     return [
         event for event in recorded if event['EVENT_TYPE'] is EventType.MCP_INVOCATION
     ]
 
 
-def _invocation(recorded: list[dict]) -> tuple[str, str, str]:
+def _invocation(recorded: list[dict[str, Any]]) -> tuple[str, str, str]:
     """Return the single MCP invocation recorded, as (method, alias, target)."""
     (event,) = _mcp_events(recorded)
-    return event['MCP_METHOD'], event['MCP_ALIAS'], event['MCP_TARGET']
+    method, alias, target = event['MCP_METHOD'], event['MCP_ALIAS'], event['MCP_TARGET']
+    assert isinstance(method, str)
+    assert isinstance(alias, str)
+    assert isinstance(target, str)
+    return method, alias, target
 
 
 # ---------------------------------------------------------------------------
@@ -557,7 +562,9 @@ def _gated(kind: str, allow: list[str] | None, alias: str = 'github'):
     if allow is None:
         return McpHttpServer(alias=alias, url=url)
     entries = [_raw(kind, n) for n in allow]
-    return McpHttpServer(alias=alias, url=url, **{f'allowed_{kind}': entries})
+    return McpHttpServer.model_validate(
+        {'alias': alias, 'url': url, f'allowed_{kind}': entries}
+    )
 
 
 @pytest.mark.parametrize(
@@ -678,7 +685,7 @@ ARGS = {'id': '42'}
             'call_tool',
             types.CallToolResult(
                 content=[types.TextContent(type='text', text='issue #42')],
-                isError=False,
+                is_error=False,
             ),
             (GITHUB, 'ns__get_issue', ARGS),
             'ns__get_issue',
@@ -719,7 +726,7 @@ ARGS = {'id': '42'}
             types.ReadResourceResult(
                 contents=[
                     types.TextResourceContents(
-                        uri=README, text='hello', mimeType='text/plain'
+                        uri=README, text='hello', mime_type='text/plain'
                     )
                 ]
             ),
@@ -777,7 +784,7 @@ async def test_tools_call_is_error_result_passes_through():
     client = MagicMock(spec_set=McpUpstreamClient)
     client.call_tool = AsyncMock(
         return_value=types.CallToolResult(
-            content=[types.TextContent(type='text', text='rate limited')], isError=True
+            content=[types.TextContent(type='text', text='rate limited')], is_error=True
         )
     )
 
@@ -789,7 +796,9 @@ async def test_tools_call_is_error_result_passes_through():
     assert result.payload['result']['isError'] is True
 
 
-def _rejections(method: str, noun: str, field: str) -> list:
+def _rejections(
+    method: str, noun: str, field: str
+) -> list[tuple[str, dict[str, Any], list[AnyMcpServer], str, dict[str, str]]]:
     requires = f'{method} requires a string params.{field}'
     return [
         *(

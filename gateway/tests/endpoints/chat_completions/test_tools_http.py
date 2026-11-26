@@ -4,6 +4,7 @@ The provider is mocked over HTTP with pook.
 """
 
 import json
+from typing import Any
 
 import pook
 import pytest
@@ -29,7 +30,7 @@ WEATHER_TOOL = {
 }
 
 
-def _chunk(delta: dict, finish_reason: str | None) -> dict:
+def _chunk(delta: dict[str, Any], finish_reason: str | None) -> dict[str, Any]:
     return {
         'id': 'chatcmpl-1',
         'object': 'chat.completion.chunk',

@@ -48,7 +48,7 @@ class ChatEntry:
     messages: list[BaseMessage]
     tools: Any = None
     tool_choice: Any = None
-    params: dict = field(default_factory=dict)
+    params: dict[str, Any] = field(default_factory=dict)
     #: Whether the reply is streamed: a stream replays a hit's text only.
     stream: bool = False
 

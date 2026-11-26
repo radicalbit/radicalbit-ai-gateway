@@ -8,9 +8,12 @@ the query have to agree on the project.
 
 import asyncio
 import re
+from typing import Any
+from unittest.mock import create_autospec
 
 import numpy as np
 import pytest
+from redis.asyncio import Redis
 from redis.exceptions import ResponseError
 
 from tests.common.db_mock import API_KEY_UUID, SAMPLE_PROJECT_UUID, TEST_PROJECT_UUID
@@ -53,6 +56,7 @@ class FakeSearchIndex:
         if unknown:
             raise ResponseError(f'Unknown field(s) at index: {sorted(unknown)}')
 
+        assert query_params is not None
         query_vector = np.frombuffer(query_params['query_vector'], dtype=np.float32)
         matches = []
         for document in self.client.hashes.values():
@@ -65,7 +69,9 @@ class FakeSearchIndex:
             )
             matches.append(FakeDocument(document['response'], distance))
         matches.sort(key=lambda document: float(document.score))
-        return FakeSearchResult(matches[: int(_KNN.search(query_string).group(1))])
+        knn = _KNN.search(query_string)
+        assert knn is not None
+        return FakeSearchResult(matches[: int(knn.group(1))])
 
 
 class FakeDocument:
@@ -81,7 +87,7 @@ class FakeSearchResult:
 
 class FakeSearchRedis:
     def __init__(self):
-        self.hashes: dict[str, dict] = {}
+        self.hashes: dict[str, dict[str, Any]] = {}
         self.indexes: dict[str, list[str]] = {}
         self.queries: list[str] = []
         self.expirations: dict[str, int] = {}
@@ -89,16 +95,26 @@ class FakeSearchRedis:
     def ft(self, index_name: str) -> FakeSearchIndex:
         return FakeSearchIndex(self, index_name)
 
-    async def hset(self, name: str, mapping: dict | None = None) -> None:
+    async def hset(self, name: str, mapping: dict[str, Any] | None = None) -> None:
         self.hashes.setdefault(name, {}).update(mapping or {})
 
     async def expire(self, name: str, ttl: int) -> None:
         self.expirations[name] = ttl
 
 
+def redis_serving(fake: FakeSearchRedis) -> Redis:
+    """Return a ``Redis`` whose search, hash and expiry commands ``fake`` serves."""
+    redis_client = create_autospec(Redis, instance=True)
+    redis_client.ft.side_effect = fake.ft
+    redis_client.hset.side_effect = fake.hset
+    redis_client.expire.side_effect = fake.expire
+    assert isinstance(redis_client, Redis)
+    return redis_client
+
+
 async def _build_cache(redis_client: FakeSearchRedis) -> SemanticCache:
     cache = SemanticCache(
-        redis_client=redis_client,
+        redis_client=redis_serving(redis_client),
         similarity_threshold=0.8,
         dim=DIM,
         distance_metric='cosine',

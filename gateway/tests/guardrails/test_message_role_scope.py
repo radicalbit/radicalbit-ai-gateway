@@ -5,6 +5,7 @@ type, and that apply_check respects the
 message_roles configuration field.
 """
 
+from typing import TypedDict
 from unittest.mock import MagicMock
 
 import pytest
@@ -20,6 +21,7 @@ from radicalbit_ai_gateway.llm.messages import (
     ToolMessage,
 )
 from radicalbit_ai_gateway.models.guardrails import (
+    CheckGuardrail,
     CheckParameter,
     Guardrail,
     GuardrailBehaviorType,
@@ -88,7 +90,7 @@ def _make_guardrail(
     values: list[str],
     behavior: GuardrailBehaviorType = GuardrailBehaviorType.BLOCK,
 ) -> Guardrail:
-    return Guardrail(
+    return CheckGuardrail(
         name='test_guardrail',
         type=GuardrailType.CONTAINS,
         where=GuardrailWhereType.INPUT,
@@ -114,7 +116,17 @@ def _make_check_engine(guardrail: Guardrail) -> Guardrails:
     )
 
 
-COMMON_KWARGS = {
+class Identity(TypedDict):
+    request_uuid: str
+    api_key_uuid: str
+    group_uuid: str
+    api_key_name: str
+    group_name: str
+    project_uuid: str
+    project_name: str
+
+
+COMMON_KWARGS: Identity = {
     'request_uuid': 'req-1',
     'api_key_uuid': 'key-1',
     'group_uuid': 'grp-1',

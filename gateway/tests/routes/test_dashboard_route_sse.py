@@ -2,6 +2,7 @@ from datetime import datetime, timedelta, timezone
 from itertools import cycle
 import json
 from types import SimpleNamespace
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import UUID
 
@@ -10,6 +11,7 @@ from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 import pytest
 
+from radicalbit_ai_gateway.middleware.exception_handlers import add_exception_handler
 from radicalbit_ai_gateway.models.event_dto import (
     ChartDataSeriesDTO,
     CostChartDataDTO,
@@ -96,34 +98,19 @@ def _end_stream_after(events: int):
     return sleep
 
 
-class _Delegate:
-    """Stands in for a service in the module-wide router and forwards every
-    call to the current test's fresh mock.
-    """
-
-    def __init__(self):
-        self.mock = None
-
-    def __getattr__(self, name):
-        return getattr(self.mock, name)
-
-
-DELEGATES = {name: _Delegate() for name in SERVICE_SPECS}
-
-
-@pytest.fixture(scope='module')
-def app():
-    """Build the dashboard router once; services are swapped per test."""
+@pytest.fixture
+def app(services):
+    """Build the dashboard router on the test's fresh service mocks."""
     router = DashboardRoute.get_dashboard_router(
-        event_service=DELEGATES['event'],
-        request_event_service=DELEGATES['request'],
-        project_service=DELEGATES['project'],
-        mcp_usage_service=DELEGATES['mcp'],
+        event_service=services.event,
+        request_event_service=services.request,
+        project_service=services.project,
+        mcp_usage_service=services.mcp,
     )
     app = FastAPI(title='AI Gateway', debug=True)
-    app.add_exception_handler(GatewayError, gateway_exception_handler)
-    app.add_exception_handler(GatewayBadRequest, gateway_exception_handler)
-    app.add_exception_handler(AuthRegistryError, auth_registry_exception_handler)
+    add_exception_handler(app, GatewayError, gateway_exception_handler)
+    add_exception_handler(app, GatewayBadRequest, gateway_exception_handler)
+    add_exception_handler(app, AuthRegistryError, auth_registry_exception_handler)
     app.include_router(router, prefix='/public/api/v1')
     project_entry = MagicMock()
     project_entry.config.routes = {}
@@ -141,14 +128,10 @@ def services():
     project = MagicMock()
     project.name = PROJECT_NAME
     mocks.project.get_by_uuid.return_value = project
-    for name, delegate in DELEGATES.items():
-        delegate.mock = getattr(mocks, name)
-    yield mocks
-    for delegate in DELEGATES.values():
-        delegate.mock = None
+    return mocks
 
 
-async def _stream(app, path, params=None, wanted=1) -> list:
+async def _stream(app, path, params=None, wanted=1) -> list[Any]:
     """Open a stream and return the JSON payloads of its first *wanted* events."""
     end_stream = (
         patch(
@@ -185,7 +168,7 @@ async def _get(app, path, params=None):
         return await client.get(f'{PROJECT_BASE}{path}', params=params)
 
 
-def _subset(actual: dict, expected: dict) -> dict:
+def _subset(actual: dict[str, Any], expected: dict[str, Any]) -> dict[str, Any]:
     return {k: actual[k] for k in expected}
 
 
@@ -791,9 +774,12 @@ def test_compute_sse_time_range_rolls_a_look_back_and_keeps_fixed_bounds():
     from_dt, to_dt = compute_sse_time_range(3600, None, None)
     after = datetime.now(timezone.utc) - timedelta(seconds=3600)
     assert to_dt is None
+    assert from_dt is not None
     assert before <= from_dt <= after
 
     from_dt, to_dt = compute_sse_time_range(None, 1700000000, 1700003600)
+    assert from_dt is not None
+    assert to_dt is not None
     assert from_dt.timestamp() == 1700000000
     assert to_dt.timestamp() == 1700003600
 

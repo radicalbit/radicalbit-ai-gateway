@@ -17,7 +17,7 @@ class OutputParserError(ValueError):
     """A reply could not be parsed into the requested structure."""
 
 
-def is_data_content_block(block: dict) -> bool:
+def is_data_content_block(block: dict[str, Any]) -> bool:
     """Whether ``block`` is a standard multimodal data block (image, file...)."""
     if block.get('type') not in _DATA_BLOCK_TYPES:
         return False
@@ -36,7 +36,7 @@ def is_data_content_block(block: dict) -> bool:
     return False
 
 
-def rm_titles(kv: dict, prev_key: str = '') -> dict:
+def rm_titles(kv: dict[str, Any], prev_key: str = '') -> dict[str, Any]:
     """Drop JSON-schema ``title``s, keeping properties that are named title."""
     new_kv = {}
     for k, v in kv.items():
@@ -50,7 +50,7 @@ def rm_titles(kv: dict, prev_key: str = '') -> dict:
     return new_kv
 
 
-def _dereference(node: Any, defs: dict) -> Any:
+def _dereference(node: Any, defs: dict[str, Any]) -> Any:
     if isinstance(node, dict):
         ref = node.get('$ref')
         if isinstance(ref, str) and ref.startswith('#/$defs/'):
@@ -63,7 +63,7 @@ def _dereference(node: Any, defs: dict) -> Any:
     return node
 
 
-def pydantic_to_function(schema: type[BaseModel]) -> dict:
+def pydantic_to_function(schema: type[BaseModel]) -> dict[str, Any]:
     """Describe a pydantic model as an OpenAI function definition."""
     json_schema = schema.model_json_schema()
     defs = json_schema.pop('$defs', {})

@@ -1,7 +1,7 @@
-from collections.abc import Awaitable, Callable
+from collections.abc import Callable, Coroutine
 from contextlib import AbstractAsyncContextManager
 import logging
-from typing import TypeVar
+from typing import Any, TypeVar, TypeVarTuple
 
 import anyio
 from sqlalchemy import ColumnElement, Delete, MetaData, Select, Update
@@ -14,7 +14,7 @@ from radicalbit_ai_gateway.utils.app_config import DBConfig, get_app_config
 logger = logging.getLogger(get_app_config().log_config.logger_name)
 
 
-Stmt = TypeVar('Stmt', Select, Update, Delete)
+Stmt = TypeVar('Stmt', bound=Select[Any] | Update | Delete)
 
 
 def filter_if(stmt: Stmt, condition: bool, *clauses: ColumnElement[bool]) -> Stmt:
@@ -23,9 +23,12 @@ def filter_if(stmt: Stmt, condition: bool, *clauses: ColumnElement[bool]) -> Stm
 
 
 R = TypeVar('R')
+Args = TypeVarTuple('Args')
 
 
-def run_from_worker(async_fn: Callable[..., Awaitable[R]], *args) -> R:
+def run_from_worker(
+    async_fn: Callable[[*Args], Coroutine[Any, Any, R]], *args: *Args
+) -> R:
     """Run an async DB call on the event loop from sync code in a worker thread,
     and wait for its result.
 
@@ -104,6 +107,8 @@ class Database:
 
     async def init_mappings(self):
         logger.info('Initiating DB orm mappings')
+        if self._async_engine is None:
+            raise RuntimeError('Not connected to the DB: call connect() first')
         async with self._async_engine.connect() as conn:
             await conn.run_sync(Reflected.prepare, views=True)
 
@@ -111,6 +116,8 @@ class Database:
         """One transaction, opened with ``async with``: it yields an
         ``AsyncSession``, commits on success and rolls back on error.
         """
+        if self._AsyncSessionFactory is None:
+            raise RuntimeError('Not connected to the DB: call connect() first')
         return self._AsyncSessionFactory.begin()
 
     @property

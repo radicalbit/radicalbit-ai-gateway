@@ -1,8 +1,11 @@
 import json
+from typing import Any
 
 import anthropic
-import httpx
+import httpx2
+import pytest
 
+from radicalbit_ai_gateway.endpoints.common.streaming_response import StreamRefused
 from radicalbit_ai_gateway.endpoints.messages.serving import serve_stream
 from radicalbit_ai_gateway.utils.exceptions import (
     GatewayBadRequest,
@@ -24,21 +27,27 @@ async def _frames(*items):
         yield item
 
 
-async def _served(*items) -> list:
+async def _served(*items) -> list[str]:
     return [item async for item in serve_stream(_frames(*items))]
 
 
-def _error_event(item: str) -> dict:
+async def _refused(*items) -> StreamRefused:
+    with pytest.raises(StreamRefused) as refused:
+        await _served(*items)
+    return refused.value
+
+
+def _error_event(item: str) -> dict[str, Any]:
     event, data = item.strip().split('\n')
     assert event == 'event: error'
     return json.loads(data.removeprefix('data: '))
 
 
-def _api_status_error(body: dict) -> anthropic.APIStatusError:
+def _api_status_error(body: dict[str, Any]) -> anthropic.APIStatusError:
     """Return the SDK's error for a 529 whose JSON body is ``body``."""
-    response = httpx.Response(
+    response = httpx2.Response(
         529,
-        request=httpx.Request('POST', 'https://api.anthropic.com/v1/messages'),
+        request=httpx2.Request('POST', 'https://api.anthropic.com/v1/messages'),
         json=body,
     )
     return anthropic.APIStatusError('Overloaded', response=response, body=body)
@@ -49,9 +58,9 @@ async def test_an_empty_stream_sends_nothing():
 
 
 async def test_unexpected_failure_before_streaming_is_a_500_api_error():
-    served = await _served(RuntimeError('secret internals'))
+    refused = await _refused(RuntimeError('secret internals'))
 
-    [(body, status_code, _)] = served
+    body, status_code = refused.body, refused.status_code
     assert status_code == 500
     assert json.loads(body) == {
         'type': 'error',
@@ -60,9 +69,9 @@ async def test_unexpected_failure_before_streaming_is_a_500_api_error():
 
 
 async def test_gateway_error_before_streaming_keeps_its_status_and_message():
-    served = await _served(GatewayBadRequest('Route x has no chat models defined'))
+    refused = await _refused(GatewayBadRequest('Route x has no chat models defined'))
 
-    [(body, status_code, _)] = served
+    body, status_code = refused.body, refused.status_code
     assert status_code == 400
     assert json.loads(body)['error'] == {
         'type': 'invalid_request_error',
@@ -71,9 +80,9 @@ async def test_gateway_error_before_streaming_keeps_its_status_and_message():
 
 
 async def test_upstream_refusal_before_streaming_is_relayed_as_sent():
-    served = await _served(ModelInvokerUpstreamError('no', 529, OVERLOADED))
+    refused = await _refused(ModelInvokerUpstreamError('no', 529, OVERLOADED))
 
-    [(body, status_code, _)] = served
+    body, status_code = refused.body, refused.status_code
     assert status_code == 529
     assert json.loads(body) == OVERLOADED
 

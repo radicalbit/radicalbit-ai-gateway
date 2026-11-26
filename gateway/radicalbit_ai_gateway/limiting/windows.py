@@ -21,6 +21,7 @@ from radicalbit_ai_gateway.utils import BUDGET_MULTIPLIER
 if TYPE_CHECKING:
     from radicalbit_ai_gateway.models.credential_limiting import CredentialLimitOut
     from radicalbit_ai_gateway.models.gateway_route_config import GatewayRouteConfig
+    from radicalbit_ai_gateway.models.limiting import Limiting
     from radicalbit_ai_gateway.models.project_budget_limiting import (
         ProjectBudgetLimitOut,
     )
@@ -57,14 +58,16 @@ class Window:
     shown_value: Any
     shown_window: str | int
 
+    @property
+    def _limiter_type(self) -> type[BaseFixedWindowLimiter]:
+        return AlignedFixedWindowLimiter if self.aligned else FixedWindowLimiter
+
     def limiter(self, storage: Storage) -> BaseFixedWindowLimiter:
-        if self.aligned:
-            return AlignedFixedWindowLimiter(storage)
-        return FixedWindowLimiter(storage)
+        return self._limiter_type(storage)
 
     @property
     def key(self) -> str:
-        return self.limiter(storage=None)._build_key(self.config)
+        return self._limiter_type.build_key(self.config)
 
 
 def _window(
@@ -98,29 +101,19 @@ def route_windows(config: GatewayRouteConfig, project_uuid: str) -> tuple[Window
     """Return a route's windows. Route names are unique only within a
     project: the project's uuid keeps two projects' routes apart.
     """
-    token_limiting = config.token_limiting
-    limits = (
-        (Category.REQUESTS, config.rate_limiting, 'max_requests'),
-        (Category.INPUT_TOKENS, token_limiting and token_limiting.input, 'max_tokens'),
-        (
-            Category.OUTPUT_TOKENS,
-            token_limiting and token_limiting.output,
-            'max_tokens',
-        ),
-        (Category.COST, config.budget_limiting, 'max_budget'),
-        (Category.AUDIO_SECONDS, config.duration_limiting, 'max_duration_seconds'),
-    )
-    windows = []
-    for category, limiting, field in limits:
-        if limiting is None:
-            continue
-        shown_value = getattr(limiting, field)
-        if category is Category.COST:
-            maximum = limiting.max_budget_in_units
-        elif category is Category.AUDIO_SECONDS:
-            maximum = round(shown_value)
-        else:
-            maximum = shown_value
+    windows: list[Window] = []
+
+    def add(
+        category: Category,
+        limiting: Limiting,
+        shown_value: float | None,
+        maximum: int | None,
+    ) -> None:
+        if shown_value is None or maximum is None:
+            # Each limiting's validator requires its maximum.
+            raise ValueError(
+                f'Route {config.route_name}: {category.value} limiting has no maximum'
+            )
         windows.append(
             _window(
                 LimitScope.ROUTE,
@@ -132,6 +125,26 @@ def route_windows(config: GatewayRouteConfig, project_uuid: str) -> tuple[Window
                 route_name=config.route_name,
                 shown_value=shown_value,
             )
+        )
+
+    if (rate := config.rate_limiting) is not None:
+        add(Category.REQUESTS, rate, rate.max_requests, rate.max_requests)
+    if (token_limiting := config.token_limiting) is not None:
+        for category, tokens in (
+            (Category.INPUT_TOKENS, token_limiting.input),
+            (Category.OUTPUT_TOKENS, token_limiting.output),
+        ):
+            if tokens is not None:
+                add(category, tokens, tokens.max_tokens, tokens.max_tokens)
+    if (budget := config.budget_limiting) is not None:
+        add(Category.COST, budget, budget.max_budget, budget.max_budget_in_units)
+    if (duration := config.duration_limiting) is not None:
+        seconds = duration.max_duration_seconds
+        add(
+            Category.AUDIO_SECONDS,
+            duration,
+            seconds,
+            round(seconds) if seconds is not None else None,
         )
     return tuple(windows)
 

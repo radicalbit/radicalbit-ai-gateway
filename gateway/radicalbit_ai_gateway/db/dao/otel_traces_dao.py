@@ -1,10 +1,10 @@
 from datetime import date, datetime
-from typing import Literal
+from typing import Any, Literal
 from uuid import UUID
 
 from fastapi_pagination import Page, Params
 from fastapi_pagination.ext.sqlalchemy import paginate
-from sqlalchemy import ColumnElement, Row, func as F, select
+from sqlalchemy import ColumnElement, Label, Row, func as F, select
 
 from radicalbit_ai_gateway.db.clickhouse_database import ClickHouseDatabase
 from radicalbit_ai_gateway.db.clickhouse_functions import quantile
@@ -28,7 +28,7 @@ from radicalbit_ai_gateway.utils.chart_utils import (
 _T = OtelTraces.__table__
 
 
-def _span_attribute(key: str) -> ColumnElement:
+def _span_attribute(key: str) -> ColumnElement[Any]:
     """Return the SpanAttributes value at `key`: '' when the span lacks it."""
     return F.arrayElement(_T.c['SpanAttributes'], key)
 
@@ -36,7 +36,7 @@ def _span_attribute(key: str) -> ColumnElement:
 _PROPERTIES = 'traceloop.association.properties.'
 
 
-def _in_project(project_uuid: UUID) -> ColumnElement:
+def _in_project(project_uuid: UUID) -> ColumnElement[bool]:
     """Keep the spans of the project."""
     return _span_attribute(f'{_PROPERTIES}project_uuid') == str(project_uuid)
 
@@ -149,7 +149,7 @@ _SPAN_DETAIL_FIELD_NAMES = [
 ]
 
 
-def _quantile_columns() -> list:
+def _quantile_columns() -> list[Label[float]]:
     """Span duration in ms at p50, p90, p95 and p99."""
     return [
         quantile(level, _DURATION_MS).label(label)
@@ -158,8 +158,10 @@ def _quantile_columns() -> list:
 
 
 def _convert_events_to_dicts(
-    timestamps: list | None, names: list | None, attributes: list | None
-) -> list[dict]:
+    timestamps: list[datetime] | None,
+    names: list[str] | None,
+    attributes: list[dict[str, str]] | None,
+) -> list[dict[str, object]]:
     """Convert ClickHouse parallel event arrays to dictionaries.
 
     ClickHouse stores events as parallel arrays (columnar format):
@@ -182,7 +184,9 @@ class OtelTracesDAO:
         self.db = database
         self.T = OtelTraces.__table__
 
-    def _add_tags_filter(self, conditions: list, tags: list[str] | None) -> None:
+    def _add_tags_filter(
+        self, conditions: list[ColumnElement[Any]], tags: list[str] | None
+    ) -> None:
         add_tags_filter(conditions, F.splitByChar(',', _TAGS), tags=tags)
 
     def get_span_latencies(
@@ -226,9 +230,9 @@ class OtelTracesDAO:
         _from: datetime | None,
         _to: datetime | None,
         tags: list[str] | None = None,
-    ) -> list:
+    ) -> list[ColumnElement[Any]]:
         T = self.T
-        conditions = [_in_project(project_uuid)]
+        conditions: list[ColumnElement[Any]] = [_in_project(project_uuid)]
         if _from is not None:
             conditions.append(T.c['Timestamp'] >= _from)
         if _to is not None:
@@ -239,8 +243,8 @@ class OtelTracesDAO:
         return conditions
 
     def _build_category_column(
-        self, include_others: bool, conditions: list
-    ) -> ColumnElement:
+        self, include_others: bool, conditions: list[ColumnElement[Any]]
+    ) -> Label[Any]:
         """Return the `category` column.
 
         Spans without a category count as 'other' with `include_others`, else
@@ -400,7 +404,7 @@ class OtelTracesDAO:
             )
             return SpanRecord.model_validate(row_data)
 
-    def _span_stats_columns(self) -> list:
+    def _span_stats_columns(self) -> list[Label[Any]]:
         """Return the SpanStats columns of a group of spans, in SpanStats order."""
         T = self.T
         return [
@@ -537,7 +541,9 @@ class OtelTracesDAO:
 
         # Drop traces with no root span: their root_timestamp is NULL (see the
         # nullIf above) and they would otherwise bucket to the Unix epoch.
-        outer_conditions = [trace_agg.c.root_timestamp.isnot(None)]
+        outer_conditions: list[ColumnElement[Any]] = [
+            trace_agg.c.root_timestamp.isnot(None)
+        ]
         if route_names:
             outer_conditions.append(trace_agg.c.route_name.in_(route_names))
         add_tags_filter(
@@ -579,13 +585,15 @@ class OtelTracesDAO:
                 for row_tuple in res
             ]
 
-    def _date_window(self, date_from: date | None, date_to: date | None) -> list:
+    def _date_window(
+        self, date_from: date | None, date_to: date | None
+    ) -> list[ColumnElement[Any]]:
         """Bound spans to `[date_from, date_to]` so ClickHouse prunes partitions.
 
         Timestamp has no column timezone: its date is read in UTC, as the
         callers compute theirs.
         """
-        conditions = []
+        conditions: list[ColumnElement[Any]] = []
         if date_from is not None:
             conditions.append(F.toDate(self.T.c['Timestamp'], 'UTC') >= date_from)
         if date_to is not None:
@@ -667,7 +675,7 @@ class OtelTracesDAO:
         params: Params,
         tags: list[str] | None = None,
         request_types: list[RequestType] | None = None,
-    ) -> Page[Row]:
+    ) -> Page[Row[*tuple[Any, ...]]]:
         """Get paginated root spans with metadata."""
         T = self.T
 
@@ -715,7 +723,7 @@ class OtelTracesDAO:
             stmt = stmt.where(T.c['Timestamp'] >= _from)
         if _to is not None:
             stmt = stmt.where(T.c['Timestamp'] <= _to)
-        tags_conditions: list = []
+        tags_conditions: list[ColumnElement[Any]] = []
         self._add_tags_filter(tags_conditions, tags=tags)
         if tags_conditions:
             stmt = stmt.where(*tags_conditions)

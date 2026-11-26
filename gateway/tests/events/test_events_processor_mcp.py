@@ -1,5 +1,6 @@
 """MCP identity fields land in their own columns, not in the attributes map."""
 
+from typing import Any
 from unittest.mock import patch
 
 from radicalbit_ai_gateway.events.events_processor import emit_event
@@ -23,10 +24,10 @@ def _payload(**overrides) -> McpInvocationEventPayload:
         'mcp_alias': 'github',
         'mcp_target': 'get_issue',
     }
-    return McpInvocationEventPayload(**{**fields, **overrides})
+    return McpInvocationEventPayload.model_validate({**fields, **overrides})
 
 
-def _emit_and_capture(payload: McpInvocationEventPayload) -> dict:
+def _emit_and_capture(payload: McpInvocationEventPayload) -> dict[str, Any]:
     with patch(BUFFER) as buffer:
         emit_event(payload)
     return buffer.add.call_args.args[0]

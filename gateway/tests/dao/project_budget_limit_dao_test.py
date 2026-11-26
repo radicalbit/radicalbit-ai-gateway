@@ -3,6 +3,7 @@ import uuid
 import pytest
 from sqlalchemy import delete
 from sqlalchemy.exc import IntegrityError
+from typing_extensions import override
 
 from tests.common import db_mock
 from tests.common.db_integration import AsyncDatabaseIntegration
@@ -13,6 +14,7 @@ from radicalbit_ai_gateway.db.tables.project_table import Project
 
 
 class ProjectBudgetLimitDAOTest(AsyncDatabaseIntegration):
+    @override
     @classmethod
     def setUpClass(cls):
         super().setUpClass()
@@ -43,6 +45,7 @@ class ProjectBudgetLimitDAOTest(AsyncDatabaseIntegration):
         await self.project_budget_limit_dao.update_max_value(limit.uuid, 25.0)
 
         res = await self.project_budget_limit_dao.get_by_uuid(limit.uuid)
+        assert res is not None
         assert res.max_value == 25.0
         assert res.algorithm == 'ALIGNED_FIXED_WINDOW'
         assert res.window_size == '1 day'
@@ -55,6 +58,7 @@ class ProjectBudgetLimitDAOTest(AsyncDatabaseIntegration):
         )
         await self.project_budget_limit_dao.insert(limit)
         res = await self.project_budget_limit_dao.get_by_uuid(limit.uuid)
+        assert res is not None
         assert res.uuid == limit.uuid
 
     async def test_get_by_project_uuid(self):

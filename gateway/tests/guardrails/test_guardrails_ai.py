@@ -4,6 +4,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
 import pytest
+from typing_extensions import override
 
 from tests.common.db_mock import API_KEY_UUID, GROUP_UUID, REQUEST_UUID
 from tests.common.guardrails import apply_check
@@ -14,9 +15,9 @@ from radicalbit_ai_gateway.guardrails.judges.judge_engine import JudgeEngine
 from radicalbit_ai_gateway.guardrails.presidio import PresidioEngine
 from radicalbit_ai_gateway.llm.messages import HumanMessage
 from radicalbit_ai_gateway.models.guardrails import (
-    Guardrail,
     GuardrailBehaviorType,
     GuardrailClass,
+    GuardrailsAIGuardrail,
     GuardrailsAIParameter,
     GuardrailType,
     GuardrailWhereType,
@@ -35,7 +36,7 @@ GUARD_NAME = 'toxic_language'
 def _make_guardrail(
     behavior, where=GuardrailWhereType.INPUT, name='guardrails_ai_test'
 ):
-    return Guardrail(
+    return GuardrailsAIGuardrail(
         name=name,
         type=GuardrailType.GUARDRAILS_AI,
         behavior=behavior,
@@ -103,7 +104,7 @@ class TestGuardrailsAIModel(unittest.TestCase):
         assert guardrail.guardrail_class() == GuardrailClass.CHECK
 
     def test_guardrails_ai_parameter_defaults(self):
-        guardrail = Guardrail(
+        guardrail = GuardrailsAIGuardrail(
             name='test_defaults',
             type=GuardrailType.GUARDRAILS_AI,
             behavior=GuardrailBehaviorType.BLOCK,
@@ -112,12 +113,14 @@ class TestGuardrailsAIModel(unittest.TestCase):
                 guard_name='pii_detection',
             ),
         )
+        assert isinstance(guardrail.parameters, GuardrailsAIParameter)
         assert guardrail.parameters.guard_name == 'pii_detection'
         assert guardrail.parameters.base_url == 'http://guardrails-api:8000'
         assert guardrail.parameters.timeout == 10.0
 
 
 class TestGuardrailsAICheck(unittest.IsolatedAsyncioTestCase):
+    @override
     @classmethod
     def setUpClass(cls):
         cls.guardrails_block = [
@@ -153,6 +156,7 @@ class TestGuardrailsAICheck(unittest.IsolatedAsyncioTestCase):
         )
         cls.emit_event_patcher.start()
 
+    @override
     @classmethod
     def tearDownClass(cls):
         cls.emit_event_patcher.stop()
