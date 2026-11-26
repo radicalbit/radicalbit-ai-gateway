@@ -183,7 +183,9 @@ def test_decision_fallback_between_decision_models_is_accepted():
         }
     )
 
-    [fallback] = config.routes['agent'].fallback
+    fallbacks = config.routes['agent'].fallback
+    assert fallbacks is not None
+    [fallback] = fallbacks
     assert fallback.type.value == 'DECISION'
 
 
@@ -225,6 +227,8 @@ def test_input_token_limit_is_accepted_on_a_decision_only_route():
         }
     )
 
+    assert config.routes['agent'].token_limiting is not None
+    assert config.routes['agent'].token_limiting.input is not None
     assert config.routes['agent'].token_limiting.input.max_tokens == 1000
 
 
@@ -243,6 +247,8 @@ def test_output_token_limit_is_accepted_when_the_route_also_has_chat_models():
         }
     )
 
+    assert config.routes['agent'].token_limiting is not None
+    assert config.routes['agent'].token_limiting.output is not None
     assert config.routes['agent'].token_limiting.output.max_tokens == 1000
 
 
@@ -257,4 +263,5 @@ def test_exact_caching_is_accepted_on_a_decision_only_route():
         }
     )
 
+    assert config.routes['agent'].caching is not None
     assert config.routes['agent'].caching.type == 'exact'

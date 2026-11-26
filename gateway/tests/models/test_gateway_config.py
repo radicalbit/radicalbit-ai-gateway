@@ -1,9 +1,12 @@
+from typing import Any
+
 import pytest
 
 from radicalbit_ai_gateway.limiting.limits import RouteLimits
 from radicalbit_ai_gateway.limiting.windows import Category
 from radicalbit_ai_gateway.models.caching import CacheConfig
 from radicalbit_ai_gateway.models.gateway_config import GatewayConfig
+from radicalbit_ai_gateway.models.routing import LLMRoutingConfig, SemanticRoutingConfig
 
 
 def test_route_name_injection_from_dict():
@@ -271,7 +274,9 @@ def test_transcription_fallback_valid_config():
         },
     }
     gateway_config = GatewayConfig.model_validate(raw)
-    assert gateway_config.routes['r'].fallback[0].target == 'gpt4o'
+    fallback = gateway_config.routes['r'].fallback
+    assert fallback is not None
+    assert fallback[0].target == 'gpt4o'
 
 
 def test_transcription_route_with_duration_limiting_valid_config():
@@ -289,11 +294,14 @@ def test_transcription_route_with_duration_limiting_valid_config():
     }
     gateway_config = GatewayConfig.model_validate(raw)
     route = gateway_config.routes['r']
+    assert route.duration_limiting is not None
     assert route.duration_limiting.max_duration_seconds == 300
     route_limits = RouteLimits.from_config(
         route, '2f1c6d4e-0000-4000-8000-0000000000aa'
     )
-    assert route_limits.window(Category.AUDIO_SECONDS).config.limit == 300
+    window = route_limits.window(Category.AUDIO_SECONDS)
+    assert window is not None
+    assert window.config.limit == 300
 
 
 def test_duration_limiting_valid_on_mixed_chat_and_transcription_route():
@@ -312,6 +320,7 @@ def test_duration_limiting_valid_on_mixed_chat_and_transcription_route():
         },
     }
     gateway_config = GatewayConfig.model_validate(raw)
+    assert gateway_config.routes['r'].duration_limiting is not None
     assert gateway_config.routes['r'].duration_limiting.max_duration_seconds == 300
 
 
@@ -334,10 +343,12 @@ def test_token_limiting_valid_on_chat_or_embedding_route(category, model):
         },
     }
     gateway_config = GatewayConfig.model_validate(raw)
+    assert gateway_config.routes['r'].token_limiting is not None
+    assert gateway_config.routes['r'].token_limiting.input is not None
     assert gateway_config.routes['r'].token_limiting.input.max_tokens == 1000
 
 
-def _llm_routing_raw(**routing_overrides) -> dict:
+def _llm_routing_raw(**routing_overrides) -> dict[str, Any]:
     model = {'model': 'openai/gpt-4o', 'credentials': {'api_key': 'sk-dummy'}}
     routing = {
         'name': 'llm_router',
@@ -373,6 +384,7 @@ def _llm_routing_raw(**routing_overrides) -> dict:
 def test_llm_routing_valid():
     gateway_config = GatewayConfig.model_validate(_llm_routing_raw())
     routing_config = gateway_config.routing_by_name['llm_router']
+    assert isinstance(routing_config, LLMRoutingConfig)
     assert routing_config.router_model_id == 'router'
     assert routing_config.threshold == 0.375
     assert routing_config.timeout == 10.0
@@ -445,6 +457,7 @@ def test_llm_routing_fallback_model_valid():
         _llm_routing_raw(fallback_model_id='router_backup')
     )
     routing_config = gateway_config.routing_by_name['llm_router']
+    assert isinstance(routing_config, LLMRoutingConfig)
     assert routing_config.fallback_model_id == 'router_backup'
 
 
@@ -453,7 +466,9 @@ def test_llm_routing_message_roles_with_history_all():
         _llm_routing_raw(history='all', message_roles=['user', 'assistant'])
     )
     routing_config = gateway_config.routing_by_name['llm_router']
+    assert isinstance(routing_config, LLMRoutingConfig)
     assert routing_config.history == 'all'
+    assert routing_config.message_roles is not None
     assert [r.value for r in routing_config.message_roles] == ['USER', 'ASSISTANT']
 
 
@@ -461,10 +476,12 @@ def test_llm_routing_explicit_null_message_roles():
     gateway_config = GatewayConfig.model_validate(
         _llm_routing_raw(history='all', message_roles=None)
     )
-    assert gateway_config.routing_by_name['llm_router'].message_roles is None
+    routing_config = gateway_config.routing_by_name['llm_router']
+    assert isinstance(routing_config, LLMRoutingConfig)
+    assert routing_config.message_roles is None
 
 
-def _semantic_routing_raw(**routing_overrides) -> dict:
+def _semantic_routing_raw(**routing_overrides) -> dict[str, Any]:
     model = {'model': 'openai/gpt-4o', 'credentials': {'api_key': 'sk-dummy'}}
     routing = {
         'name': 'semantic_router',
@@ -498,6 +515,7 @@ def _semantic_routing_raw(**routing_overrides) -> dict:
 def test_semantic_routing_valid():
     gateway_config = GatewayConfig.model_validate(_semantic_routing_raw())
     routing_config = gateway_config.routing_by_name['semantic_router']
+    assert isinstance(routing_config, SemanticRoutingConfig)
     assert routing_config.embedding_model_id == 'emb'
 
 

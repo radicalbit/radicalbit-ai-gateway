@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import time
 
+from typing_extensions import override
+
 from radicalbit_ai_gateway.limiter.base import BaseFixedWindowLimiter
 from radicalbit_ai_gateway.limiter.window_config import WindowConfig, WindowStats
 
@@ -18,10 +20,9 @@ class FixedWindowLimiter(BaseFixedWindowLimiter):
     - New window starts at next request after expiration
     """
 
-    @property
-    def _window_type(self) -> str:
-        return 'fixed'
+    _window_type = 'fixed'
 
+    @override
     def _calculate_window_boundary(self, window_seconds: int) -> tuple[int, int]:
         """Calculate fixed window start and TTL.
 
@@ -30,6 +31,7 @@ class FixedWindowLimiter(BaseFixedWindowLimiter):
         now = time.time_ns() // 1_000_000_000
         return now, window_seconds
 
+    @override
     def _empty_stats(self, item: WindowConfig) -> WindowStats:
         """Create WindowStats for a non-existent or expired window."""
         return WindowStats(

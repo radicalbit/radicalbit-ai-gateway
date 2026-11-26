@@ -11,6 +11,7 @@ from urllib.parse import urlparse
 
 import openai
 from pydantic import Field, SecretStr, model_validator
+from typing_extensions import override
 
 from radicalbit_ai_gateway.llm.messages import AIMessage, AIMessageChunk, BaseMessage
 from radicalbit_ai_gateway.llm.providers.openai import (
@@ -24,7 +25,7 @@ DEFAULT_API_BASE = 'https://api.deepseek.com/v1'
 REASONING_PLACEHOLDER = 'Reasoning not available: this step came from another model.'
 
 
-def _reasoning(text: str) -> dict:
+def _reasoning(text: str) -> dict[str, Any]:
     return {
         'type': 'reasoning',
         'summary': [],
@@ -32,7 +33,7 @@ def _reasoning(text: str) -> dict:
     }
 
 
-def _with_reasoning_before_current_calls(items: list) -> list:
+def _with_reasoning_before_current_calls(items: list[Any]) -> list[Any]:
     """Put reasoning before each tool call of the current turn that has none."""
     last_user = max(
         (
@@ -69,7 +70,7 @@ class GatewayDeepSeekChatModel(_BaseChatOpenAI):
 
     _gen_ai_provider: ClassVar[str] = 'deepseek'
 
-    model_name: str = Field(alias='model')
+    model_name: str = Field(alias='model', frozen=True)
     api_key: SecretStr | None = Field(default_factory=_secret_env_deepseek)
     api_base: str = Field(
         alias='base_url',
@@ -82,7 +83,7 @@ class GatewayDeepSeekChatModel(_BaseChatOpenAI):
             self.api_key and self.api_key.get_secret_value()
         ):
             raise ValueError('If using default api base, DEEPSEEK_API_KEY must be set.')
-        client_params = {
+        client_params: dict[str, Any] = {
             k: v
             for k, v in {
                 'api_key': self.api_key.get_secret_value() if self.api_key else None,
@@ -104,10 +105,12 @@ class GatewayDeepSeekChatModel(_BaseChatOpenAI):
         hostname = urlparse(self.api_base or '').hostname or ''
         return hostname == 'azure.com' or hostname.endswith('.azure.com')
 
+    @override
     def _structured_method(self) -> str:
         return 'function_calling'
 
-    def adapt_responses_input(self, items: list) -> list:
+    @override
+    def adapt_responses_input(self, items: list[Any]) -> list[Any]:
         adapted = []
         for item in items:
             if not (
@@ -128,7 +131,10 @@ class GatewayDeepSeekChatModel(_BaseChatOpenAI):
                 adapted.append(_reasoning(summary))
         return _with_reasoning_before_current_calls(adapted)
 
-    def _get_request_payload(self, messages: list[BaseMessage], **kwargs: Any) -> dict:
+    @override
+    def _get_request_payload(
+        self, messages: list[BaseMessage], **kwargs: Any
+    ) -> dict[str, Any]:
         payload = super()._get_request_payload(messages, **kwargs)
         for message in payload['messages']:
             if message['role'] == 'tool' and isinstance(message['content'], list):
@@ -157,9 +163,10 @@ class GatewayDeepSeekChatModel(_BaseChatOpenAI):
                 ]
         return payload
 
+    @override
     def _chat_result(
-        self, response: Any, generation_info: dict | None = None
-    ) -> tuple[list[tuple[AIMessage, dict]], dict]:
+        self, response: Any, generation_info: dict[str, Any] | None = None
+    ) -> tuple[list[tuple[AIMessage, dict[str, Any]]], dict[str, Any]]:
         generations, llm_output = super()._chat_result(response, generation_info)
         if not isinstance(response, openai.BaseModel):
             return generations, llm_output
@@ -178,9 +185,10 @@ class GatewayDeepSeekChatModel(_BaseChatOpenAI):
                 generations[0][0].additional_kwargs['reasoning_content'] = reasoning
         return generations, llm_output
 
+    @override
     def _convert_chunk(
-        self, chunk: dict, base_generation_info: dict
-    ) -> tuple[AIMessageChunk, dict | None] | None:
+        self, chunk: dict[str, Any], base_generation_info: dict[str, Any]
+    ) -> tuple[AIMessageChunk, dict[str, Any] | None] | None:
         converted = super()._convert_chunk(chunk, base_generation_info)
         if (choices := chunk.get('choices')) and converted:
             message, _ = converted
@@ -195,6 +203,7 @@ class GatewayDeepSeekChatModel(_BaseChatOpenAI):
                 message.additional_kwargs['reasoning_content'] = reasoning
         return converted
 
+    @override
     async def _agenerate(self, messages: list[BaseMessage], **kwargs: Any) -> AIMessage:
         try:
             return await super()._agenerate(messages, **kwargs)

@@ -1,6 +1,6 @@
 from collections.abc import Awaitable
 import logging
-from typing import Any, Literal, Protocol
+from typing import Any, Literal, NoReturn, Protocol
 
 from opentelemetry import trace
 
@@ -110,7 +110,7 @@ def routing_chain(
                 candidate.model.model_id,
             )
 
-    def on_exhausted(failures: list[Failure]):
+    def on_exhausted(failures: list[Failure]) -> NoReturn:
         raise no_answer
 
     return FallbackChain(

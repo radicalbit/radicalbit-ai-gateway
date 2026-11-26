@@ -1,3 +1,5 @@
+from typing import Any
+
 import pytest
 
 from radicalbit_ai_gateway.endpoints.chat_like.limits import chat_demand
@@ -5,6 +7,7 @@ from radicalbit_ai_gateway.endpoints.messages.request import (
     MessagesRequest,
     last_user_text,
 )
+from radicalbit_ai_gateway.limiting.limits import InputEstimate
 from radicalbit_ai_gateway.llm.messages import (
     AIMessage,
     HumanMessage,
@@ -25,7 +28,7 @@ CACHED_SYSTEM = [
 ]
 
 
-def _body(**fields) -> dict:
+def _body(**fields) -> dict[str, Any]:
     return {
         'model': 'proj/assistant',
         'max_tokens': 10,
@@ -146,7 +149,7 @@ def test_write_back_refuses_a_different_number_of_texts():
         )
 
 
-def _tool_result(content, **fields) -> dict:
+def _tool_result(content, **fields) -> dict[str, Any]:
     return {
         'type': 'tool_result',
         'tool_use_id': 'toolu_1',
@@ -336,6 +339,7 @@ def test_the_input_token_estimate_counts_the_tool_result_text():
 
     estimate = chat_demand(MessagesRequest(body).messages(), model).input
 
+    assert isinstance(estimate, InputEstimate)
     assert estimate.text == 'Be brief. Weather? 18 degrees in Milan'
     assert count_tokens(estimate.text, estimate.model) == 10
 

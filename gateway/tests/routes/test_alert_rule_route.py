@@ -1,12 +1,15 @@
 import datetime
 import json
 from types import SimpleNamespace
-from unittest.mock import patch
+from typing import Any, TypeVar
+from unittest.mock import create_autospec, patch
 import uuid
 
+from anyio.from_thread import BlockingPortal
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from sqlalchemy import delete
+from typing_extensions import override
 import yaml
 
 from tests.common import db_mock  # noqa: F401  (registers every table Key relates to)
@@ -16,9 +19,12 @@ from tests.common.db_mock import get_sample_key_limit
 from radicalbit_ai_gateway.db.dao.alert_rule_dao import AlertRuleDAO
 from radicalbit_ai_gateway.db.dao.key_dao import KeyDAO
 from radicalbit_ai_gateway.db.dao.key_limit_dao import KeyLimitDAO
+from radicalbit_ai_gateway.db.dao.project_budget_limit_dao import ProjectBudgetLimitDAO
+from radicalbit_ai_gateway.db.dao.project_dao import ProjectDAO
 from radicalbit_ai_gateway.db.tables.alert_rule_table import AlertRule
 from radicalbit_ai_gateway.db.tables.key_limit_table import KeyLimit
 from radicalbit_ai_gateway.db.tables.key_table import Key
+from radicalbit_ai_gateway.middleware.exception_handlers import add_exception_handler
 from radicalbit_ai_gateway.models.gateway_config import GatewayConfig
 from radicalbit_ai_gateway.models.project_entry import ProjectEntry
 from radicalbit_ai_gateway.routes.alert_rule_route import AlertRuleRoute
@@ -32,6 +38,8 @@ from radicalbit_ai_gateway.utils.exceptions import (
     AlertRuleUnsupportedTimeAggregationError,
     alert_rule_exception_handler,
 )
+
+T = TypeVar('T')
 
 PROJECT_NAME = 'acme'
 PROJECT_UUID = uuid.uuid4()
@@ -53,7 +61,7 @@ def route_config(
     fallback: bool = False,
     caching: bool = False,
     pii_values: tuple[str, ...] = ('secret',),
-    limits: dict | None = None,
+    limits: dict[str, Any] | None = None,
 ) -> GatewayConfig:
     """Build a published configuration with one route, `chat`.
 
@@ -61,7 +69,7 @@ def route_config(
     `limits` holds the route's limiting sections, as in the YAML.
     """
     raw = yaml.safe_load(MODELS)
-    route: dict = {'chat_models': ['gpt-4', 'gpt-3.5']}
+    route: dict[str, Any] = {'chat_models': ['gpt-4', 'gpt-3.5']}
     if guardrails:
         raw['guardrails'] = [
             {
@@ -83,7 +91,7 @@ def route_config(
     return GatewayConfig.model_validate(raw)
 
 
-def rate_limit(window_size='1 minute', max_requests=10) -> dict:
+def rate_limit(window_size='1 minute', max_requests=10) -> dict[str, Any]:
     return {'rate_limiting': {'window_size': window_size, 'max_requests': max_requests}}
 
 
@@ -134,11 +142,11 @@ LIMIT_LABELS = {
 }
 
 
-def selectable(event: str, label: str) -> dict:
+def selectable(event: str, label: str) -> dict[str, Any]:
     return {'event': event, 'label': label, 'aggregation': 'selectable'}
 
 
-def no_events(*limits: tuple[str, str], percentages=(75, 98)) -> dict:
+def no_events(*limits: tuple[str, str], percentages=(75, 98)) -> dict[str, Any]:
     """List the alertable events of `limits`, as (category, window name), alone."""
 
     def item(event, label):
@@ -159,7 +167,7 @@ def no_events(*limits: tuple[str, str], percentages=(75, 98)) -> dict:
     }
 
 
-def route_rule(event: str, **fields) -> dict:
+def route_rule(event: str, **fields) -> dict[str, Any]:
     """Describe a rule `TestAlertRuleRoute.create` makes, minus generated fields."""
     return {
         'name': 'rule',
@@ -183,18 +191,28 @@ def route_rule(event: str, **fields) -> dict:
 
 
 class TestAlertRuleRoute(SchemaIntegration):
+    @override
     @classmethod
     def setUpClass(cls):
         super().setUpClass()
         cls.project_configs: dict[str, ProjectEntry] = {}
         cls.project_budgets = FakeProjectBudgets()
         cls.projects = FakeProjects()
+        # The DAOs answer from the fakes, which each test fills
+        project_dao = create_autospec(ProjectDAO, instance=True, spec_set=True)
+        project_dao.get_by_uuid.side_effect = cls.projects.get_by_uuid
+        project_budget_limit_dao = create_autospec(
+            ProjectBudgetLimitDAO, instance=True, spec_set=True
+        )
+        project_budget_limit_dao.get_by_project_uuid.side_effect = (
+            cls.project_budgets.get_by_project_uuid
+        )
         service = AlertRuleService(
             alert_rule_dao=AlertRuleDAO(cls.db),
             project_configs=cls.project_configs,
-            project_dao=cls.projects,
+            project_dao=project_dao,
             key_dao=KeyDAO(cls.db),
-            project_budget_limit_dao=cls.project_budgets,
+            project_budget_limit_dao=project_budget_limit_dao,
             key_limit_dao=KeyLimitDAO(cls.db),
         )
         app = FastAPI()
@@ -205,10 +223,11 @@ class TestAlertRuleRoute(SchemaIntegration):
             AlertRuleUnsupportedTimeAggregationError,
             AlertRuleInternalError,
         ):
-            app.add_exception_handler(err, alert_rule_exception_handler)
+            add_exception_handler(app, err, alert_rule_exception_handler)
         app.include_router(AlertRuleRoute.get_alert_rule_router(service))
         cls.app = app
 
+    @override
     def setUp(self):
         self.project_configs.clear()
         self.project_budgets.limits.clear()
@@ -218,14 +237,26 @@ class TestAlertRuleRoute(SchemaIntegration):
         self.client = TestClient(self.app)
         self.client.__enter__()
 
+    @override
     def tearDown(self):
-        self.client.portal.call(delete_all_rows, self.db)
-        self.client.portal.call(self.db.dispose)
+        self.portal.call(delete_all_rows, self.db)
+        self.portal.call(self.db.dispose)
         self.client.__exit__(None, None, None)
 
-    def insert(self, row):
+    @property
+    def portal(self) -> BlockingPortal:
+        """The client's event loop, which owns the pool."""
+        portal = self.client.portal
+        assert isinstance(portal, BlockingPortal)
+        return portal
+
+    def insert(self, row: T) -> T:
         """Store `row` on the client's event loop, which owns the pool."""
-        return self.client.portal.call(insert_row, self.db, row)
+
+        async def insert_it() -> T:
+            return await insert_row(self.db, row)
+
+        return self.portal.call(insert_it)
 
     def publish(self, config: GatewayConfig) -> None:
         self.project_configs[PROJECT_NAME] = ProjectEntry(
@@ -235,11 +266,12 @@ class TestAlertRuleRoute(SchemaIntegration):
     def unpublish(self) -> None:
         self.project_configs.pop(PROJECT_NAME, None)
 
-    def create(self, event: str, route: str = 'chat', **overrides):
+    def create(self, event: str, **overrides: object):
+        """POST a route rule on ``chat``, the fields in ``overrides`` replaced."""
         payload = {
             'name': 'rule',
             'project': str(PROJECT_UUID),
-            'route': route,
+            'route': 'chat',
             'event': event,
             'recipients': ['ops@example.com'],
             'enabled': True,
@@ -249,14 +281,16 @@ class TestAlertRuleRoute(SchemaIntegration):
 
     def rejected(self, response) -> str:
         assert response.status_code == 400, response.text
-        return response.json()['error']['message']
+        message = response.json()['error']['message']
+        assert isinstance(message, str)
+        return message
 
-    def created(self, event: str, **overrides) -> dict:
+    def created(self, event: str, **overrides: object) -> dict[str, Any]:
         response = self.create(event, **overrides)
         assert response.status_code == 201, response.text
         return response.json()
 
-    def insert_rule(self, event: str, route: str = 'chat', **columns) -> AlertRule:
+    def insert_rule(self, event: str, **columns: object) -> AlertRule:
         """Store a rule bypassing validation, as an older release could have."""
         now = datetime.datetime.now(tz=datetime.UTC)
         return self.insert(
@@ -264,7 +298,7 @@ class TestAlertRuleRoute(SchemaIntegration):
                 **{
                     'name': 'legacy',
                     'project': str(PROJECT_UUID),
-                    'route': route,
+                    'route': 'chat',
                     'scope': 'route',
                     'event': event,
                     'time_aggregation': 'instant',
@@ -296,26 +330,26 @@ class TestAlertRuleRoute(SchemaIntegration):
             async with self.db.begin_session() as session:
                 await session.execute(delete(table).where(table.uuid == row_uuid))
 
-        self.client.portal.call(delete_it)
+        self.portal.call(delete_it)
 
-    def listed(self, rule_uuid) -> dict:
+    def listed(self, rule_uuid) -> dict[str, Any]:
         response = self.client.get('/rule')
         assert response.status_code == 200
         return next(r for r in response.json() if r['uuid'] == str(rule_uuid))
 
-    def fetched(self, rule_uuid) -> dict:
+    def fetched(self, rule_uuid) -> dict[str, Any]:
         response = self.client.get(f'/rule/{rule_uuid}')
         assert response.status_code == 200
         return response.json()
 
-    def alertable_events(self, route: str = 'chat') -> dict:
+    def alertable_events(self, route: str = 'chat') -> dict[str, Any]:
         response = self.client.get(
             f'/projects/{PROJECT_UUID}/routes/{route}/alertable-events'
         )
         assert response.status_code == 200
         return response.json()
 
-    def body(self, rule: dict) -> dict:
+    def body(self, rule: dict[str, Any]) -> dict[str, Any]:
         """Drop the fields the server generates."""
         return {
             k: v for k, v in rule.items() if k not in ('uuid', 'createdAt', 'updatedAt')
@@ -474,7 +508,13 @@ class TestAlertRuleRoute(SchemaIntegration):
         limit_only = 'Limit and threshold events take only the limit_window aggregation'
         # (published config, project budget window, event, overrides, error)
         cases = [
-            (rate_limit(), None, 'rate_limit-exceeded-1m', {}, limit_only),
+            (
+                route_config(limits=rate_limit()),
+                None,
+                'rate_limit-exceeded-1m',
+                {},
+                limit_only,
+            ),
             (
                 fallback,
                 None,
@@ -600,8 +640,8 @@ class TestAlertRuleRoute(SchemaIntegration):
 
                 response = self.create(event, **overrides)
 
-                if error == 422:
-                    assert response.status_code == 422, response.text
+                if isinstance(error, int):
+                    assert response.status_code == error, response.text
                 else:
                     assert self.rejected(response) == error.format(event)
 
@@ -886,12 +926,14 @@ class TestAlertRuleRoute(SchemaIntegration):
 
     # --- project budget ---
 
-    def project_events(self, project_uuid=PROJECT_UUID) -> dict:
+    def project_events(self, project_uuid=PROJECT_UUID) -> dict[str, Any]:
         response = self.client.get(f'/projects/{project_uuid}/alertable-events')
         assert response.status_code == 200
         return response.json()
 
-    def created_project_rule(self, event: str = 'budget_limit-exceeded-1d') -> dict:
+    def created_project_rule(
+        self, event: str = 'budget_limit-exceeded-1d'
+    ) -> dict[str, Any]:
         response = self.create(
             event, scope='project', route=None, timeAggregation='limit_window'
         )
@@ -979,7 +1021,7 @@ class TestAlertRuleRoute(SchemaIntegration):
 
     # --- credential limits ---
 
-    def credential_events(self, credential_uuid) -> dict:
+    def credential_events(self, credential_uuid) -> dict[str, Any]:
         response = self.client.get(f'/keys/{credential_uuid}/alertable-events')
         assert response.status_code == 200
         return response.json()
@@ -1010,7 +1052,7 @@ class TestAlertRuleRoute(SchemaIntegration):
             },
         )
 
-    def created_credential_rule(self, credential, event: str) -> dict:
+    def created_credential_rule(self, credential, event: str) -> dict[str, Any]:
         response = self.create_credential_rule(credential, event)
         assert response.status_code == 201, response.text
         return response.json()

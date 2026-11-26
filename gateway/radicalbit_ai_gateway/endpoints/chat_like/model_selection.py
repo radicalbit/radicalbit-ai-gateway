@@ -3,11 +3,11 @@ the routing calls that select it.
 """
 
 import logging
+from typing import Any
 
 from radicalbit_ai_gateway.events.events_processor import emit_event
 from radicalbit_ai_gateway.gateway_route.scope import RequestScope
-from radicalbit_ai_gateway.invocation.model_invoker import ModelInvoker
-from radicalbit_ai_gateway.invocation.recorder import Call, Tokens
+from radicalbit_ai_gateway.invocation.recorder import Call, Recorder, Tokens
 from radicalbit_ai_gateway.limiting.limits import RequestLimits, Usage
 from radicalbit_ai_gateway.llm.messages import BaseMessage
 from radicalbit_ai_gateway.models.event_payload import RoutingEventPayload
@@ -26,9 +26,9 @@ logger = logging.getLogger(get_app_config().log_config.logger_name)
 class RoutingSpend:
     """Charges a request for its routing calls: see ``RoutingSpendRecorder``."""
 
-    def __init__(self, limits: RequestLimits, metrics: ModelInvoker):
+    def __init__(self, limits: RequestLimits, recorder: Recorder):
         self._limits = limits
-        self._metrics = metrics
+        self._recorder = recorder
 
     async def __call__(
         self,
@@ -41,7 +41,7 @@ class RoutingSpend:
         output_tokens: int | None = None,
     ) -> None:
         target_model_id = target_model_id or model.model_id
-        self._metrics.recorder.invocation(
+        self._recorder.invocation(
             Call(
                 identity=self._limits.identity,
                 model_type=model_type,
@@ -64,7 +64,7 @@ class RoutingSpend:
     def failed(
         self, model: Model, latency_ms: float, *, model_type: str, target_model_id: str
     ) -> None:
-        self._metrics.recorder.failure(
+        self._recorder.failure(
             Call(
                 identity=self._limits.identity,
                 model_type=model_type,
@@ -78,14 +78,16 @@ class RoutingSpend:
 
 
 @task(name='select_model')
-async def _select_chat_model(scope: RequestScope, messages: list[BaseMessage]) -> Model:
+async def _select_chat_model(
+    scope: RequestScope[Any, Any], messages: list[BaseMessage]
+) -> Model:
     """Select the chat model for this request based on the routing config."""
     route = scope.route
     if route.router:
         # Routing runs on chat routes: the chat invoker emits its cost events.
         model_selected = await route.router.select_model(
             messages,
-            RoutingSpend(scope.limits, route.chat_invoker)
+            RoutingSpend(scope.limits, route.chat_invoker.recorder)
             if route.chat_invoker
             else None,
         )
@@ -97,7 +99,9 @@ async def _select_chat_model(scope: RequestScope, messages: list[BaseMessage]) -
     return model_selected
 
 
-async def route_chat(scope: RequestScope, messages: list[BaseMessage]) -> Model:
+async def route_chat(
+    scope: RequestScope[Any, Any], messages: list[BaseMessage]
+) -> Model:
     """Select the chat model of a request and record the routing decision."""
     set_operation_category(OperationCategory.ROUTING)
     model_selected = await _select_chat_model(scope, messages)

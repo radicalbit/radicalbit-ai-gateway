@@ -1,4 +1,5 @@
 import copy
+from typing import TypedDict
 from unittest.mock import MagicMock, patch
 
 from azure.identity import ClientSecretCredential, EnvironmentCredential
@@ -16,12 +17,12 @@ from radicalbit_ai_gateway.llm.messages import AIMessage, HumanMessage
 from radicalbit_ai_gateway.models.guardrails import (
     AhdsParams,
     CheckParameter,
-    Guardrail,
     GuardrailBehaviorType,
     GuardrailMessageRole,
     GuardrailType,
     GuardrailWhereType,
     RedactParameter,
+    guardrail_adapter,
 )
 from radicalbit_ai_gateway.prompt_manager import PromptManager
 from radicalbit_ai_gateway.services.cost_service import CostService
@@ -45,13 +46,15 @@ def _guardrail(name, kind, behavior, where, values=None, entities=None, **extra)
         if values is not None
         else RedactParameter(language='it', entities=entities)
     )
-    return Guardrail(
-        name=name,
-        type=kind,
-        behavior=behavior,
-        where=where,
-        parameters=parameters,
-        **extra,
+    return guardrail_adapter.validate_python(
+        dict(
+            name=name,
+            type=kind,
+            behavior=behavior,
+            where=where,
+            parameters=parameters,
+            **extra,
+        )
     )
 
 
@@ -94,7 +97,15 @@ def _route(guardrails):
     return route_config
 
 
-IDENTITY = {
+class Identity(TypedDict):
+    request_uuid: str
+    api_key_uuid: str
+    group_uuid: str
+    api_key_name: str
+    group_name: str
+
+
+IDENTITY: Identity = {
     'request_uuid': str(REQUEST_UUID),
     'api_key_uuid': str(API_KEY_UUID),
     'group_uuid': str(GROUP_UUID),
@@ -244,8 +255,15 @@ async def test_a_presidio_check_that_fails_to_analyze_does_not_block():
 
 
 def _anonymizer(where, entities, **extra):
-    return _guardrail(
-        'redact', T.PRESIDIO_ANONYMIZER, BLOCK, where, entities=entities, **extra
+    # An anonymizer has no behavior.
+    return guardrail_adapter.validate_python(
+        dict(
+            name='redact',
+            type=T.PRESIDIO_ANONYMIZER,
+            where=where,
+            parameters=RedactParameter(language='it', entities=entities),
+            **extra,
+        )
     )
 
 

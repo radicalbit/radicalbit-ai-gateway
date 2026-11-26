@@ -4,10 +4,12 @@ This test uses real ClickHouse data to verify that timezone-aware bucketing work
 """
 
 import datetime
+from typing import Literal
 from unittest.mock import MagicMock
 import uuid
 
 import pytest
+from typing_extensions import override
 
 from tests.common.db_integration_ch import DatabaseIntegrationClickhouse
 from tests.common.db_mock import get_sample_event, get_sample_request_event
@@ -22,6 +24,10 @@ from radicalbit_ai_gateway.services.request_event_service import RequestEventSer
 
 _iso = datetime.datetime.fromisoformat
 
+Granularity = Literal['hours', 'days', 'weeks', 'months']
+
+PROJECT = uuid.UUID(int=7)
+
 
 def _utc(*parts: int) -> datetime.datetime:
     return datetime.datetime(*parts, tzinfo=datetime.timezone.utc)
@@ -34,6 +40,7 @@ def _token_event(route_name, timestamp, kind, value, cost=0.01):
         timestamp=timestamp,
         api_key_uuid=uuid.UUID(int=1),
         api_key_name='key-1',
+        project_uuid=PROJECT,
         value=value,
         model_id='gpt-4',
         cost=cost,
@@ -41,6 +48,7 @@ def _token_event(route_name, timestamp, kind, value, cost=0.01):
 
 
 class TestChartTimezoneIntegration(DatabaseIntegrationClickhouse):
+    @override
     @classmethod
     def setUpClass(cls):
         super().setUpClass()
@@ -145,7 +153,9 @@ class TestChartTimezoneIntegration(DatabaseIntegrationClickhouse):
                 assert result.total == pytest.approx(expected)
 
     def test_token_chart_buckets_events_in_the_user_timezone(self):
-        cases = [
+        cases: list[
+            tuple[Granularity, list[tuple[datetime.datetime, str, int]], str, str]
+        ] = [
             (
                 'days',
                 [
@@ -200,7 +210,7 @@ class TestChartTimezoneIntegration(DatabaseIntegrationClickhouse):
                 )
 
                 result = self.event_service.get_token_chart_data(
-                    None,
+                    PROJECT,
                     route_names=[route_name],
                     _from=_iso(_from),
                     _to=_iso(_to),
@@ -218,7 +228,7 @@ class TestChartTimezoneIntegration(DatabaseIntegrationClickhouse):
 
     def test_token_chart_empty_result(self):
         result = self.event_service.get_token_chart_data(
-            None,
+            PROJECT,
             route_names=['test-route-tokens-empty'],
             _from=_iso('2026-01-01T00:00:00+01:00'),
             _to=_iso('2026-01-03T00:00:00+01:00'),
@@ -253,6 +263,7 @@ class TestChartTimezoneIntegration(DatabaseIntegrationClickhouse):
                 ),
                 api_key_uuid=uuid.UUID(int=1),
                 api_key_name='key-1',
+                project_uuid=PROJECT,
                 value=1000,
                 model_id='gpt-4',
                 cost=0.01,
@@ -271,7 +282,7 @@ class TestChartTimezoneIntegration(DatabaseIntegrationClickhouse):
         _to = datetime.datetime.fromisoformat('2025-01-01T00:00:00+02:00')
 
         result = self.event_service.get_token_chart_data(
-            None,
+            PROJECT,
             route_names=[route_name],
             _from=_from,
             _to=_to,
@@ -345,7 +356,7 @@ class TestChartTimezoneIntegration(DatabaseIntegrationClickhouse):
         )
 
     def test_request_chart_buckets_events_in_the_user_timezone(self):
-        cases = [
+        cases: list[tuple[Granularity, list[datetime.datetime], str, str]] = [
             (
                 'days',
                 [
@@ -385,13 +396,14 @@ class TestChartTimezoneIntegration(DatabaseIntegrationClickhouse):
                             timestamp=ts,
                             api_key_uuid=uuid.UUID(int=1),
                             api_key_name='key-1',
+                            project_uuid=PROJECT,
                         )
                         for ts in timestamps
                     ]
                 )
 
                 result = self.request_event_service.get_request_chart_data(
-                    None,
+                    PROJECT,
                     route_name=route_name,
                     _from=_iso(_from),
                     _to=_iso(_to),

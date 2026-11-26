@@ -20,7 +20,7 @@ Dispatch = Callable[[], Awaitable[None]]
 class AlertTasks:
     def __init__(self, max_concurrency: int):
         self._max_concurrency = max_concurrency
-        self._tasks: set[asyncio.Task] = set()
+        self._tasks: set[asyncio.Task[None]] = set()
         # A semaphore belongs to one event loop: keep the loop it was made on.
         self._loop: asyncio.AbstractEventLoop | None = None
         self._semaphore: asyncio.Semaphore | None = None
@@ -51,7 +51,7 @@ class AlertTasks:
             task.cancel()
         await asyncio.gather(*pending, return_exceptions=True)
 
-    def _on_this_loop(self) -> list[asyncio.Task]:
+    def _on_this_loop(self) -> list[asyncio.Task[None]]:
         loop = asyncio.get_running_loop()
         return [t for t in self._tasks if t.get_loop() is loop]
 

@@ -96,6 +96,7 @@ def test_from_dao_saved_amount(saved, semantic_net_savings, expected):
         CostData(**COSTS, total_saved_amount=saved), semantic, DetailedCostBreakdown()
     )
 
+    assert result.totals is not None
     assert result.totals.saved == pytest.approx(expected)
 
 
@@ -172,6 +173,7 @@ def test_from_dao_with_decision_models():
     assert result.decision_models is not None
     assert result.decision_models.input == 0.0000109
     assert result.decision_models.total == 0.0000109
+    assert result.totals is not None
     assert result.totals.input == 0.5 + 0.0000109
     assert result.totals.output == 1.0
     assert result.total == 0.5 + 1.0 + 0.0000109

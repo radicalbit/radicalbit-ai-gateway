@@ -308,7 +308,8 @@ class AlertableEvents:
         Returns None when the rule is not stale.
         """
         published = self._published_route(project, route_name)
-        if published is None:
+        # A rule with no route name has no published route.
+        if published is None or route_name is None:
             return f'Route "{route_name}" is not in the published configuration'
         with_budget = await self._with_budget(project)
         if event in _event_names(_route_events(*published, with_budget)):

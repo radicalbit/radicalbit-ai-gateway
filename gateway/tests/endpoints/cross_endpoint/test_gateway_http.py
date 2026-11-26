@@ -8,7 +8,7 @@ from contextlib import ExitStack
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from httpx import ASGITransport, AsyncClient
+from httpx2 import ASGITransport, AsyncClient
 from openai import AsyncOpenAI
 import pytest
 from starlette.datastructures import State

@@ -9,14 +9,15 @@ from __future__ import annotations
 
 import copy
 import time
+from typing import Any
 import uuid
 
-from radicalbit_ai_gateway.llm.messages import AIMessage
+from radicalbit_ai_gateway.llm.messages import AIMessage, BaseMessage
 
 # ── Output text ──────────────────────────────────────────────────────────
 
 
-def _output_text_parts(response: dict) -> list[list[dict]]:
+def _output_text_parts(response: dict[str, Any]) -> list[list[dict[str, Any]]]:
     """Return the ``output_text`` parts of each message item of the output."""
     return [
         [
@@ -34,17 +35,17 @@ def _output_text_parts(response: dict) -> list[list[dict]]:
 class ResponsesOutput:
     """A copy of a response, with the text of each output message read as a message."""
 
-    def __init__(self, response: dict):
+    def __init__(self, response: dict[str, Any]):
         self.response = copy.deepcopy(response)
         self._parts = [parts for parts in _output_text_parts(self.response) if parts]
 
-    def messages(self) -> list[AIMessage]:
+    def messages(self) -> list[BaseMessage]:
         return [
             AIMessage(content=''.join(part['text'] for part in parts))
             for parts in self._parts
         ]
 
-    def write_back(self, messages: list[AIMessage]) -> None:
+    def write_back(self, messages: list[BaseMessage]) -> None:
         """Put the texts of ``messages``, as ``messages()`` returned them, in the response.
 
         A message's text goes in its first part; a guardrail changes a text as
@@ -69,7 +70,7 @@ def gateway_response_id(request_id: str) -> str:
     return f'resp_{request_id.replace("-", "")}'
 
 
-def message_item(text: str) -> dict:
+def message_item(text: str) -> dict[str, Any]:
     return {
         'id': f'msg_{uuid.uuid4().hex}',
         'type': 'message',
@@ -81,7 +82,9 @@ def message_item(text: str) -> dict:
     }
 
 
-def gateway_response(request_id: str, route_name: str, body: dict, text: str) -> dict:
+def gateway_response(
+    request_id: str, route_name: str, body: dict[str, Any], text: str
+) -> dict[str, Any]:
     """Build a completed response with one assistant message, echoing the request as
     OpenAI does. Nothing called a model, so its usage is zero.
     """

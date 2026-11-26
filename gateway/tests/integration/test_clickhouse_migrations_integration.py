@@ -5,6 +5,7 @@ import time
 import uuid
 
 from sqlalchemy import text
+from typing_extensions import override
 
 from tests.common.db_integration_ch import DatabaseIntegrationClickhouse
 
@@ -71,6 +72,7 @@ class TestClickHouseMigrations(DatabaseIntegrationClickhouse):
         start = next(i for i, line in enumerate(plan) if 'idx_request_uuid' in line)
         return next(line.strip() for line in plan[start:] if 'Granules' in line)
 
+    @override
     def clean(self):
         for (name,) in self.execute(
             "SELECT name FROM system.tables WHERE database = 'default'"

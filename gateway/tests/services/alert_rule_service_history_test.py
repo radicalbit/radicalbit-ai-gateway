@@ -5,10 +5,12 @@ here a fake DAO records the range and rule it was asked for.
 """
 
 from datetime import UTC, datetime
+from unittest.mock import NonCallableMagicMock, create_autospec
 from uuid import UUID
 
 import pytest
 
+from radicalbit_ai_gateway.db.dao.alert_rule_dao import AlertRuleDAO
 from radicalbit_ai_gateway.db.models.alert import AlertHistoryBucket
 from radicalbit_ai_gateway.services.alert_rule_service import AlertRuleService
 from radicalbit_ai_gateway.utils.exceptions import AlertRuleNotFoundError
@@ -35,9 +37,14 @@ class FakeAlertDAO:
         return [BUCKET]
 
 
-class FakeAlertRuleDAO:
-    async def get_by_uuid(self, rule_uuid):
-        return object() if rule_uuid == KNOWN_RULE else None
+def fake_alert_rule_dao() -> NonCallableMagicMock:
+    """Return an AlertRuleDAO that knows only KNOWN_RULE."""
+    dao = create_autospec(AlertRuleDAO, instance=True)
+    dao.get_by_uuid.side_effect = lambda rule_uuid: (
+        object() if rule_uuid == KNOWN_RULE else None
+    )
+    assert isinstance(dao, NonCallableMagicMock)
+    return dao
 
 
 @pytest.fixture
@@ -48,7 +55,7 @@ def alert_dao():
 @pytest.fixture
 def service(alert_dao):
     return AlertRuleService(
-        alert_rule_dao=FakeAlertRuleDAO(), alert_dao=alert_dao, clock=lambda: NOW
+        alert_rule_dao=fake_alert_rule_dao(), alert_dao=alert_dao, clock=lambda: NOW
     )
 
 
@@ -101,6 +108,6 @@ async def test_rule_history_of_an_unknown_rule_is_not_found(service, alert_dao):
 
 
 def test_history_is_empty_without_an_alert_store():
-    service = AlertRuleService(alert_rule_dao=FakeAlertRuleDAO(), clock=lambda: NOW)
+    service = AlertRuleService(alert_rule_dao=fake_alert_rule_dao(), clock=lambda: NOW)
 
     assert service.get_history() == []

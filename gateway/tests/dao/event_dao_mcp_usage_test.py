@@ -6,9 +6,11 @@ SQL is put together.
 """
 
 import datetime
+from typing import TypedDict
 import uuid
 
 from fastapi_pagination import Params
+from typing_extensions import override
 
 from tests.common import db_mock
 from tests.common.db_integration_ch import DatabaseIntegrationClickhouse
@@ -25,6 +27,22 @@ GROUP_1 = uuid.UUID(int=101)
 GROUP_2 = uuid.UUID(int=102)
 
 BASE_TIME = datetime.datetime(2025, 1, 8, 10, 0, 0, tzinfo=datetime.timezone.utc)
+
+UsageRow = tuple[uuid.UUID, str, uuid.UUID, str, int, datetime.datetime]
+
+
+class _Caller(TypedDict, total=False):
+    api_key_uuid: uuid.UUID
+    api_key_name: str
+    group_uuid: uuid.UUID
+    group_name: str
+
+
+class _Filters(TypedDict, total=False):
+    route_names: list[str] | None
+    _from: datetime.datetime | None
+    _to: datetime.datetime | None
+    tags: list[str] | None
 
 
 def mcp_event(
@@ -56,6 +74,7 @@ def mcp_event(
 
 
 class EventDAOMcpKeyUsageTest(DatabaseIntegrationClickhouse):
+    @override
     @classmethod
     def setUpClass(cls):
         super().setUpClass()
@@ -89,13 +108,13 @@ class EventDAOMcpKeyUsageTest(DatabaseIntegrationClickhouse):
         before = BASE_TIME - datetime.timedelta(minutes=1)
         after = end + datetime.timedelta(minutes=1)
         prod_retail = ['env=prod', 'cost_center=retail']
-        key_2 = {
+        key_2: _Caller = {
             'api_key_uuid': KEY_2,
             'api_key_name': 'key-two',
             'group_uuid': GROUP_2,
             'group_name': 'group-two',
         }
-        key_3 = {'api_key_uuid': KEY_3, 'api_key_name': 'key-three'}
+        key_3: _Caller = {'api_key_uuid': KEY_3, 'api_key_name': 'key-three'}
         self.insert(
             [
                 mcp_event(timestamp=BASE_TIME, tags=prod_retail),
@@ -120,7 +139,7 @@ class EventDAOMcpKeyUsageTest(DatabaseIntegrationClickhouse):
         k2 = (KEY_2, 'key-two', GROUP_2, 'group-two')
         k3 = (KEY_3, 'key-three', GROUP_1, 'group-one')
 
-        for filters, expected in (
+        cases: list[tuple[_Filters, list[UsageRow]]] = [
             ({}, [(*k3, 2, after), (*k1, 2, end), (*k2, 1, half)]),
             ({'_from': BASE_TIME, '_to': end}, [(*k1, 2, end), (*k2, 1, half)]),
             ({'route_names': ['route-a']}, [(*k1, 2, end)]),
@@ -135,7 +154,8 @@ class EventDAOMcpKeyUsageTest(DatabaseIntegrationClickhouse):
             ),
             ({'tags': prod_retail}, [(*k1, 2, end)]),
             ({'tags': ['env=unknown']}, []),
-        ):
+        ]
+        for filters, expected in cases:
             with self.subTest(**filters):
                 res = self.usage(**filters)
 

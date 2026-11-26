@@ -3,6 +3,7 @@
 from dataclasses import dataclass
 import datetime
 from time import time
+from typing import Any
 import uuid
 
 from openai.types.chat.chat_completion import ChatCompletion
@@ -15,7 +16,7 @@ from openai.types.chat.chat_completion_chunk import (
 )
 from openai.types.completion_usage import CompletionUsage
 
-from radicalbit_ai_gateway.llm.messages import AIMessageChunk
+from radicalbit_ai_gateway.llm.messages import AIMessageChunk, UsageMetadata
 
 
 @dataclass
@@ -23,7 +24,7 @@ class ChunkAccumulationResult:
     """A stream's text so far, and the usage the last chunk reported."""
 
     text: str
-    usage_metadata: dict | None
+    usage_metadata: UsageMetadata | None
 
 
 def cached_response_to_chunk(
@@ -40,9 +41,13 @@ def cached_response_to_chunk(
         A ChatCompletionChunk with finish_reason='stop'.
 
     """
+    # A reply with no text (a refusal) has empty content: its delta carries
+    # no content, and the refusal, as OpenAI streams one. (A reply with tool
+    # calls is not a stream's hit: see ChatEntry.parse.)
+    message = cached_response.choices[0].message
     chunk = to_openai_chat_completion_chunk(
         AIMessageChunk(
-            content=cached_response.choices[0].message.content,
+            content=message.content or '',
             usage_metadata={
                 'input_tokens': cached_response.usage.prompt_tokens,
                 'output_tokens': cached_response.usage.completion_tokens,
@@ -54,6 +59,7 @@ def cached_response_to_chunk(
         model_id_invoked=route_name,
         request_id=cached_response.id,
     )
+    chunk.choices[0].delta.refusal = message.refusal
     chunk.choices[0].finish_reason = 'stop'
     return chunk
 
@@ -73,7 +79,7 @@ def build_soft_block_chunk(
 
     """
     chunk = to_openai_chat_completion_chunk(
-        AIMessageChunk(content=soft_block.choices[0].message.content),
+        AIMessageChunk(content=soft_block.choices[0].message.content or ''),
         model_id_invoked=route_name,
         request_id=soft_block.id,
     )
@@ -81,7 +87,7 @@ def build_soft_block_chunk(
     return chunk
 
 
-def prepare_stream_options(kwargs: dict) -> dict | None:
+def prepare_stream_options(kwargs: dict[str, Any]) -> dict[str, Any] | None:
     """Prepare stream options, forcing include_usage=True upstream.
 
     Modifies kwargs in-place to set stream_options with include_usage=True.
@@ -133,7 +139,7 @@ def accumulate_chunk_content(
 
 
 def build_usage_chunk(
-    final_usage: dict,
+    final_usage: UsageMetadata,
     model_id_invoked: str,
     request_id: str,
 ) -> ChatCompletionChunk:
@@ -214,8 +220,8 @@ def to_openai_chat_completion_chunk(
         # the provider's, not the position in the chunk, or a client merges
         # parallel calls into the first.
         for tool_call, tc_chunk in zip(tool_calls, chunk.tool_call_chunks, strict=True):
-            if tc_chunk.get('index') is not None:
-                tool_call.index = tc_chunk['index']
+            if (index := tc_chunk.get('index')) is not None:
+                tool_call.index = index
 
     # DeepSeek (and OpenRouter) stream the model's reasoning beside its content.
     delta_extra = {}

@@ -7,6 +7,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import json
 import time
+from typing import Any
 
 from openai.types.completion_usage import CompletionUsage
 
@@ -22,7 +23,7 @@ from radicalbit_ai_gateway.llm.usage import responses_token_counts
 class ResponsesEntry:
     """A Responses API request, keyed on its ``cache_signature``."""
 
-    body: dict
+    body: dict[str, Any]
 
     lookup_spans = ('lookup_responses_cache',)
     get_spans = ()
@@ -38,7 +39,7 @@ class ResponsesEntry:
     def text(self) -> str:
         return last_user_text(self.body)
 
-    def parse(self, raw: str) -> dict | None:
+    def parse(self, raw: str) -> dict[str, Any] | None:
         """Return a cached response object; a chat completion is a miss.
 
         A semantic cache shares a route's entries between endpoints.
@@ -51,10 +52,10 @@ class ResponsesEntry:
             return None
         return cached
 
-    def dump(self, value: dict) -> str:
+    def dump(self, value: dict[str, Any]) -> str:
         return json.dumps(value)
 
-    def hit(self, value: dict) -> Hit:
+    def hit(self, value: dict[str, Any]) -> Hit:
         input_tokens, _, output_tokens = responses_token_counts(value.get('usage'))
         return Hit(
             value.get('model', ''),
@@ -65,7 +66,7 @@ class ResponsesEntry:
             ),
         )
 
-    def refresh(self, value: dict) -> dict:
+    def refresh(self, value: dict[str, Any]) -> dict[str, Any]:
         now = int(time.time())
         return {
             **value,

@@ -7,7 +7,7 @@ the retry policy and the error messages.
 """
 
 import asyncio
-from collections.abc import AsyncIterator, Iterator, Sequence
+from collections.abc import AsyncIterator, Iterator, Mapping, Sequence
 import copy
 import hashlib
 import json
@@ -22,6 +22,7 @@ import uuid
 import certifi
 import httpx
 from pydantic import BaseModel
+from typing_extensions import override
 
 from radicalbit_ai_gateway.llm.chat_model import ChatModel, StructuredChatModel
 from radicalbit_ai_gateway.llm.embeddings import Embeddings
@@ -30,8 +31,11 @@ from radicalbit_ai_gateway.llm.messages import (
     AIMessageChunk,
     BaseMessage,
     HumanMessage,
+    InvalidToolCall,
     SystemMessage,
+    ToolCall,
     ToolMessage,
+    UsageMetadata,
     invalid_tool_call,
     tool_call,
     tool_call_chunk,
@@ -132,13 +136,24 @@ class ChatMistralAI(ChatModel):
         model_kwargs: dict[str, Any] | None = None,
         **kwargs: Any,
     ):
-        api_key = kwargs.pop('mistral_api_key', api_key)
-        base_url = kwargs.pop('endpoint', base_url)
+        key = kwargs.pop('mistral_api_key', api_key)
+        # Sent formatted into the header: any key reads as its string.
+        api_key = None if key is None else str(key)
+        url = kwargs.pop('endpoint', base_url)
         self.model_name = kwargs.pop('model', None) or model_name
         if api_key is None:
             api_key = os.environ.get('MISTRAL_API_KEY')
-        self.base_url = (
-            base_url or os.environ.get('MISTRAL_BASE_URL') or DEFAULT_BASE_URL
+        if isinstance(url, httpx.URL):
+            url = str(url)
+        elif url and not isinstance(url, str):
+            # What the HTTP client raises for it, before it is ever built.
+            msg = (
+                'Invalid type for url.  Expected str or httpx.URL, '
+                f'got {type(url)}: {url!r}'
+            )
+            raise TypeError(msg)
+        self.base_url: str = (
+            url or os.environ.get('MISTRAL_BASE_URL') or DEFAULT_BASE_URL
         )
         self.max_retries = max_retries
         self.temperature = temperature
@@ -180,20 +195,26 @@ class ChatMistralAI(ChatModel):
         }
         return {k: v for k, v in params.items() if v is not None}
 
+    @override
     def _server_url(self) -> str | None:
         return self.base_url
 
-    def _invocation_params(self, stop: list[str] | None = None, **kwargs: Any) -> dict:
+    @override
+    def _invocation_params(
+        self, stop: list[str] | None = None, **kwargs: Any
+    ) -> dict[str, Any]:
         return {**self._default_params(), 'stop': stop, **self.bound, **kwargs}
 
-    def _llm_output(self, message: AIMessage) -> dict | None:
+    @override
+    def _llm_output(self, message: AIMessage) -> dict[str, Any] | None:
         metadata = message.response_metadata
         return {
             'model_name': metadata.get('model_name'),
             'token_usage': metadata.get('token_usage'),
         }
 
-    def _generation_info(self, message: AIMessage) -> dict | None:
+    @override
+    def _generation_info(self, message: AIMessage) -> dict[str, Any] | None:
         # Stream chunks carried none.
         if isinstance(message, AIMessageChunk):
             return None
@@ -214,6 +235,7 @@ class ChatMistralAI(ChatModel):
             **kwargs,
         }
 
+    @override
     async def _agenerate(self, messages: list[BaseMessage], **kwargs: Any) -> AIMessage:
         # A caller-supplied ``stream`` never switches this call to streaming.
         kwargs.pop('stream', None)
@@ -248,8 +270,8 @@ class ChatMistralAI(ChatModel):
         message = _from_mistral_message(choice['message'])
         if token_usage:
             message.usage_metadata = {
-                'input_tokens': token_usage.get('prompt_tokens', 0),
-                'output_tokens': token_usage.get('completion_tokens', 0),
+                'input_tokens': token_usage.get('prompt_tokens') or 0,
+                'output_tokens': token_usage.get('completion_tokens') or 0,
                 'total_tokens': token_usage.get('total_tokens', 0),
             }
         message.response_metadata = {
@@ -261,6 +283,7 @@ class ChatMistralAI(ChatModel):
         }
         return message
 
+    @override
     async def _astream(
         self, messages: list[BaseMessage], **kwargs: Any
     ) -> AsyncIterator[AIMessageChunk]:
@@ -283,11 +306,15 @@ class ChatMistralAI(ChatModel):
                 chunk, index, index_type = _to_message_chunk(data, index, index_type)
                 yield chunk
 
-    def bind_tools(self, tools: list[dict], tool_choice: Any = None) -> 'ChatMistralAI':
+    @override
+    def bind_tools(
+        self, tools: Sequence[Mapping[str, Any]], tool_choice: Any = None
+    ) -> 'ChatMistralAI':
         bound = copy.copy(self)
         bound.bound = {**self.bound, **_tool_kwargs(tools, tool_choice)}
         return bound
 
+    @override
     def with_structured_output(
         self, schema: type[BaseModel], include_raw: bool = False
     ) -> '_MistralStructuredModel':
@@ -305,6 +332,7 @@ class _MistralStructuredModel(StructuredChatModel):
         self.schema = schema
         self.include_raw = include_raw
 
+    @override
     async def ainvoke(self, input: Sequence[BaseMessage], **kwargs: Any) -> Any:  # noqa: A002
         raw = await self.model.ainvoke(input, **kwargs)
         if not self.include_raw:
@@ -350,8 +378,10 @@ def _parse_first_tool_call(message: AIMessage, schema: type[BaseModel]) -> Any:
     return schema(**first['args'])
 
 
-def _tool_kwargs(tools: list[dict], tool_choice: Any) -> dict[str, Any]:
-    kwargs: dict[str, Any] = {'tools': tools}
+def _tool_kwargs(
+    tools: Sequence[Mapping[str, Any]], tool_choice: Any
+) -> dict[str, Any]:
+    kwargs: dict[str, Any] = {'tools': list(tools)}
     if tool_choice:
         names = [
             name
@@ -396,7 +426,7 @@ def _format_user_content(content: Any) -> Any:
     ]
 
 
-def _clean_block(block: dict) -> dict:
+def _clean_block(block: dict[str, Any]) -> dict[str, Any]:
     # Drop keys added while parsing a reply (e.g. the stream ``index``).
     if block.get('type') == 'text' and 'text' in block:
         return {'type': 'text', 'text': block['text']}
@@ -411,7 +441,9 @@ def _clean_block(block: dict) -> dict:
     return new_block
 
 
-def _legacy_tool_calls(message: AIMessage) -> tuple[list, list]:
+def _legacy_tool_calls(
+    message: AIMessage,
+) -> tuple[list[ToolCall], list[InvalidToolCall]]:
     """Tool calls of ``message``, parsed from ``additional_kwargs`` if needed.
 
     A message carrying only raw ``additional_kwargs['tool_calls']`` is treated
@@ -447,7 +479,7 @@ def _legacy_tool_calls(message: AIMessage) -> tuple[list, list]:
 
 def _assistant_message(message: AIMessage) -> dict[str, Any]:
     result: dict[str, Any] = {'role': 'assistant'}
-    tool_calls: list[dict] = []
+    tool_calls: list[dict[str, Any]] = []
     parsed_calls, invalid_calls = _legacy_tool_calls(message)
     if parsed_calls or invalid_calls:
         for tc in parsed_calls:
@@ -457,12 +489,12 @@ def _assistant_message(message: AIMessage) -> dict[str, Any]:
                     'arguments': json.dumps(tc['args'], ensure_ascii=False),
                 }
             }
-            if tc_id := tc.get('id'):
+            if (tc_id := tc.get('id')) is not None and tc_id != '':
                 call['id'] = _mistral_tool_call_id(tc_id)
             tool_calls.append(call)
         for tc in invalid_calls:
             call = {'function': {'name': tc['name'], 'arguments': tc['args']}}
-            if tc_id := tc.get('id'):
+            if (tc_id := tc.get('id')) is not None and tc_id != '':
                 call['id'] = _mistral_tool_call_id(tc_id)
             tool_calls.append(call)
     elif 'tool_calls' in message.additional_kwargs:
@@ -529,12 +561,12 @@ def _to_mistral_message(message: BaseMessage) -> dict[str, Any]:
 # ── Response conversion ──────────────────────────────────────────────────────
 
 
-def _normalize_content(content: Any) -> str | list:
+def _normalize_content(content: Any) -> str | list[Any]:
     """Turn ``reference`` (citation) blocks into text blocks keeping the citation."""
     if not isinstance(content, list):
         return content or ''
     has_reference = False
-    blocks: list = []
+    blocks: list[Any] = []
     for block in content:
         if isinstance(block, dict) and block.get('type') == 'reference':
             has_reference = True
@@ -582,16 +614,13 @@ def _from_mistral_message(message: dict[str, Any]) -> AIMessage:
         raise ValueError(f"Expected role to be 'assistant', got {role}")
     content = _normalize_content(message.get('content', ''))
     additional_kwargs: dict[str, Any] = {}
-    tool_calls = []
-    invalid_tool_calls = []
+    tool_calls: list[ToolCall] = []
+    invalid_tool_calls: list[InvalidToolCall] = []
     if raw_tool_calls := message.get('tool_calls'):
         additional_kwargs['tool_calls'] = raw_tool_calls
         for raw in raw_tool_calls:
             try:
                 parsed = _parse_tool_call(raw)
-                if not parsed['id']:
-                    parsed['id'] = uuid.uuid4().hex
-                tool_calls.append(tool_call(**parsed))
             except Exception as e:
                 invalid_tool_calls.append(
                     invalid_tool_call(
@@ -601,6 +630,22 @@ def _from_mistral_message(message: dict[str, Any]) -> AIMessage:
                         error=str(e),
                     )
                 )
+                continue
+            if parsed is None:
+                invalid_tool_calls.append(
+                    invalid_tool_call(
+                        id=raw.get('id'),
+                        error='Unsupported tool call: it has no function.',
+                    )
+                )
+                continue
+            tool_calls.append(
+                tool_call(
+                    name=parsed['name'],
+                    args=parsed['args'],
+                    id=parsed['id'] or uuid.uuid4().hex,
+                )
+            )
     return AIMessage(
         content=content,
         additional_kwargs=additional_kwargs,
@@ -621,7 +666,7 @@ def _to_message_chunk(
         for block in content:
             if isinstance(block, dict):
                 block_type = 'reference' if 'reference' in block else block.get('type')
-                if block_type is not None and block_type != index_type:
+                if isinstance(block_type, str) and block_type != index_type:
                     index_type = block_type
                     index += 1
                 if 'index' not in block:
@@ -654,11 +699,11 @@ def _to_message_chunk(
             pass
     usage_metadata = None
     if token_usage := data.get('usage'):
-        usage_metadata = {
-            'input_tokens': token_usage.get('prompt_tokens', 0),
-            'output_tokens': token_usage.get('completion_tokens', 0),
-            'total_tokens': token_usage.get('total_tokens', 0),
-        }
+        usage_metadata = UsageMetadata(
+            input_tokens=token_usage.get('prompt_tokens') or 0,
+            output_tokens=token_usage.get('completion_tokens') or 0,
+            total_tokens=token_usage.get('total_tokens', 0),
+        )
     response_metadata: dict[str, Any] = {'model_provider': 'mistralai'}
     if choice.get('finish_reason') is not None and isinstance(data.get('model'), str):
         response_metadata['model_name'] = data['model']
@@ -784,7 +829,9 @@ class MistralEmbeddings(Embeddings):
             raise ValueError(
                 f'Unsupported Mistral embeddings parameters: {sorted(unknown)}'
             )
-        api_key = kwargs.get('mistral_api_key', api_key)
+        key = kwargs.get('mistral_api_key', api_key)
+        # Sent formatted into the header: any key reads as its string.
+        api_key = None if key is None else str(key)
         if api_key is None:
             api_key = os.environ.get('MISTRAL_API_KEY', '')
         self.model_name = kwargs.get('model') or model_name
@@ -819,10 +866,16 @@ class MistralEmbeddings(Embeddings):
         if batch:
             yield batch
 
-    def _attempts(self) -> int:
+    def _retry_wait(self, attempt: int, error: Exception) -> float | None:
+        """Return the wait before retrying after ``attempt`` failed with ``error``.
+
+        None: no retry (retries are off, used up, or the error is final).
+        """
         if self.max_retries is None or self.wait_time is None:
-            return 1
-        return max(self.max_retries, 1)
+            return None
+        if attempt >= max(self.max_retries, 1) or not _is_retryable(error):
+            return None
+        return self.wait_time
 
     async def _aembed_batch(self, client: httpx.AsyncClient, batch: list[str]):
         attempt = 1
@@ -836,13 +889,15 @@ class MistralEmbeddings(Embeddings):
                 )
                 response.raise_for_status()
             except Exception as e:
-                if attempt >= self._attempts() or not _is_retryable(e):
+                wait = self._retry_wait(attempt, e)
+                if wait is None:
                     raise
-                await asyncio.sleep(self.wait_time)
+                await asyncio.sleep(wait)
                 attempt += 1
             else:
                 return response
 
+    @override
     async def aembed_documents(self, texts: list[str]) -> list[list[float]]:
         try:
             if self.async_client is not None:
@@ -862,9 +917,11 @@ class MistralEmbeddings(Embeddings):
             logger.exception('An error occurred with MistralAI')
             raise
 
+    @override
     async def aembed_query(self, text: str) -> list[float]:
         return (await self.aembed_documents([text]))[0]
 
+    @override
     def embed_documents(self, texts: list[str]) -> list[list[float]]:
         if self._sync_client is None:
             self._sync_client = httpx.Client()
@@ -883,9 +940,10 @@ class MistralEmbeddings(Embeddings):
                         response.raise_for_status()
                         break
                     except Exception as e:
-                        if attempt >= self._attempts() or not _is_retryable(e):
+                        wait = self._retry_wait(attempt, e)
+                        if wait is None:
                             raise
-                        time.sleep(self.wait_time)
+                        time.sleep(wait)
                         attempt += 1
                 responses.append(response)
             return _vectors(responses)
@@ -893,6 +951,7 @@ class MistralEmbeddings(Embeddings):
             logger.exception('An error occurred with MistralAI')
             raise
 
+    @override
     def embed_query(self, text: str) -> list[float]:
         return self.embed_documents([text])[0]
 

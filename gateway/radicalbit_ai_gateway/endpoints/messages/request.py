@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import copy
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, TypeGuard
 
 from radicalbit_ai_gateway.llm.messages import (
     AIMessage,
@@ -35,11 +35,13 @@ _MESSAGE_TYPES: dict[str, type[BaseMessage]] = {
 class _Text:
     """Where one text of the request lives: ``container[key]``."""
 
-    container: dict
+    container: dict[str, Any]
     key: str
 
     def get(self) -> str:
-        return self.container[self.key]
+        # Built over string values only, and ``set`` writes strings.
+        text = self.container[self.key]
+        return text if isinstance(text, str) else ''
 
     def set(self, text: str) -> None:
         self.container[self.key] = text
@@ -57,7 +59,7 @@ class _MessageTexts:
 
     def message(self) -> BaseMessage:
         values = [text.get() for text in self.texts]
-        content: str | list = (
+        content: str | list[dict[str, Any]] = (
             values[0]
             if len(values) == 1
             else [{'type': 'text', 'text': value} for value in values]
@@ -67,16 +69,15 @@ class _MessageTexts:
         return self.message_type(content=content)
 
 
-def is_text_block(block: Any) -> bool:
+def is_text_block(block: Any) -> TypeGuard[dict[str, Any]]:
     """Tell whether ``block`` is a text block of a request or of an answer."""
-    return (
-        isinstance(block, dict)
-        and block.get('type') == 'text'
-        and isinstance(block.get('text'), str)
-    )
+    if not isinstance(block, dict):
+        return False
+    block_type: object = block.get('type')
+    return block_type == 'text' and isinstance(block.get('text'), str)
 
 
-def _content_texts(container: dict, key: str) -> list[_Text]:
+def _content_texts(container: dict[str, Any], key: str) -> list[_Text]:
     content = container.get(key)
     if isinstance(content, str):
         return [_Text(container, key)]
@@ -93,7 +94,7 @@ def _texts_of(content: MessageContent) -> list[str]:
 
 
 def _one_message_texts(
-    message: dict, message_type: type[BaseMessage]
+    message: dict[str, Any], message_type: type[BaseMessage]
 ) -> list[_MessageTexts]:
     """Return the texts of one message, in the order of its blocks.
 
@@ -127,7 +128,7 @@ def _one_message_texts(
     return all_texts
 
 
-def _all_message_texts(body: dict) -> list[_MessageTexts]:
+def _all_message_texts(body: dict[str, Any]) -> list[_MessageTexts]:
     all_texts = []
     if system_texts := _content_texts(body, 'system'):
         all_texts.append(_MessageTexts(SystemMessage, system_texts))
@@ -141,7 +142,7 @@ def _all_message_texts(body: dict) -> list[_MessageTexts]:
     return all_texts
 
 
-def last_user_text(body: dict) -> str:
+def last_user_text(body: dict[str, Any]) -> str:
     """Return the text of the request's last user message, empty when it has
     none (a turn of tool results only, say).
     """
@@ -154,14 +155,15 @@ def last_user_text(body: dict) -> str:
             return content
         if not isinstance(content, list):
             return ''
-        return ' '.join(block['text'] for block in content if is_text_block(block))
+        texts: list[str] = [block['text'] for block in content if is_text_block(block)]
+        return ' '.join(texts)
     return ''
 
 
 class MessagesRequest:
     """A copy of a Messages request body, with its texts read as chat messages."""
 
-    def __init__(self, body: dict):
+    def __init__(self, body: dict[str, Any]):
         self.body = copy.deepcopy(body)
         self._message_texts = _all_message_texts(self.body)
 

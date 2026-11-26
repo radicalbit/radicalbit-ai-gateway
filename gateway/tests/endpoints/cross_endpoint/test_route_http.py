@@ -3,11 +3,12 @@ at the transport: which budget blocks a request first, the usage a
 transcription stream counts, and what preprocessing plugins see and send.
 """
 
-from contextlib import nullcontext
+from contextlib import AbstractContextManager, nullcontext
 from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
+from typing_extensions import override
 
 from tests.common import db_mock
 from tests.common.gateway_harness import LOGGER, build_routes, open_gateway
@@ -91,7 +92,7 @@ def gateway(caplog):
         yield gateway
 
 
-def _spend_the_credential_budget(gateway) -> None:
+def _spend_the_credential_budget(gateway) -> AbstractContextManager[object]:
     """Give the caller's credential a spent budget, as its key record holds it."""
     key = gateway.api_key
     limit = db_mock.get_sample_key_limit(
@@ -99,17 +100,21 @@ def _spend_the_credential_budget(gateway) -> None:
         window_size='1 minute',
         max_value=SPENT,
     )
-    server.key_service.get_key_by_hashed_key.return_value = SimpleNamespace(
-        uuid=key.uuid,
-        name=key.name,
-        hashed_key=key.hashed_key,
-        group=key.group,
-        limits=[CredentialLimitOut.from_key_limit(limit)],
-        expires_on=None,
+    return patch.object(
+        server.key_service,
+        'get_key_by_hashed_key',
+        return_value=SimpleNamespace(
+            uuid=key.uuid,
+            name=key.name,
+            hashed_key=key.hashed_key,
+            group=key.group,
+            limits=[CredentialLimitOut.from_key_limit(limit)],
+            expires_on=None,
+        ),
     )
 
 
-def _spend_the_project_budget():
+def _spend_the_project_budget() -> AbstractContextManager[object]:
     budget = db_mock.get_sample_project_budget_limit(
         window_size='1 minute', max_value=SPENT
     )
@@ -141,9 +146,10 @@ def _limit_logs(caplog) -> list[str]:
 def test_the_first_spent_budget_blocks_an_embedding_request(
     gateway, caplog, route, credential, project, reported
 ):
-    if credential:
-        _spend_the_credential_budget(gateway)
-    with _spend_the_project_budget() if project else nullcontext():
+    with (
+        _spend_the_credential_budget(gateway) if credential else nullcontext(),
+        _spend_the_project_budget() if project else nullcontext(),
+    ):
         response = gateway.embed([], route=route)
 
     assert response.status_code == 429
@@ -231,6 +237,7 @@ class _Uppercase(PreprocessingPlugin):
     def __init__(self):
         self.seen: list[tuple[str, str]] = []
 
+    @override
     async def preprocess(self, messages, config):
         self.seen.extend((type(m).__name__, m.content) for m in messages)
         for m in messages:

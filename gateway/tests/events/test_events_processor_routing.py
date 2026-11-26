@@ -1,5 +1,6 @@
 """The routing flag lands in its own column, not in the attributes map."""
 
+from typing import Any
 from unittest.mock import patch
 
 from radicalbit_ai_gateway.events.events_processor import emit_event
@@ -22,10 +23,10 @@ def _payload(**overrides) -> InputTokenProcessedPayload:
         'model_id': 'emb',
         'model_type': 'embeddings',
     }
-    return InputTokenProcessedPayload(**{**fields, **overrides})
+    return InputTokenProcessedPayload.model_validate({**fields, **overrides})
 
 
-def _emit_and_capture(payload: InputTokenProcessedPayload) -> dict:
+def _emit_and_capture(payload: InputTokenProcessedPayload) -> dict[str, Any]:
     with patch(BUFFER) as buffer:
         emit_event(payload)
     return buffer.add.call_args.args[0]

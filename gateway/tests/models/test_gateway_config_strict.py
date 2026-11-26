@@ -1,3 +1,5 @@
+from typing import Any
+
 from pydantic import ValidationError
 import pytest
 
@@ -7,7 +9,7 @@ GPT = {'model_id': 'gpt', 'model': 'openai/gpt-4o-mini'}
 JEV = {'model_id': 'jev', 'model': 'typesafe/jev-latest'}
 
 
-def _with_guardrail(guardrail: dict, **top_level) -> dict:
+def _with_guardrail(guardrail: dict[str, Any], **top_level) -> dict[str, Any]:
     return {
         'chat_models': [GPT],
         'guardrails': [guardrail],
@@ -16,11 +18,11 @@ def _with_guardrail(guardrail: dict, **top_level) -> dict:
     }
 
 
-def _with_route(**route) -> dict:
+def _with_route(**route) -> dict[str, Any]:
     return {'chat_models': [GPT], 'routes': {'chat': {'chat_models': ['gpt'], **route}}}
 
 
-def _judge(**parameters) -> dict:
+def _judge(**parameters) -> dict[str, Any]:
     return {
         'name': 'j',
         'type': 'judge',
@@ -28,7 +30,7 @@ def _judge(**parameters) -> dict:
     }
 
 
-def _errors(raw: dict) -> list[tuple[str, str]]:
+def _errors(raw: dict[str, Any]) -> list[tuple[str, str]]:
     with pytest.raises(ValidationError) as exc_info:
         GatewayConfig.model_validate(raw)
     return [
@@ -44,7 +46,7 @@ def _errors(raw: dict) -> list[tuple[str, str]]:
     [
         (
             _with_guardrail(_judge(temprature=0.2)),
-            'guardrails.0.parameters.JUDGE.temprature',
+            'guardrails.0.JUDGE.parameters.temprature',
         ),
         (
             {'chat_models': [{**GPT, 'retry_attemps': 5}], 'routes': {}},
@@ -213,7 +215,7 @@ _CHATLESS_ROUTES = {
 }
 
 
-def _on_chatless_route(kind: str, guardrail: dict) -> dict:
+def _on_chatless_route(kind: str, guardrail: dict[str, Any]) -> dict[str, Any]:
     return {
         'chat_models': [GPT],
         'embedding_models': [EMB],

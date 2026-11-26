@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+from typing import Any
 from unittest.mock import patch
 
 import anyio
@@ -14,7 +15,7 @@ class _EndOfStream(Exception):
 
 async def first_events(
     app, url: str, *, sleep: str, interval: float, params=None, wanted=1
-) -> list:
+) -> list[Any]:
     """Open ``url`` on ``app`` and return the JSON payloads of its first
     ``wanted`` events.
 

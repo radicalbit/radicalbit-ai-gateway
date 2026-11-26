@@ -6,6 +6,7 @@ import time
 import uuid
 
 from redis.asyncio import Redis
+from typing_extensions import override
 
 from radicalbit_ai_gateway.limiter.storage.base import Storage
 
@@ -39,6 +40,11 @@ end
 """
 
 
+def _text(value: object) -> str:
+    """Return a Redis reply as text: bytes, unless the client decodes responses."""
+    return value.decode('utf-8') if isinstance(value, bytes) else str(value)
+
+
 class RedisStorage(Storage):
     """Redis-based distributed storage for limiting.
 
@@ -57,6 +63,7 @@ class RedisStorage(Storage):
         self._client = Redis.from_url(uri)
         self._script = self._client.register_script(_INCREMENT_SCRIPT)
 
+    @override
     async def get(self, key: str) -> int | None:
         """Get current counter value or None if expired/missing."""
         value = await self._client.hget(key, 'count')
@@ -64,6 +71,7 @@ class RedisStorage(Storage):
             return None
         return int(value)
 
+    @override
     async def get_ttl(self, key: str) -> int | None:
         """Get expiration timestamp or None if key doesn't exist."""
         ttl = await self._client.ttl(key)
@@ -71,13 +79,15 @@ class RedisStorage(Storage):
             return None
         return (time.time_ns() // 1_000_000_000) + ttl
 
+    @override
     async def get_window_id(self, key: str) -> str | None:
         """Get the window ID for a key."""
         window_id = await self._client.hget(key, 'window_id')
         if window_id is None:
             return None
-        return window_id.decode('utf-8')
+        return _text(window_id)
 
+    @override
     async def increment(
         self,
         key: str,
@@ -92,9 +102,9 @@ class RedisStorage(Storage):
             args=[amount, ttl_seconds, window_id, window_start],
         )
         new_value = int(result[0])
-        returned_window_id = result[1].decode('utf-8')
-        return new_value, returned_window_id
+        return new_value, _text(result[1])
 
+    @override
     async def get_many(self, keys: list[str]) -> list[int | None]:
         """Get several counters in one pipelined round trip."""
         async with self._client.pipeline(transaction=False) as pipe:
@@ -103,6 +113,7 @@ class RedisStorage(Storage):
             values = await pipe.execute()
         return [None if value is None else int(value) for value in values]
 
+    @override
     async def increment_many(
         self, increments: list[tuple[str, int, int, int]]
     ) -> list[tuple[int, str]]:
@@ -118,8 +129,9 @@ class RedisStorage(Storage):
                     client=pipe,
                 )
             results = await pipe.execute()
-        return [(int(value), window_id.decode('utf-8')) for value, window_id in results]
+        return [(int(value), _text(window_id)) for value, window_id in results]
 
+    @override
     async def delete(self, key: str) -> None:
         """Delete a key's counter, if present."""
         await self._client.delete(key)

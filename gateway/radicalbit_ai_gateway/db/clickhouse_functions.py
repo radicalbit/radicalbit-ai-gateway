@@ -7,7 +7,7 @@ from sqlalchemy.sql.functions import FunctionElement
 from sqlalchemy.types import Float
 
 
-class quantile(FunctionElement):  # noqa: N801 - named after the SQL function
+class quantile(FunctionElement[float]):  # noqa: N801 - named after the SQL function
     """ClickHouse's parametric `quantile(level)(expr)`.
 
     `func.quantile(level, expr)` would render `quantile(level, expr)`, which
@@ -17,7 +17,7 @@ class quantile(FunctionElement):  # noqa: N801 - named after the SQL function
     type = Float()
     inherit_cache = True
 
-    def __init__(self, level: float, expr: ColumnElement):
+    def __init__(self, level: float, expr: ColumnElement[float]):
         # The level is SQL text, not a bound value: it is then part of the
         # statement cache key, so two levels never share a compiled statement.
         super().__init__(literal_column(repr(float(level))), expr)

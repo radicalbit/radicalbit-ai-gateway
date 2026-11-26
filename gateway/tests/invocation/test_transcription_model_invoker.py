@@ -1,9 +1,9 @@
 from decimal import Decimal
 import unittest
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
-import httpx
-from openai import APIConnectionError, APIStatusError
+import httpx2
+from openai import APIConnectionError, APIStatusError, AsyncAzureOpenAI
 from openai.types.audio.transcription import Transcription
 from openai.types.audio.transcription_text_delta_event import (
     TranscriptionTextDeltaEvent,
@@ -11,6 +11,7 @@ from openai.types.audio.transcription_text_delta_event import (
 from openai.types.audio.transcription_text_done_event import TranscriptionTextDoneEvent
 from openai.types.audio.transcription_verbose import TranscriptionVerbose
 import pytest
+from typing_extensions import override
 
 from tests.common.mocked_transcription_client import MockTranscriptionClient
 from tests.common.request_identity import with_identity
@@ -74,14 +75,14 @@ GPT4O_MINI_JSON_RESPONSE = Transcription(
 
 
 def _service_unavailable_exception() -> APIStatusError:
-    request = httpx.Request('POST', 'https://api.openai.com/v1/audio/transcriptions')
-    response = httpx.Response(status_code=503, request=request)
+    request = httpx2.Request('POST', 'https://api.openai.com/v1/audio/transcriptions')
+    response = httpx2.Response(status_code=503, request=request)
     return APIStatusError('Service unavailable', response=response, body=None)
 
 
 def _invalid_file_exception() -> APIStatusError:
-    request = httpx.Request('POST', 'https://api.openai.com/v1/audio/transcriptions')
-    response = httpx.Response(status_code=400, request=request)
+    request = httpx2.Request('POST', 'https://api.openai.com/v1/audio/transcriptions')
+    response = httpx2.Response(status_code=400, request=request)
     return APIStatusError('Invalid file', response=response, body=None)
 
 
@@ -111,6 +112,7 @@ USAGE_CALL = Call(
 
 
 class TestTranscriptionModelInvoker(unittest.IsolatedAsyncioTestCase):
+    @override
     @classmethod
     def setUpClass(cls):
         cls.emit_event_patcher = patch(
@@ -118,16 +120,24 @@ class TestTranscriptionModelInvoker(unittest.IsolatedAsyncioTestCase):
         )
         cls.mock_emit_event = cls.emit_event_patcher.start()
 
+    @override
     @classmethod
     def tearDownClass(cls):
         cls.emit_event_patcher.stop()
 
+    @override
     def setUp(self):
         self.mock_emit_event.reset_mock()
 
     def _build_invoker(self, model: Model) -> TranscriptionModelInvoker:
-        cost_service: CostService = MagicMock(spec_set=CostService)
-        return TranscriptionModelInvoker(models=[model], cost_service=cost_service)
+        return self._build_invoker_and_cost_service(model)[0]
+
+    def _build_invoker_and_cost_service(
+        self, model: Model
+    ) -> tuple[TranscriptionModelInvoker, MagicMock]:
+        cost_service = MagicMock(spec_set=CostService)
+        invoker = TranscriptionModelInvoker(models=[model], cost_service=cost_service)
+        return invoker, cost_service
 
     async def test_transcribe_whisper_success_forces_verbose_json_upstream(self):
         invoker = self._build_invoker(WHISPER_MODEL)
@@ -149,6 +159,8 @@ class TestTranscriptionModelInvoker(unittest.IsolatedAsyncioTestCase):
         assert mock_client.captured_kwargs['response_format'] == 'verbose_json'
         assert isinstance(result, Transcription)
         assert result.text == 'Ciao, questo è un test.'
+        assert result.usage is not None
+        assert WHISPER_VERBOSE_RESPONSE.usage is not None
         assert result.usage.model_dump() == WHISPER_VERBOSE_RESPONSE.usage.model_dump()
         assert result.usage.type == 'duration'
 
@@ -173,7 +185,9 @@ class TestTranscriptionModelInvoker(unittest.IsolatedAsyncioTestCase):
         # json matches gpt-4o-transcribe's upstream call exactly: the raw
         # Transcription is returned as-is, no conversion needed.
         assert result is GPT4O_JSON_RESPONSE
+        assert result.usage is not None
         assert result.usage.type == 'tokens'
+        assert result.usage.input_token_details is not None
         assert result.usage.input_token_details.audio_tokens == 82
 
     async def test_transcribe_whisper_sets_span_attributes_without_audio_bytes(self):
@@ -337,10 +351,10 @@ class TestTranscriptionModelInvoker(unittest.IsolatedAsyncioTestCase):
 
     async def test_transcribe_upstream_5xx_raises_internal_error(self):
         invoker = self._build_invoker(WHISPER_MODEL)
-        request = httpx.Request(
+        request = httpx2.Request(
             'POST', 'https://api.openai.com/v1/audio/transcriptions'
         )
-        response = httpx.Response(status_code=503, request=request)
+        response = httpx2.Response(status_code=503, request=request)
         exception = APIStatusError('Service unavailable', response=response, body=None)
         mock_client = MockTranscriptionClient(exception=exception)
         invoker.model_map['whisper'] = (WHISPER_MODEL, mock_client, [])
@@ -356,10 +370,10 @@ class TestTranscriptionModelInvoker(unittest.IsolatedAsyncioTestCase):
 
     async def test_transcribe_upstream_4xx_raises_bad_request(self):
         invoker = self._build_invoker(WHISPER_MODEL)
-        request = httpx.Request(
+        request = httpx2.Request(
             'POST', 'https://api.openai.com/v1/audio/transcriptions'
         )
-        response = httpx.Response(status_code=400, request=request)
+        response = httpx2.Response(status_code=400, request=request)
         exception = APIStatusError('Invalid file', response=response, body=None)
         mock_client = MockTranscriptionClient(exception=exception)
         invoker.model_map['whisper'] = (WHISPER_MODEL, mock_client, [])
@@ -375,7 +389,7 @@ class TestTranscriptionModelInvoker(unittest.IsolatedAsyncioTestCase):
 
     async def test_transcribe_connection_error_raises_internal_error(self):
         invoker = self._build_invoker(WHISPER_MODEL)
-        request = httpx.Request(
+        request = httpx2.Request(
             'POST', 'https://api.openai.com/v1/audio/transcriptions'
         )
         exception = APIConnectionError(message='Connection failed', request=request)
@@ -529,8 +543,10 @@ class TestTranscriptionModelInvoker(unittest.IsolatedAsyncioTestCase):
         assert mock_client.captured_kwargs == {}
 
     async def test_stream_gpt4o_relays_events_and_records_usage_once(self):
-        invoker = self._build_invoker(GPT4O_TRANSCRIBE_MODEL)
-        invoker.cost_service.compute_cost.return_value = Decimal('0.000492')
+        invoker, cost_service = self._build_invoker_and_cost_service(
+            GPT4O_TRANSCRIBE_MODEL
+        )
+        cost_service.compute_cost.return_value = Decimal('0.000492')
         delta_1 = TranscriptionTextDeltaEvent(
             type='transcript.text.delta', delta='Ciao, '
         )
@@ -573,7 +589,7 @@ class TestTranscriptionModelInvoker(unittest.IsolatedAsyncioTestCase):
         # (only the audio-token component is non-zero) — both emitted once,
         # after the stream ends, not per-chunk.
         assert self.mock_emit_event.call_count == 2
-        invoker.cost_service.compute_cost.assert_called_once_with(
+        cost_service.compute_cost.assert_called_once_with(
             model_id='gpt4o-transcribe', token_processed=82, where='audio'
         )
         cost_payload = self.mock_emit_event.call_args_list[1].args[0]
@@ -582,10 +598,10 @@ class TestTranscriptionModelInvoker(unittest.IsolatedAsyncioTestCase):
 
     async def test_stream_gpt4o_upstream_5xx_raises_internal_error(self):
         invoker = self._build_invoker(GPT4O_TRANSCRIBE_MODEL)
-        request = httpx.Request(
+        request = httpx2.Request(
             'POST', 'https://api.openai.com/v1/audio/transcriptions'
         )
-        response = httpx.Response(status_code=503, request=request)
+        response = httpx2.Response(status_code=503, request=request)
         exception = APIStatusError('Service unavailable', response=response, body=None)
         mock_client = MockTranscriptionClient(exception=exception)
         invoker.model_map['gpt4o-transcribe'] = (
@@ -669,10 +685,7 @@ class TestTranscriptionModelInvoker(unittest.IsolatedAsyncioTestCase):
             yield delta
             raise RuntimeError('connection reset')
 
-        primary_client = MagicMock()
-        primary_client.audio.transcriptions.create = AsyncMock(
-            return_value=broken_stream()
-        )
+        primary_client = MockTranscriptionClient(stream=broken_stream())
         fallback_client = MockTranscriptionClient(stream_events=[delta])
         invoker.model_map['gpt4o-transcribe'] = (
             GPT4O_TRANSCRIBE_MODEL,
@@ -764,8 +777,8 @@ class TestTranscriptionModelInvoker(unittest.IsolatedAsyncioTestCase):
         assert 'whisper' in invoker.model_map
 
     def test_record_transcription_usage_cost_duration(self):
-        invoker = self._build_invoker(WHISPER_MODEL)
-        invoker.cost_service.compute_cost.return_value = Decimal('0.000825')
+        invoker, cost_service = self._build_invoker_and_cost_service(WHISPER_MODEL)
+        cost_service.compute_cost.return_value = Decimal('0.000825')
         usage = MagicMock(type='duration', seconds=8.25)
 
         total_cost = invoker.recorder.transcription_usage(
@@ -773,7 +786,7 @@ class TestTranscriptionModelInvoker(unittest.IsolatedAsyncioTestCase):
         )
 
         assert total_cost == Decimal('0.000825')
-        invoker.cost_service.compute_cost.assert_called_once_with(
+        cost_service.compute_cost.assert_called_once_with(
             model_id='whisper', token_processed=8.25, where='duration'
         )
         assert self.mock_emit_event.call_count == 1
@@ -782,7 +795,9 @@ class TestTranscriptionModelInvoker(unittest.IsolatedAsyncioTestCase):
         assert payload.value == 8.25
 
     def test_record_transcription_usage_cost_tokens_with_details(self):
-        invoker = self._build_invoker(GPT4O_TRANSCRIBE_MODEL)
+        invoker, cost_service = self._build_invoker_and_cost_service(
+            GPT4O_TRANSCRIBE_MODEL
+        )
 
         def _side_effect(**kwargs):
             return {
@@ -791,7 +806,7 @@ class TestTranscriptionModelInvoker(unittest.IsolatedAsyncioTestCase):
                 'output': Decimal('0.00038'),
             }[kwargs['where']]
 
-        invoker.cost_service.compute_cost.side_effect = _side_effect
+        cost_service.compute_cost.side_effect = _side_effect
         usage = MagicMock(
             type='tokens',
             input_tokens=87,
@@ -806,7 +821,7 @@ class TestTranscriptionModelInvoker(unittest.IsolatedAsyncioTestCase):
         assert total_cost == (
             Decimal('0.000492') + Decimal('0.0000125') + Decimal('0.00038')
         )
-        compute_calls = invoker.cost_service.compute_cost.call_args_list
+        compute_calls = cost_service.compute_cost.call_args_list
         where_args = {c.kwargs['where'] for c in compute_calls}
         assert where_args == {'audio', 'input', 'output'}
         audio_call = next(c for c in compute_calls if c.kwargs['where'] == 'audio')
@@ -818,8 +833,10 @@ class TestTranscriptionModelInvoker(unittest.IsolatedAsyncioTestCase):
         assert self.mock_emit_event.call_count == 3
 
     def test_record_transcription_usage_cost_tokens_without_details(self):
-        invoker = self._build_invoker(GPT4O_TRANSCRIBE_MODEL)
-        invoker.cost_service.compute_cost.return_value = Decimal('0.0001')
+        invoker, cost_service = self._build_invoker_and_cost_service(
+            GPT4O_TRANSCRIBE_MODEL
+        )
+        cost_service.compute_cost.return_value = Decimal('0.0001')
         usage = MagicMock(
             type='tokens',
             input_tokens=50,
@@ -833,21 +850,41 @@ class TestTranscriptionModelInvoker(unittest.IsolatedAsyncioTestCase):
 
         # No input_token_details: all input treated as text-priced;
         # output_tokens == 0 is skipped.
-        invoker.cost_service.compute_cost.assert_called_once_with(
+        cost_service.compute_cost.assert_called_once_with(
             model_id='gpt4o-transcribe', token_processed=50, where='input'
         )
         assert total_cost == Decimal('0.0001')
         assert self.mock_emit_event.call_count == 1
 
     def test_record_transcription_usage_cost_no_usage(self):
-        invoker = self._build_invoker(WHISPER_MODEL)
+        invoker, cost_service = self._build_invoker_and_cost_service(WHISPER_MODEL)
 
         total_cost = invoker.recorder.transcription_usage(
             USAGE_CALL, WHISPER_MODEL, None
         )
 
         assert total_cost == Decimal(0)
-        invoker.cost_service.compute_cost.assert_not_called()
+        cost_service.compute_cost.assert_not_called()
+
+
+def test_an_azure_model_without_endpoint_takes_it_from_the_environment(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    monkeypatch.setenv('AZURE_OPENAI_ENDPOINT', 'https://from-env.openai.azure.com')
+    model = Model(
+        model_id='azure-whisper',
+        model='azure/whisper-1',
+        credentials={'api_key': 'sk-test', 'api_version': '2024-06-01'},
+    )
+
+    invoker = TranscriptionModelInvoker(
+        models=[model], cost_service=MagicMock(spec_set=CostService)
+    )
+
+    _, client, _ = invoker.model_map['azure-whisper']
+    assert isinstance(client, AsyncAzureOpenAI)
+    assert str(client.base_url) == 'https://from-env.openai.azure.com/openai/'
+    assert client.api_key == 'sk-test'
 
 
 if __name__ == '__main__':

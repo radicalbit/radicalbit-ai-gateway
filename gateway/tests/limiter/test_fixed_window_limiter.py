@@ -41,7 +41,9 @@ def _config(
 
 @pytest.fixture(params=list(_LIMITERS))
 def kind(request) -> str:
-    return request.param
+    limiter_kind = request.param
+    assert isinstance(limiter_kind, str)
+    return limiter_kind
 
 
 @pytest.fixture
@@ -302,7 +304,7 @@ async def test_the_same_project_and_route_share_a_window(limiter) -> None:
 def test_the_key_is_project_route_scenario_window_type_and_seconds(
     limiter, kind, config, key
 ) -> None:
-    assert limiter._build_key(config) == key.format(kind=kind)
+    assert limiter.build_key(config) == key.format(kind=kind)
 
 
 def test_the_same_route_name_in_two_projects_gets_distinct_keys(limiter) -> None:
@@ -314,4 +316,4 @@ def test_the_same_route_name_in_two_projects_gets_distinct_keys(limiter) -> None
         for n in (1, 2)
     )
 
-    assert limiter._build_key(first) != limiter._build_key(second)
+    assert limiter.build_key(first) != limiter.build_key(second)

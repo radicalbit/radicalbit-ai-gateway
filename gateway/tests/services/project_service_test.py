@@ -6,6 +6,7 @@ import zipfile
 
 import pytest
 from sqlalchemy.exc import IntegrityError
+from typing_extensions import override
 
 from tests.common import db_mock
 from tests.common.db_integration import AsyncDatabaseIntegration
@@ -72,6 +73,7 @@ _ROUTE_BUDGET = ProjectConfigFileIn(config_file=_VALID_WITH_ROUTE_BUDGET_LIMITIN
 
 
 class ProjectServiceTest(AsyncDatabaseIntegration):
+    @override
     @classmethod
     def setUpClass(cls):
         super().setUpClass()
@@ -310,6 +312,18 @@ class ProjectServiceTest(AsyncDatabaseIntegration):
         with pytest.raises(ProjectNotFoundError):
             await self.svc.validate_exists(uuid.uuid4())
 
+    async def test_validate_exists_passes_only_for_a_live_project(self):
+        out, _, _ = await self._create(name='validate-exists')
+
+        await self.svc.validate_exists(out.uuid)  # does not raise
+
+        await self.svc.delete_project(out.uuid)
+        with pytest.raises(ProjectNotFoundError, match=str(out.uuid)):
+            await self.svc.validate_exists(out.uuid)
+        unknown = uuid.uuid4()
+        with pytest.raises(ProjectNotFoundError, match=str(unknown)):
+            await self.svc.validate_exists(unknown)
+
     async def test_get_config(self):
         out, a, _ = await self._create()
         slot = await self.svc.get_config(out.uuid, a)
@@ -471,10 +485,9 @@ class ProjectServiceTest(AsyncDatabaseIntegration):
         await self._add_limit(out.uuid)
 
         assert (await self.svc.get_by_uuid(out.uuid)).limits is None
-        assert [
-            limit.window_size
-            for limit in (await self.svc.get_by_uuid_with_limits(out.uuid)).limits
-        ] == ['1 day']
+        limits = (await self.svc.get_by_uuid_with_limits(out.uuid)).limits
+        assert limits is not None
+        assert [limit.window_size for limit in limits] == ['1 day']
         [found] = [p for p in await self.svc.get_all_filtered() if p.uuid == out.uuid]
         assert found.limits is None
         [found] = [
@@ -482,6 +495,7 @@ class ProjectServiceTest(AsyncDatabaseIntegration):
             for p in await self.svc.get_all_filtered(include_limits=True)
             if p.uuid == out.uuid
         ]
+        assert found.limits is not None
         assert [limit.window_size for limit in found.limits] == ['1 day']
 
     # --- project budget limits ---
@@ -518,6 +532,29 @@ class ProjectServiceTest(AsyncDatabaseIntegration):
             for lim in await self.svc.get_budget_limits_for_project(out.uuid)
         }
         assert saved[limit.uuid] == 42.5
+
+    async def test_update_budget_limit_value_of_a_limit_deleted_meanwhile_is_not_found(
+        self,
+    ):
+        out, _, _ = await self._create(name='budget-raced')
+        [limit] = await self.svc.add_budget_limits_to_project(
+            out.uuid, db_mock.get_sample_project_budget_limits_in()
+        )
+        dao = self.svc.project_budget_limit_dao
+
+        async def update_then_deleted(limit_uuid, value):
+            # Another request deletes the limit between the update and the
+            # read of the updated row.
+            await ProjectBudgetLimitDAO.update_max_value(dao, limit_uuid, value)
+            await dao.delete_by_uuid(limit_uuid)
+
+        with (
+            patch.object(dao, 'update_max_value', side_effect=update_then_deleted),
+            pytest.raises(ProjectBudgetLimitNotFoundError),
+        ):
+            await self.svc.update_budget_limit_value(
+                out.uuid, limit.uuid, ProjectBudgetLimitValueIn(value=42.5)
+            )
 
     async def test_add_budget_limits_to_project_duplicate_window_raises(self):
         out, _, _ = await self._create(name='budget-dup')
@@ -566,6 +603,7 @@ class ProjectServiceTest(AsyncDatabaseIntegration):
         assert conflicts.published == ['test-route']
         assert conflicts.draft_configs == []
         project = await self.svc.get_by_uuid_with_limits(out.uuid)
+        assert project.route_budgets is not None
         assert project.route_budgets.published == ['test-route']
         assert project.route_budgets.draft == []
         assert project.route_budgets.draft_configs == []

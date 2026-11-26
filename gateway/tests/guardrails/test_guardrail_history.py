@@ -6,7 +6,8 @@ The index in the reason points at the client's own message list.
 
 import logging
 from types import SimpleNamespace
-from unittest.mock import MagicMock, patch
+from typing import Any, TypedDict
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -14,6 +15,8 @@ from tests.common.guardrails import apply_check, apply_redact
 
 from radicalbit_ai_gateway.guardrails.guardrail_check import _select_messages
 from radicalbit_ai_gateway.guardrails.guardrails import Guardrails
+from radicalbit_ai_gateway.guardrails.judges.judge_engine import JudgeEngine
+from radicalbit_ai_gateway.guardrails.presidio import PresidioEngine
 from radicalbit_ai_gateway.llm.messages import AIMessage, HumanMessage, SystemMessage
 from radicalbit_ai_gateway.models.guardrails import (
     CheckParameter,
@@ -24,7 +27,9 @@ from radicalbit_ai_gateway.models.guardrails import (
     GuardrailType,
     GuardrailWhereType,
     JudgeParameter,
+    PresidioAnonymizerGuardrail,
     RedactParameter,
+    guardrail_adapter,
 )
 from radicalbit_ai_gateway.models.model import Model
 from radicalbit_ai_gateway.utils.exceptions import GuardrailBadRequest
@@ -37,7 +42,16 @@ AI_1 = AIMessage(content=f'I know about {BAD} but I will not tell.')
 USER_2 = HumanMessage(content='What is 2 + 2?')
 HISTORY = [SYSTEM, USER_1, AI_1, USER_2]
 
-COMMON_KWARGS = {
+
+class Identity(TypedDict):
+    request_uuid: str
+    api_key_uuid: str
+    group_uuid: str
+    api_key_name: str
+    group_name: str
+
+
+COMMON_KWARGS: Identity = {
     'request_uuid': 'req-1',
     'api_key_uuid': 'key-1',
     'group_uuid': 'grp-1',
@@ -60,7 +74,7 @@ def _guardrail(**overrides) -> Guardrail:
         'parameters': CheckParameter(values=[BAD]),
     }
     data.update(overrides)
-    return Guardrail(**data)
+    return guardrail_adapter.validate_python(data)
 
 
 @pytest.mark.parametrize(
@@ -89,7 +103,7 @@ def test_valid_history(overrides, history, last_n):
 def test_output_without_history_is_accepted_and_round_trips():
     g = _guardrail(where=GuardrailWhereType.OUTPUT)
     assert (g.history, g.last_n) == (GuardrailHistory.ALL, None)
-    assert Guardrail.model_validate(g.model_dump()) == g
+    assert guardrail_adapter.validate_python(g.model_dump()) == g
 
 
 @pytest.mark.parametrize(
@@ -216,10 +230,14 @@ def _route(name='g'):
     return cfg
 
 
-def _check(guardrail: Guardrail, **engines) -> Guardrails:
+def _check(
+    guardrail: Guardrail,
+    presidio_engine: PresidioEngine | None = None,
+    judge_engine: JudgeEngine | None = None,
+) -> Guardrails:
     return Guardrails(
-        presidio_engine=engines.get('presidio_engine', MagicMock()),
-        judge_engine=engines.get('judge_engine', MagicMock()),
+        presidio_engine=presidio_engine if presidio_engine is not None else MagicMock(),
+        judge_engine=judge_engine if judge_engine is not None else MagicMock(),
         cost_service=MagicMock(),
         guardrails=[guardrail],
     )
@@ -243,11 +261,15 @@ async def _run(check: Guardrails, messages, **extra) -> GuardrailBadRequest | No
     return None
 
 
-def _reason(err: GuardrailBadRequest | None, expected: dict | None) -> dict | None:
+def _reason(
+    err: GuardrailBadRequest | None, expected: dict[str, Any] | None
+) -> dict[str, Any] | None:
     """Return the reason keys ``expected`` names, or None when nothing was blocked."""
     if err is None or expected is None:
         return None if err is None else err.reason
-    return {k: err.reason[k] for k in expected}
+    reason = err.reason
+    assert reason is not None
+    return {k: reason[k] for k in expected}
 
 
 _ASSISTANT_ONLY = [GuardrailMessageRole.ASSISTANT]
@@ -400,6 +422,7 @@ class TestPresidioAnalyzer:
         )
         err = await _run(_check(g, presidio_engine=presidio), msgs)
         assert err is not None
+        assert err.reason is not None
         assert err.reason['kind'] == 'presidio'
         assert err.reason['value'] == 'a@b.io'
         assert err.reason['message_indices'] == [1]
@@ -427,9 +450,14 @@ class TestPresidioAnalyzer:
 # ---------------------------------------------------------------------------
 
 
-class _TriggeringJudge:
-    async def execute_judge(self, **kwargs):
-        return SimpleNamespace(triggered=True, reasoning='bad', violation_type='X')
+def _triggering_judge() -> MagicMock:
+    judge = MagicMock(spec=JudgeEngine)
+    judge.execute_judge = AsyncMock(
+        return_value=SimpleNamespace(
+            triggered=True, reasoning='bad', violation_type='X'
+        )
+    )
+    return judge
 
 
 def _judge_guardrail(**overrides) -> Guardrail:
@@ -441,7 +469,7 @@ def _judge_guardrail(**overrides) -> Guardrail:
 
 
 def _judge_check(g: Guardrail) -> Guardrails:
-    chk = _check(g, judge_engine=_TriggeringJudge())
+    chk = _check(g, judge_engine=_triggering_judge())
     chk._check._chat_models_by_id = {
         'm1': Model(model_id='m1', model='mock/gateway', credentials=None, params={})
     }
@@ -506,7 +534,7 @@ async def test_judge_reports_messages_read(overrides, messages, expected):
 class TestRedactWindow:
     @pytest.mark.asyncio
     async def test_last_redacts_only_the_last_message(self):
-        g = Guardrail(
+        g = PresidioAnonymizerGuardrail(
             name='red',
             type=GuardrailType.PRESIDIO_ANONYMIZER,
             where=GuardrailWhereType.INPUT,

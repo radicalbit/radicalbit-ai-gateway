@@ -2,6 +2,7 @@ from decimal import Decimal
 import unittest
 
 import pytest
+from typing_extensions import override
 
 from tests.common.mocked_gateway_config import (
     get_default_cache_config,
@@ -31,6 +32,7 @@ GPT4O_TRANSCRIBE_MODEL = Model(
 
 
 class CostServiceTest(unittest.TestCase):
+    @override
     @classmethod
     def setUpClass(cls):
         global_guardrails = get_global_guardrails()

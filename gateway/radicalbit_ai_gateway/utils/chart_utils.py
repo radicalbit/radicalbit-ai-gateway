@@ -7,14 +7,14 @@ This module provides helper functions for chart-related operations including:
 - ClickHouse timezone offset helpers
 """
 
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from datetime import datetime, timedelta, timezone
 from typing import Any, Literal
 
-from dateutil.relativedelta import relativedelta
-from sqlalchemy import func as F
+from sqlalchemy import ColumnElement, func as F
 
 from radicalbit_ai_gateway.utils.bucket_utils import (
+    add_month,
     advance_bucket,
     calculate_start_bucket,
 )
@@ -80,9 +80,8 @@ def prepare_chart_time_range(
     _from_utc = _from.astimezone(timezone.utc) if _from else None
     _to_utc = _to.astimezone(timezone.utc) if _to else None
 
-    timezone_offset_seconds = (
-        int(_from.utcoffset().total_seconds()) if _from and _from.utcoffset() else 0
-    )
+    offset = _from.utcoffset() if _from else None
+    timezone_offset_seconds = int(offset.total_seconds()) if offset else 0
 
     return _from_utc, _to_utc, timezone_offset_seconds
 
@@ -122,7 +121,7 @@ def generate_chart_timestamps(
 
 
 def with_timezone_offset(
-    bucket_func: Callable,
+    bucket_func: Callable[[Any], ColumnElement[Any]],
     offset_seconds: int,
     timestamp_column: Any,
 ) -> Any:
@@ -151,7 +150,7 @@ def with_timezone_offset(
 
 def get_bucket_function(
     granularity: Literal['hours', 'days', 'weeks', 'months'],
-) -> Callable:
+) -> Callable[[Any], ColumnElement[Any]]:
     """Get the ClickHouse bucket function for a given granularity.
 
     Args:
@@ -178,7 +177,7 @@ def get_bucket_function(
             raise ValueError(f'Unsupported granularity: {granularity}')
 
 
-def calculate_increment_percentage(data: list[int | float]) -> float:
+def calculate_increment_percentage(data: Sequence[float]) -> float:
     """Calculate percentage change between last two data points.
 
     Formula: ((last_bucket - prev_bucket) / prev_bucket) * 100
@@ -224,4 +223,4 @@ def get_bucket_end_timestamp(
         case 'weeks':
             return _from + timedelta(weeks=1)
         case 'months':
-            return _from + relativedelta(months=1)
+            return add_month(_from)

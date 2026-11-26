@@ -2,6 +2,7 @@ import unittest
 from unittest.mock import MagicMock, patch
 
 import pytest
+from typing_extensions import override
 
 from tests.common.db_mock import API_KEY_UUID, GROUP_UUID, REQUEST_UUID
 from tests.common.mocked_embeddings import (
@@ -21,6 +22,7 @@ from radicalbit_ai_gateway.utils.exceptions import ModelInvokerInternalError
 
 
 class TestEmbeddingModelInvoker(unittest.IsolatedAsyncioTestCase):
+    @override
     @classmethod
     def setUpClass(cls):
         cls.gateway_config = get_default_gateway_openai()
@@ -45,7 +47,7 @@ class TestEmbeddingModelInvoker(unittest.IsolatedAsyncioTestCase):
             if fb.type == FallbackModelType.EMBEDDING
         ]
 
-        cost_service: CostService = MagicMock(spec_set=CostService)
+        cost_service = MagicMock(spec_set=CostService)
 
         cls.embedding_model_invoker = EmbeddingModelInvoker(
             models=cls.route_embedding_models,
@@ -57,12 +59,13 @@ class TestEmbeddingModelInvoker(unittest.IsolatedAsyncioTestCase):
         )
         cls.emit_event_patcher.start()
 
+    @override
     @classmethod
     def tearDownClass(cls):
         cls.emit_event_patcher.stop()
 
     def reset_invoker(self):
-        cost_service: CostService = MagicMock(spec_set=CostService)
+        cost_service = MagicMock(spec_set=CostService)
         self.embedding_model_invoker = EmbeddingModelInvoker(
             models=self.route_embedding_models,
             fallbacks=self.embedding_fallbacks,

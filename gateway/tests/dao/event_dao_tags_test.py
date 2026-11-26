@@ -9,6 +9,7 @@ import datetime
 import uuid
 
 from sqlalchemy import func, select
+from typing_extensions import override
 
 from tests.common import db_mock
 from tests.common.db_integration_ch import DatabaseIntegrationClickhouse
@@ -23,6 +24,7 @@ TIMESTAMP = datetime.datetime(2025, 1, 8, 10, 0, 0, tzinfo=datetime.timezone.utc
 class EventDAOTagsTest(DatabaseIntegrationClickhouse):
     T = Event.__table__
 
+    @override
     @classmethod
     def setUpClass(cls):
         super().setUpClass()
@@ -66,7 +68,7 @@ class EventDAOTagsTest(DatabaseIntegrationClickhouse):
         self.event_dao._add_tags_filter(conditions, tags)
         stmt = select(func.count()).select_from(Event).where(*conditions)
         with self.db.begin_session() as session:
-            return session.execute(stmt).scalar()
+            return session.execute(stmt).scalar_one()
 
     def test_no_tags_matches_everything(self):
         self._seed()

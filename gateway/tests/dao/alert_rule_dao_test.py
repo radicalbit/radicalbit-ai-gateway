@@ -4,6 +4,8 @@ import datetime
 import json
 import uuid
 
+from typing_extensions import override
+
 from tests.common.db_integration import AsyncDatabaseIntegration
 
 from radicalbit_ai_gateway.db.dao.alert_rule_dao import AlertRuleDAO
@@ -14,6 +16,7 @@ CREDENTIAL = uuid.uuid4()
 
 
 class AlertRuleDAOTest(AsyncDatabaseIntegration):
+    @override
     @classmethod
     def setUpClass(cls):
         super().setUpClass()
@@ -86,7 +89,9 @@ class AlertRuleDAOTest(AsyncDatabaseIntegration):
         found = await self.dao.get_by_uuid(rule.uuid)
         deleted = await self.dao.soft_delete_by_uuid(rule.uuid)
 
+        assert found is not None
         assert found.name == 'kept'
+        assert deleted is not None
         assert deleted.deleted is True
         assert await self.dao.get_by_uuid(rule.uuid) is None
         assert await self.dao.soft_delete_by_uuid(rule.uuid) is None
@@ -122,8 +127,12 @@ class AlertRuleDAOTest(AsyncDatabaseIntegration):
         updated = await self.dao.update_rule(inserted.uuid, {'name': 'renamed'})
 
         assert inserted.uuid is not None
+        reread = await self.dao.get_by_uuid(inserted.uuid)
+        assert toggled is not None
         assert toggled.enabled is True
+        assert updated is not None
         assert updated.name == 'renamed'
-        assert (await self.dao.get_by_uuid(inserted.uuid)).name == 'renamed'
+        assert reread is not None
+        assert reread.name == 'renamed'
         assert await self.dao.toggle_enabled(uuid.uuid4(), True) is None
         assert await self.dao.update_rule(uuid.uuid4(), {'name': 'x'}) is None

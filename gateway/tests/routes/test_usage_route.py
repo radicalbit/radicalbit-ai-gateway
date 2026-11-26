@@ -7,8 +7,10 @@ from fastapi import FastAPI
 from fastapi.encoders import jsonable_encoder
 from fastapi_pagination import Page, Params
 from starlette.testclient import TestClient
+from typing_extensions import override
 
 from radicalbit_ai_gateway.db.models.event import CostData, DetailedCostBreakdown
+from radicalbit_ai_gateway.middleware.exception_handlers import add_exception_handler
 from radicalbit_ai_gateway.models.event_dto import (
     CostDataDTO,
     RouteCostDTO,
@@ -32,6 +34,7 @@ GROUP_UUID = UUID('550e8400-e29b-41d4-a716-446655440003')
 
 
 class TestUsageRoute(unittest.TestCase):
+    @override
     @classmethod
     def setUpClass(cls):
         cls.prefix = '/public/api/v1'
@@ -56,9 +59,10 @@ class TestUsageRoute(unittest.TestCase):
             mcp_usage_service=cls.mcp_usage_service,
         )
         app = FastAPI(title='AI Gateway', debug=True)
-        app.add_exception_handler(GatewayError, gateway_exception_handler)
+        add_exception_handler(app, GatewayError, gateway_exception_handler)
         app.state.project_configs = {PROJECT_NAME: project_entry_mock}
         app.include_router(router, prefix=cls.prefix)
+        cls.app = app
         cls.client = TestClient(app)
         cls.project_path = f'{cls.prefix}/projects/{PROJECT_UUID}'
 
@@ -192,7 +196,7 @@ class TestUsageRoute(unittest.TestCase):
         assert response.status_code == 400
 
     def test_usage_costs_returns_empty_when_no_active_config(self):
-        app = self.client.app
+        app = self.app
         original = app.state.project_configs
         app.state.project_configs = {}
         try:

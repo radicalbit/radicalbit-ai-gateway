@@ -1,5 +1,6 @@
 """The fallback chain: which candidate answers, and what is recorded."""
 
+from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
@@ -10,6 +11,7 @@ from radicalbit_ai_gateway.invocation.fallback_chain import (
     Attempt,
     CallContext,
     FallbackChain,
+    NoAnswerError,
     Refused,
     Reply,
     Skip,
@@ -26,7 +28,7 @@ C = Model(model_id='c', model='openai/c')
 CALL = Call(identity=IDENTITY, model_type='chat-model', target_model_id='a')
 
 
-def _chain(**context) -> tuple[FallbackChain, MagicMock]:
+def _chain(**context) -> tuple[FallbackChain[Any, str], MagicMock]:
     recorder = MagicMock(spec_set=Recorder)
     chain = FallbackChain(
         candidates((A, 'client-a'), [(B, 'client-b'), (C, 'client-c')]),
@@ -35,7 +37,7 @@ def _chain(**context) -> tuple[FallbackChain, MagicMock]:
     return chain, recorder
 
 
-def _recorded(recorder: MagicMock) -> list[tuple]:
+def _recorded(recorder: MagicMock) -> list[tuple[Any, ...]]:
     calls = []
     for c in recorder.method_calls:
         name, args, kwargs = c
@@ -107,7 +109,7 @@ async def test_a_refusal_is_returned_without_fallback():
     chain, recorder = _chain()
 
     async def fn(candidate):
-        raise Refused('no')
+        return Refused('no')
 
     assert await chain.call(fn) == 'no'
     assert _recorded(recorder) == [('failure', 'a', None, False)]
@@ -240,6 +242,21 @@ async def test_a_spent_call_raises_its_cause_without_fallback():
     assert recorder.method_calls == []
 
 
+async def test_a_spent_call_without_cause_is_raised_as_is_without_fallback():
+    chain, recorder = _chain()
+    tried = []
+
+    async def fn(candidate):
+        tried.append(candidate.model.model_id)
+        raise Spent('recorded, no cause')
+
+    with pytest.raises(Spent, match='recorded, no cause') as raised:
+        await chain.call(fn)
+    assert raised.value.__cause__ is None
+    assert tried == ['a']
+    assert recorder.method_calls == []
+
+
 async def test_a_candidate_skipped_with_a_reason_is_a_failure_never_recorded():
     """A candidate that cannot be called (an undefined model) tells why, for
     on_exhausted, but no model call is recorded for it.
@@ -268,3 +285,36 @@ async def test_only_skipped_candidates_record_nothing_and_exhaust():
 
     assert await chain.call(fn) == 3
     assert recorder.method_calls == []
+
+
+async def test_a_chain_whose_last_candidate_gave_no_error_raises_no_answer():
+    chain, _ = _chain()
+
+    async def fn(candidate):
+        raise TryNext
+
+    with pytest.raises(NoAnswerError):
+        await chain.call(fn)
+
+
+async def test_a_chain_of_silently_skipped_candidates_raises_no_answer():
+    chain, recorder = _chain()
+
+    async def fn(candidate):
+        raise Skip
+
+    with pytest.raises(NoAnswerError):
+        await chain.call(fn)
+    assert recorder.method_calls == []
+
+
+async def test_a_context_without_recorder_cannot_record_a_reply():
+    chain = FallbackChain(
+        candidates((A, 'client-a')), CallContext(call=None, recorder=None)
+    )
+
+    async def fn(candidate):
+        return Reply('answer', usage=Tokens(input=1))
+
+    with pytest.raises(RuntimeError, match='no recorder'):
+        await chain.call(fn)

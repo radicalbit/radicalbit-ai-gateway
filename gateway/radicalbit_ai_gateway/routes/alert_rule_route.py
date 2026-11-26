@@ -90,9 +90,7 @@ class AlertRuleRoute:
             response_model=AlertRuleOut,
         )
         @route_meta(entity_type='ALERT_RULE', entity_uuid_param='rule_uuid')
-        async def update_rule(
-            rule_uuid: UUID = Path(...), alert_rule_in: AlertRuleUpdateIn = ...
-        ):
+        async def update_rule(rule_uuid: UUID, alert_rule_in: AlertRuleUpdateIn):
             return await alert_rule_service.update_rule(rule_uuid, alert_rule_in)
 
         @router.patch(
@@ -103,9 +101,7 @@ class AlertRuleRoute:
         @route_meta(
             entity_type='ALERT_RULE', entity_uuid_param='rule_uuid', action='TOGGLE'
         )
-        async def toggle_rule_enabled(
-            rule_uuid: UUID = Path(...), toggle_in: AlertRuleToggleIn = ...
-        ):
+        async def toggle_rule_enabled(rule_uuid: UUID, toggle_in: AlertRuleToggleIn):
             return await alert_rule_service.toggle_rule_enabled(
                 rule_uuid, toggle_in.enabled
             )

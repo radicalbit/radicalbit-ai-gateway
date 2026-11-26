@@ -2,6 +2,7 @@ import unittest
 from unittest.mock import MagicMock, patch
 
 import pytest
+from typing_extensions import override
 
 from tests.common.db_mock import API_KEY_UUID, GROUP_UUID, REQUEST_UUID
 from tests.common.request_identity import with_identity
@@ -16,14 +17,16 @@ from radicalbit_ai_gateway.services.cost_service import CostService
 
 
 class TestMockInvokers(unittest.IsolatedAsyncioTestCase):
+    @override
     @classmethod
     def setUpClass(cls):
         cls.emit_event_patcher = patch(
             'radicalbit_ai_gateway.invocation.recorder.emit_event', autospec=True
         )
         cls.emit_event_patcher.start()
-        cls.cost_service: CostService = MagicMock(spec_set=CostService)
+        cls.cost_service = MagicMock(spec_set=CostService)
 
+    @override
     @classmethod
     def tearDownClass(cls):
         cls.emit_event_patcher.stop()

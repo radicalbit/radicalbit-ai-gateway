@@ -60,7 +60,10 @@ class RequestEventMiddleware:
         """
         if scope.get('method') != 'POST':
             return False
-        segments = [segment for segment in scope.get('path', '').split('/') if segment]
+        path: object = scope.get('path', '')
+        if not isinstance(path, str):
+            return False
+        segments = [segment for segment in path.split('/') if segment]
         return len(segments) == 3 and segments[2] == 'mcp'
 
     @classmethod

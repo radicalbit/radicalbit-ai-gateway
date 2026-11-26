@@ -1,3 +1,4 @@
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, Mock, call, patch
 
 import pytest
@@ -12,6 +13,7 @@ from radicalbit_ai_gateway.llm.messages import (
     HumanMessage,
     SystemMessage,
     ToolMessage,
+    UsageMetadata,
 )
 from radicalbit_ai_gateway.llm.prompts import PromptTemplate
 from radicalbit_ai_gateway.models.guardrails import (
@@ -39,7 +41,7 @@ def _build_structured_response(
     raw_response: AIMessage,
     parsed: JudgeResult | None = None,
     parsing_error: Exception | None = None,
-) -> dict:
+) -> dict[str, Any]:
     """Build the dict returned by with_structured_output(include_raw=True)."""
     return {
         'raw': raw_response,
@@ -268,7 +270,7 @@ class TestJudgeEngine:
     def setup_method(self):
         self.prompt_manager = Mock(spec=PromptManager)
         self.prompt_manager.get_judge_prompt.return_value = JUDGE_PROMPT
-        self.cost_service: CostService = MagicMock(spec_set=CostService)
+        self.cost_service = MagicMock(spec_set=CostService)
         self.engine = JudgeEngine(prompt_manager=self.prompt_manager)
 
     async def _execute(self, *chains: AsyncMock, messages=None, **kwargs):
@@ -512,6 +514,7 @@ class TestJudgeEngine:
         with pytest.raises(JudgeParsingError) as exc_info:
             await self._execute(invalid)
 
+        assert exc_info.value.raw_content is not None
         assert 'This is not valid JSON at all' in exc_info.value.raw_content
 
     # -----------------------------------------------------
@@ -561,14 +564,16 @@ class TestJudgeEngine:
 # -----------------------------------------------------
 # Usage reported to the limiters
 # -----------------------------------------------------
-def _judge_answer(input_tokens: int | None, output_tokens: int | None) -> dict:
+def _judge_answer(
+    input_tokens: int | None, output_tokens: int | None
+) -> dict[str, Any]:
     usage = (
-        {
-            'input_tokens': input_tokens,
-            'output_tokens': output_tokens,
-            'total_tokens': input_tokens + output_tokens,
-        }
-        if input_tokens is not None
+        UsageMetadata(
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            total_tokens=input_tokens + output_tokens,
+        )
+        if input_tokens is not None and output_tokens is not None
         else None
     )
     return _build_structured_response(
@@ -661,11 +666,14 @@ async def test_a_decision_judge_on_an_undefined_model_fails_without_a_recorded_c
         decision_models=[jev],
         cost_service=CostService(decision_models_by_id={'jev': jev}),
     )
-    engine._invoker.recorder = MagicMock()
+    assert engine._invoker is not None
 
-    with pytest.raises(JudgeInternalError):
+    with (
+        patch.object(engine._invoker, 'recorder') as recorder,
+        pytest.raises(JudgeInternalError),
+    ):
         await engine.ask(
             [HumanMessage(content='hello')],
             DecisionJudgeParameter(model_id='nowhere', instructions='Is it rude?'),
         )
-    engine._invoker.recorder.failure.assert_not_called()
+    recorder.failure.assert_not_called()

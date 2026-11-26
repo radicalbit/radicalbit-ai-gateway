@@ -199,7 +199,7 @@ class GuardrailError(AppError):
         *,
         log_message: str | None = None,
         code: Any = None,
-        reason: dict | None = None,
+        reason: dict[str, Any] | None = None,
     ):
         super().__init__(
             client_message=message,
@@ -219,7 +219,7 @@ class GuardrailBadRequest(GuardrailError):
         guardrail: Any,
         *,
         log_message: str | None = None,
-        reason: dict | None = None,
+        reason: dict[str, Any] | None = None,
         headers: dict[str, str] | None = None,
     ):
         # The gateway's headers of the request so far (cache, guardrails).
@@ -1084,7 +1084,7 @@ def budget_limiter_exception_handler(request: Request, err: BudgetLimitExceeded)
     return _limit_response(err, 'budget_limit_error')
 
 
-def validation_error_param(error: dict) -> str:
+def validation_error_param(error: dict[str, Any]) -> str:
     """Return the body field a request validation error points at, as ``a.b.0``.
 
     The ``body`` part of the error's location is left out.

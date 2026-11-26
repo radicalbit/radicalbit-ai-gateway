@@ -8,6 +8,8 @@ import datetime
 from unittest.mock import MagicMock
 import uuid
 
+from typing_extensions import override
+
 from tests.common.db_integration_ch import DatabaseIntegrationClickhouse
 from tests.common.db_mock import (
     TEST_PROJECT_UUID,
@@ -65,6 +67,7 @@ def _event(route_name, event_type, value=1, timestamp=T0, **kwargs):
 
 
 class TestRouteMetricsIntegration(DatabaseIntegrationClickhouse):
+    @override
     @classmethod
     def setUpClass(cls):
         super().setUpClass()
@@ -186,10 +189,12 @@ class TestRouteMetricsIntegration(DatabaseIntegrationClickhouse):
             PROJECT, ['GUARDRAIL'], ['route-a', 'route-b', 'route-idle'], None, None
         )
 
-        assert {key: event.name for key, event in last_events.items()} == {
-            ('route-a', 'GUARDRAIL'): 'pii',
-            ('route-b', 'GUARDRAIL'): 'toxic',
+        assert {route: set(events) for route, events in last_events.items()} == {
+            'route-a': {'GUARDRAIL'},
+            'route-b': {'GUARDRAIL'},
         }
+        assert last_events['route-a']['GUARDRAIL'].name == 'pii'
+        assert last_events['route-b']['GUARDRAIL'].name == 'toxic'
 
     def test_routing_choices_are_counted_per_route(self):
         self.insert(

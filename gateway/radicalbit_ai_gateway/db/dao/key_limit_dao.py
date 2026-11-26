@@ -3,6 +3,7 @@ from uuid import UUID
 
 from sqlalchemy import delete, select, update
 
+from radicalbit_ai_gateway.db.dao.dml import rows_matched
 from radicalbit_ai_gateway.db.database import Database
 from radicalbit_ai_gateway.db.tables.key_limit_table import KeyLimit
 
@@ -55,7 +56,7 @@ class KeyLimitDAO:
 
     async def get_all_by_key_uuids(self, key_uuids: list[UUID]) -> Sequence[KeyLimit]:
         if not key_uuids:
-            return []
+            return list[KeyLimit]()
         async with self.db.begin_session() as session:
             stmt = select(KeyLimit).where(KeyLimit.key_uuid.in_(key_uuids))
             return (await session.scalars(stmt)).all()
@@ -63,4 +64,4 @@ class KeyLimitDAO:
     async def delete_by_uuid(self, limit_uuid: UUID) -> int:
         async with self.db.begin_session() as session:
             query = delete(KeyLimit).where(KeyLimit.uuid == limit_uuid)
-            return (await session.execute(query)).rowcount
+            return await rows_matched(session, query)

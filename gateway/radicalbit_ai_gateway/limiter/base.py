@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 import time
+from typing import ClassVar
 
 from radicalbit_ai_gateway.limiter.storage.base import Storage
 from radicalbit_ai_gateway.limiter.window_config import (
@@ -25,12 +26,11 @@ class BaseFixedWindowLimiter(ABC):
         """
         self._storage = storage
 
-    @property
-    @abstractmethod
-    def _window_type(self) -> str:
-        """Return the window type identifier (e.g., 'fixed', 'aligned')."""
+    #: The window type identifier (e.g., 'fixed', 'aligned'), in the key.
+    _window_type: ClassVar[str]
 
-    def _build_key(self, config: WindowConfig) -> str:
+    @classmethod
+    def build_key(cls, config: WindowConfig) -> str:
         """Build the storage key from config.
 
         Key format: limiter:{project_uuid}:{route_name}:{scenario_type}:{window_type}:{window_seconds}
@@ -42,7 +42,7 @@ class BaseFixedWindowLimiter(ABC):
         third, malformed keyspace (``limiter::route:...``) that matches neither
         the scoped nor the pre-fix format — callers must supply a real uuid.
         """
-        return f'limiter:{config.project_uuid}:{config.route_name}:{config.scenario_type.value}:{self._window_type}:{config.window_seconds}'
+        return f'limiter:{config.project_uuid}:{config.route_name}:{config.scenario_type.value}:{cls._window_type}:{config.window_seconds}'
 
     async def test(self, item: WindowConfig, cost: int = 1) -> bool:
         """Test if operation is allowed WITHOUT consuming capacity.
@@ -55,7 +55,7 @@ class BaseFixedWindowLimiter(ABC):
             True if operation is allowed, False otherwise.
 
         """
-        key = self._build_key(item)
+        key = self.build_key(item)
         current = await self._storage.get(key)
         if current is None:
             return cost <= item.limit
@@ -106,7 +106,7 @@ class BaseFixedWindowLimiter(ABC):
         window_start, ttl_remaining = self._calculate_window_boundary(
             item.window_seconds
         )
-        return self._build_key(item), cost, ttl_remaining, window_start
+        return self.build_key(item), cost, ttl_remaining, window_start
 
     async def get_window_stats(self, item: WindowConfig) -> WindowStats:
         """Get remaining capacity and reset time for a window.
@@ -118,7 +118,7 @@ class BaseFixedWindowLimiter(ABC):
             WindowStats with remaining capacity, reset timestamp, and window ID.
 
         """
-        key = self._build_key(item)
+        key = self.build_key(item)
         current = await self._storage.get(key)
         if current is None:
             return self._empty_stats(item)

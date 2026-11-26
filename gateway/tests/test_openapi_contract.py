@@ -4,6 +4,7 @@ and only change on purpose (the SDK is regenerated from them).
 
 from collections import Counter
 from importlib.metadata import PackageNotFoundError
+from typing import Any
 import warnings
 
 from fastapi import FastAPI
@@ -14,7 +15,7 @@ from radicalbit_ai_gateway.sdk_spec import build_sdk_spec
 from radicalbit_ai_gateway.server import app
 
 
-def _operation_ids(spec: dict) -> list[str]:
+def _operation_ids(spec: dict[str, Any]) -> list[str]:
     return [
         operation['operationId']
         for path in spec['paths'].values()

@@ -9,17 +9,20 @@ The client-supplied tags live here too: ``emit_event`` is called from deep
 inside invokers, guardrails and limits, none of which hold the request.
 """
 
-from collections.abc import AsyncIterable, AsyncIterator
+from collections.abc import AsyncIterable, AsyncIterator, Awaitable, Callable
 from contextvars import ContextVar
 from functools import wraps
 import logging
-from typing import Any
+from typing import Any, ParamSpec, TypeVar
 
 from starlette.responses import StreamingResponse
 
 from radicalbit_ai_gateway.utils.app_config import get_app_config
 
 logger = logging.getLogger(get_app_config().log_config.logger_name)
+
+P = ParamSpec('P')
+R = TypeVar('R')
 
 # Route config of the current request, or None when none is resolved. Typed as
 # Any to avoid an import cycle with the model.
@@ -44,7 +47,7 @@ async def _clear_after(body: AsyncIterable[Any]) -> AsyncIterator[Any]:
         _clear_route_context()
 
 
-def reset_route_context(func):
+def reset_route_context(func: Callable[P, Awaitable[R]]) -> Callable[P, Awaitable[R]]:
     """Clear the route context when the handler finishes, including on error.
 
     A streaming response's body runs after the handler returns and still logs
@@ -52,8 +55,8 @@ def reset_route_context(func):
     """
 
     @wraps(func)
-    async def wrapper(*args, **kwargs):
-        response = None
+    async def wrapper(*args: P.args, **kwargs: P.kwargs) -> R:
+        response: R | None = None
         try:
             response = await func(*args, **kwargs)
             return response

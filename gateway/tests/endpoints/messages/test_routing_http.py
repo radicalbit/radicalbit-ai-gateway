@@ -10,7 +10,9 @@ records.
 """
 
 import json
+from typing import Any
 
+import pook
 import pytest
 import tiktoken
 
@@ -60,7 +62,12 @@ def gateway():
         yield gateway
 
 
-def _serve(routing: dict, *more_models: dict, redact: bool = False, **config) -> None:
+def _serve(
+    routing: dict[str, Any],
+    *more_models: dict[str, Any],
+    redact: bool = False,
+    **config,
+) -> None:
     """Serve the route on Claude and Haiku with ``routing``.
 
     ``more_models`` are chat models the route does not answer with: a
@@ -77,15 +84,23 @@ def _serve(routing: dict, *more_models: dict, redact: bool = False, **config) ->
     )
 
 
-def _ask(gateway, text: str, stream: bool = False, system: str = BODY['system']):
-    """Send ``text`` as the last user message, after an earlier turn."""
+def _ask(gateway, text: str, stream: bool = False, system: str | None = None):
+    """Send ``text`` as the last user message, after an earlier turn, with
+    ``system`` or else BODY's system prompt.
+    """
     messages = [
         {'role': 'user', 'content': 'Good morning'},
         {'role': 'assistant', 'content': 'Good morning to you'},
         {'role': 'user', 'content': [{'type': 'text', 'text': text}]},
     ]
     return send(
-        gateway, {**BODY, 'system': system, 'messages': messages, 'stream': stream}
+        gateway,
+        {
+            **BODY,
+            'system': BODY['system'] if system is None else system,
+            'messages': messages,
+            'stream': stream,
+        },
     )
 
 
@@ -96,7 +111,7 @@ def _mock_answer(stream: bool = False):
 # ── Deterministic rules ─────────────────────────────────────────────────────
 
 
-def _deterministic(rule: str, conditions) -> dict:
+def _deterministic(rule: str, conditions) -> dict[str, Any]:
     """Return a rule that sends a match to Haiku, the rest to Claude."""
     return {
         'name': f'by_{rule}',
@@ -164,11 +179,11 @@ BY_MEANING = {
 }
 
 
-async def _serve_semantic(redact: bool = False) -> list:
+async def _serve_semantic(redact: bool = False) -> list[pook.Mock]:
     """Serve the route with semantic routing: Claude's examples embed as
     (1, 0), Haiku's as (0, 1). Return the mocks of the two example calls.
     """
-    examples = [mock_embedding(1.0, 0.0), mock_embedding(0.0, 1.0)]
+    examples: list[pook.Mock] = [mock_embedding(1.0, 0.0), mock_embedding(0.0, 1.0)]
     _serve(BY_MEANING, redact=redact, embedding_models=[EMBEDDING])
     await initialize_async_routers(app.state.routes)
     return examples
@@ -292,7 +307,7 @@ PRICEY_JEV = {**JEV, 'input_cost_per_million_tokens': 1000}
 
 def _mock_decision_model(**probabilities: float):
     """Mock Typesafe choosing the most probable option."""
-    top = max(probabilities, key=probabilities.get)
+    top = max(probabilities, key=lambda option: probabilities[option])
     return mock_typesafe(
         {
             'decision_routing': {

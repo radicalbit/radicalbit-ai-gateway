@@ -8,6 +8,7 @@ handler is added without a decorator.
 
 from unittest.mock import MagicMock
 
+from fastapi.routing import APIRoute
 import pytest
 
 from radicalbit_ai_gateway.endpoints.common.admission import Admission
@@ -65,6 +66,7 @@ def test_the_endpoint_is_the_root_workflow():
         MagicMock(spec_set=Admission),
     )
     (route,) = router.routes
+    assert isinstance(route, APIRoute)
     assert hasattr(route.endpoint, '__wrapped__')
     assert entity_name(route.endpoint) == 'mcp_request'
 

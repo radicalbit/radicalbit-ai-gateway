@@ -14,6 +14,7 @@ from collections.abc import Callable
 from datetime import UTC, datetime
 
 from redis.asyncio import Redis
+from typing_extensions import override
 
 Clock = Callable[[], datetime]
 
@@ -57,6 +58,17 @@ class AlertStore(ABC):
         """Unregister `window`. Return whether this call removed it."""
 
 
+def _member(member: object) -> str:
+    """Return a sorted set member read without scores, as text: bytes, or
+    text when the client decodes responses.
+    """
+    if isinstance(member, bytes):
+        return member.decode()
+    if isinstance(member, str):
+        return member
+    raise TypeError(f'Unexpected sorted set member: {member!r}')
+
+
 class RedisAlertStore(AlertStore):
     _OPEN_WINDOWS = 'alert:windows:open'
 
@@ -64,9 +76,11 @@ class RedisAlertStore(AlertStore):
         super().__init__(clock)
         self._client = client
 
+    @override
     async def claim(self, key: str, ttl_seconds: int) -> bool:
         return bool(await self._client.set(key, 1, nx=True, ex=ttl_seconds))
 
+    @override
     async def increment(self, key: str, ttl_seconds: int) -> int:
         async with self._client.pipeline() as pipe:
             pipe.incr(key)
@@ -74,22 +88,27 @@ class RedisAlertStore(AlertStore):
             count, _ = await pipe.execute()
         return int(count)
 
+    @override
     async def take(self, key: str) -> int:
         value = await self._client.getdel(key)
         return int(value) if value is not None else 0
 
+    @override
     async def open_window(self, window: str, closes_at: datetime) -> None:
         await self._client.zadd(self._OPEN_WINDOWS, {window: closes_at.timestamp()})
 
+    @override
     async def windows_due(self, now: datetime) -> list[str]:
         members = await self._client.zrangebyscore(
             self._OPEN_WINDOWS, '-inf', now.timestamp()
         )
-        return [m.decode() if isinstance(m, bytes) else m for m in members]
+        return [_member(m) for m in members]
 
+    @override
     async def close_window(self, window: str) -> bool:
         return await self._client.zrem(self._OPEN_WINDOWS, window) == 1
 
+    @override
     async def close(self) -> None:
         await self._client.aclose()
 
@@ -117,28 +136,34 @@ class InProcessAlertStore(AlertStore):
     def _expiry(self, ttl_seconds: int) -> float:
         return self.now().timestamp() + ttl_seconds
 
+    @override
     async def claim(self, key: str, ttl_seconds: int) -> bool:
         if self._live(key) is not None:
             return False
         self._values[key] = (1, self._expiry(ttl_seconds))
         return True
 
+    @override
     async def increment(self, key: str, ttl_seconds: int) -> int:
         count = (self._live(key) or 0) + 1
         self._values[key] = (count, self._expiry(ttl_seconds))
         return count
 
+    @override
     async def take(self, key: str) -> int:
         count = self._live(key) or 0
         self._values.pop(key, None)
         return count
 
+    @override
     async def open_window(self, window: str, closes_at: datetime) -> None:
         self._open_windows[window] = closes_at
 
+    @override
     async def windows_due(self, now: datetime) -> list[str]:
         return [w for w, closes in self._open_windows.items() if closes <= now]
 
+    @override
     async def close_window(self, window: str) -> bool:
         return self._open_windows.pop(window, None) is not None
 

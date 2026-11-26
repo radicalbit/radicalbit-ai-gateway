@@ -1,9 +1,11 @@
 import datetime
 import math
+from typing import TypedDict
 from uuid import UUID
 
 from fastapi_pagination import Params
 import pytest
+from typing_extensions import override
 
 from tests.common import db_mock
 from tests.common.db_integration_ch import DatabaseIntegrationClickhouse
@@ -18,8 +20,23 @@ SEC = datetime.timedelta(seconds=1)
 MIN = datetime.timedelta(minutes=1)
 H = datetime.timedelta(hours=1)
 D = datetime.timedelta(days=1)
-WINDOW = {'_from': T0, '_to': T0 + H}
-EMPTY_WINDOW = {'_from': T0 - D, '_to': T0 - D + H}
+
+
+class _Window(TypedDict):
+    _from: datetime.datetime
+    _to: datetime.datetime
+
+
+class _Filters(TypedDict):
+    project_uuid: UUID
+    route_names: list[str] | None
+    _from: datetime.datetime | None
+    _to: datetime.datetime | None
+    tags: list[str] | None
+
+
+WINDOW: _Window = {'_from': T0, '_to': T0 + H}
+EMPTY_WINDOW: _Window = {'_from': T0 - D, '_to': T0 - D + H}
 PROP = 'traceloop.association.properties.'
 CATEGORY = f'{PROP}rb.gateway.operation_category'
 TAGS = f'{PROP}tags'
@@ -58,6 +75,7 @@ def _approx(*values):
 
 
 class OtelTracesDAOTest(DatabaseIntegrationClickhouse):
+    @override
     @classmethod
     def setUpClass(cls):
         super().setUpClass()
@@ -122,15 +140,22 @@ class OtelTracesDAOTest(DatabaseIntegrationClickhouse):
             ]
         )
         dao = self.otel_traces_dao
-        args = {'project_uuid': TEST_PROJECT_UUID, 'route_names': None, **WINDOW}
 
         def by_category(include_others):
-            res = dao.get_category_latencies(**args, include_others=include_others)
+            res = dao.get_category_latencies(
+                project_uuid=TEST_PROJECT_UUID,
+                route_names=None,
+                **WINDOW,
+                include_others=include_others,
+            )
             return [(r.category, r.p50, r.p99) for r in res]
 
-        def by_category_and_span(include_others, **window):
+        def by_category_and_span(include_others, window: _Window = WINDOW):
             res = dao.get_category_span_latencies(
-                **{**args, **window}, include_others=include_others
+                project_uuid=TEST_PROJECT_UUID,
+                route_names=None,
+                **window,
+                include_others=include_others,
             )
             return [(r.category, r.span_name, r.p50) for r in res]
 
@@ -149,7 +174,7 @@ class OtelTracesDAOTest(DatabaseIntegrationClickhouse):
             *spans,
             ('other', 'unknown_span', pytest.approx(200, abs=1.0)),
         ]
-        assert by_category_and_span(False, **EMPTY_WINDOW) == []
+        assert by_category_and_span(False, EMPTY_WINDOW) == []
 
     def test_get_spans_by_trace_id_reads_category_and_kind(self):
         self.insert(
@@ -286,27 +311,33 @@ class OtelTracesDAOTest(DatabaseIntegrationClickhouse):
             ]
         )
 
-        def record(trace_id, span_id, at=T0, **fields):
+        def record(
+            trace_id: str,
+            span_id: str,
+            at: datetime.datetime = T0,
+            span_name: str = 'invoke',
+            status_code: str = 'Unset',
+            parent_span_id: str = '',
+            tags: list[str] | None = None,
+        ) -> SpanRecord:
             return SpanRecord(
-                **{
-                    'timestamp': at,
-                    'trace_id': trace_id,
-                    'request_uuid': '',
-                    'span_id': span_id,
-                    'span_name': 'invoke',
-                    'service_name': 'radicalbit-ai-gateway',
-                    'duration': _ms(100),
-                    'status_code': 'Unset',
-                    'parent_span_id': '',
-                    'route_name': 'test-route',
-                    'api_key_uuid': KEY_1,
-                    'api_key_name': 'test-key',
-                    'group_uuid': GROUP_1,
-                    'group_name': 'test-group',
-                    'output_tokens': '',
-                    'input_tokens': '',
-                    **fields,
-                }
+                timestamp=at,
+                trace_id=trace_id,
+                request_uuid='',
+                span_id=span_id,
+                span_name=span_name,
+                service_name='radicalbit-ai-gateway',
+                duration=_ms(100),
+                status_code=status_code,
+                parent_span_id=parent_span_id,
+                route_name='test-route',
+                api_key_uuid=KEY_1,
+                api_key_name='test-key',
+                group_uuid=GROUP_1,
+                group_name='test-group',
+                output_tokens='',
+                input_tokens='',
+                tags=tags or [],
             )
 
         def spans(trace_id):
@@ -397,6 +428,7 @@ class OtelTracesDAOTest(DatabaseIntegrationClickhouse):
             events=[],
         )
         with_events = get(TEST_PROJECT_UUID, 'trace-with-events', 'span-events')
+        assert with_events is not None
         assert (
             with_events.status_code,
             with_events.status_message,
@@ -743,7 +775,7 @@ class OtelTracesDAOTest(DatabaseIntegrationClickhouse):
     def _query_all(self, route_names=None, _from=None, _to=None, tags=None):
         """Run each filtered query; return what each one saw."""
         dao = self.otel_traces_dao
-        filters = {
+        filters: _Filters = {
             'project_uuid': TEST_PROJECT_UUID,
             'route_names': route_names,
             '_from': _from,

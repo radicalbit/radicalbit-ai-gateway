@@ -45,6 +45,7 @@ async def test_happy_path_populates_state_and_context():
     assert request.state.api_key_uuid == KEY_DETAILS.api_key_uuid
     assert request.state.group_name == 'team-a'
     ctx = RequestEventContext.get(request)
+    assert ctx is not None
     assert ctx.api_key_uuid == KEY_DETAILS.api_key_uuid
     assert ctx.group_uuid == KEY_DETAILS.group_uuid
 

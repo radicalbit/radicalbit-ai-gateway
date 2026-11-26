@@ -4,9 +4,11 @@ from unittest.mock import AsyncMock, MagicMock
 from fastapi import FastAPI, Request
 from fastapi.encoders import jsonable_encoder
 from starlette.testclient import TestClient
+from typing_extensions import override
 
 from tests.common import db_mock
 
+from radicalbit_ai_gateway.middleware.exception_handlers import add_exception_handler
 from radicalbit_ai_gateway.models.project_dto import ConfigListFilter
 from radicalbit_ai_gateway.routes.configs_route import ConfigsRoute, ConfigsRouteConfig
 from radicalbit_ai_gateway.services.project_service import ProjectService
@@ -17,6 +19,7 @@ from radicalbit_ai_gateway.utils.exceptions import (
 
 
 class TestConfigsRoute(unittest.TestCase):
+    @override
     def setUp(self):
         self.prefix = '/public/api/v1'
         self.project_service = MagicMock(spec_set=ProjectService)
@@ -78,12 +81,13 @@ class TestConfigsRoute(unittest.TestCase):
 
 
 class TestValidateConfigRoute(unittest.TestCase):
+    @override
     def setUp(self):
         self.prefix = '/public/api/v1'
         self.project_service = MagicMock(spec_set=ProjectService)
         router = ConfigsRoute.get_configs_router(self.project_service)
         app = FastAPI(debug=True)
-        app.add_exception_handler(AuthRegistryError, auth_registry_exception_handler)
+        add_exception_handler(app, AuthRegistryError, auth_registry_exception_handler)
         app.include_router(router, prefix=self.prefix)
         self.client = TestClient(app)
 

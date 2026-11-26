@@ -5,6 +5,7 @@ policies.
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 import logging
+from typing import Any
 
 from openai.types.audio.transcription import Transcription
 from openai.types.audio.transcription_stream_event import TranscriptionStreamEvent
@@ -16,6 +17,9 @@ from radicalbit_ai_gateway.endpoints.transcriptions.audio_duration import (
 )
 from radicalbit_ai_gateway.endpoints.transcriptions.cache import TranscriptionEntry
 from radicalbit_ai_gateway.gateway_route.scope import RequestScope
+from radicalbit_ai_gateway.invocation.transcription_model_invoker import (
+    TranscriptionModelInvoker,
+)
 from radicalbit_ai_gateway.limiting.limits import Demand, Usage
 from radicalbit_ai_gateway.models.model import Model
 from radicalbit_ai_gateway.telemetry.tracing import task
@@ -25,6 +29,11 @@ from radicalbit_ai_gateway.utils.trace_attributes import (
     OperationCategory,
     set_operation_category,
 )
+
+#: A transcription request: it serves and stores transcriptions.
+TranscriptionScope = RequestScope[
+    Transcription | TranscriptionVerbose, Transcription | TranscriptionVerbose
+]
 
 logger = logging.getLogger(get_app_config().log_config.logger_name)
 
@@ -41,7 +50,7 @@ class Audio:
     temperature: float | None = None
     response_format: str = 'json'
 
-    def arguments(self) -> dict:
+    def arguments(self) -> dict[str, Any]:
         return {
             'audio_bytes': self.content,
             'filename': self.filename,
@@ -52,12 +61,20 @@ class Audio:
         }
 
 
+@dataclass(frozen=True)
+class _Selected:
+    """The model that transcribes a request, and the invoker that calls it."""
+
+    invoker: TranscriptionModelInvoker
+    model: Model
+
+
 async def transcribe(
-    scope: RequestScope, audio: Audio
+    scope: TranscriptionScope, audio: Audio
 ) -> Transcription | TranscriptionVerbose:
     """Transcribe the audio of a request."""
-    route = scope.route
-    model = _select(scope)
+    selected = _select(scope)
+    model = selected.model
 
     # Limits before the cache, as on chat: a caller over its limit is not
     # served. A hit spends no audio: its seconds count only on a miss.
@@ -80,7 +97,7 @@ async def transcribe(
 
     await scope.limits.count_checked(demand)
     set_operation_category(OperationCategory.INVOCATION)
-    result = await route.transcription_invoker.transcribe(
+    result = await selected.invoker.transcribe(
         identity=scope.identity,
         model_id=model.model_id,
         requested_response_format=audio.response_format,
@@ -92,24 +109,25 @@ async def transcribe(
 
 
 async def stream(
-    scope: RequestScope, audio: Audio
+    scope: TranscriptionScope, audio: Audio
 ) -> AsyncIterator[TranscriptionStreamEvent]:
     """Transcribe the audio of a request as a stream of events. The limits
     are checked before the stream opens: a refusal is an HTTP error, as for
     a transcription that is not streamed.
     """
-    model = _select(scope)
+    selected = _select(scope)
     await check_limits(scope.limits, _demand(audio.content))
-    return _relay(scope, audio, model)
+    return _relay(scope, audio, selected)
 
 
 async def _relay(
-    scope: RequestScope, audio: Audio, model: Model
+    scope: TranscriptionScope, audio: Audio, selected: _Selected
 ) -> AsyncIterator[TranscriptionStreamEvent]:
     """Relay the model's events, then count the final usage."""
     set_operation_category(OperationCategory.INVOCATION)
+    model = selected.model
     final_event: TranscriptionStreamEvent | None = None
-    async for event in scope.route.transcription_invoker.stream(
+    async for event in selected.invoker.stream(
         identity=scope.identity, model_id=model.model_id, **audio.arguments()
     ):
         final_event = event
@@ -121,19 +139,20 @@ async def _relay(
         )
 
 
-def _select(scope: RequestScope) -> Model:
+def _select(scope: TranscriptionScope) -> _Selected:
     route = scope.route
-    if not route.transcription_invoker:
+    invoker = route.transcription_invoker
+    if invoker is None:
         raise GatewayBadRequest(
             f'Route {route.gateway_route_config.route_name} '
             'has no transcription models defined'
         )
     set_operation_category(OperationCategory.ROUTING)
-    return _select_model(scope)
+    return _Selected(invoker, _select_model(scope))
 
 
 @task(name='select_transcription_model')
-def _select_model(scope: RequestScope) -> Model:
+def _select_model(scope: TranscriptionScope) -> Model:
     """Return the route's first transcription model: it serves its traffic."""
     models = scope.route.transcription_models
     if not models:

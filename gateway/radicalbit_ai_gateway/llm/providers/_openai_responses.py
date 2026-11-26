@@ -10,14 +10,25 @@ blocks rather than a string).
 import json
 from typing import Any, Literal
 
-from openai.types.responses import Response
+from openai.types.responses import (
+    Response,
+    ResponseCompletedEvent,
+    ResponseIncompleteEvent,
+    ResponseStreamEvent,
+)
 from pydantic import BaseModel, ValidationError
 
 from radicalbit_ai_gateway.llm.messages import (
     AIMessage,
     AIMessageChunk,
     BaseMessage,
+    InvalidToolCall,
+    ToolCall,
+    ToolCallChunk,
     ToolMessage,
+    invalid_tool_call,
+    tool_call,
+    tool_call_chunk,
 )
 from radicalbit_ai_gateway.llm.providers._openai_common import (
     message_to_dict,
@@ -66,7 +77,7 @@ def model_prefers_responses_api(model_name: str | None) -> bool:
     return model_name.startswith(_RESPONSES_ONLY_PREFIXES) or 'codex' in model_name
 
 
-def payload_uses_responses_api(payload: dict) -> bool:
+def payload_uses_responses_api(payload: dict[str, Any]) -> bool:
     builtin_tools = 'tools' in payload and any(
         'type' in tool and tool['type'] != 'function' for tool in payload['tools']
     )
@@ -80,7 +91,7 @@ def is_pydantic_class(obj: Any) -> bool:
 # ── Request ──────────────────────────────────────────────────────────────────
 
 
-def _chat_block_to_responses(block: dict) -> dict:
+def _chat_block_to_responses(block: dict[str, Any]) -> dict[str, Any]:
     if block['type'] == 'text':
         new_block = {'type': 'input_text', 'text': block['text']}
     elif block['type'] == 'image_url':
@@ -112,8 +123,8 @@ def _tool_output(content: Any) -> Any:
         return str(content)
 
 
-def _computer_call_output(message: ToolMessage) -> dict | None:
-    output: dict | None = None
+def _computer_call_output(message: ToolMessage) -> dict[str, Any] | None:
+    output: dict[str, Any] | None = None
     if isinstance(message.content, list):
         for block in message.content:
             if (
@@ -147,7 +158,7 @@ def _computer_call_output(message: ToolMessage) -> dict | None:
     return output
 
 
-def _custom_tool_output(message: ToolMessage) -> dict | None:
+def _custom_tool_output(message: ToolMessage) -> dict[str, Any] | None:
     for block in message.content:
         if isinstance(block, dict) and block.get('type') == 'custom_tool_call_output':
             return {
@@ -164,7 +175,7 @@ def _custom_tool_output(message: ToolMessage) -> dict | None:
     return None
 
 
-def _without_index(block: dict) -> dict:
+def _without_index(block: dict[str, Any]) -> dict[str, Any]:
     new_block = {k: v for k, v in block.items() if k != 'index'}
     if isinstance(new_block.get('summary'), list):
         new_block['summary'] = [
@@ -174,14 +185,14 @@ def _without_index(block: dict) -> dict:
     return new_block
 
 
-def _annotation_from_block(annotation: dict) -> dict:
+def _annotation_from_block(annotation: dict[str, Any]) -> dict[str, Any]:
     if annotation.get('type') == 'file_citation' and 'file_index' in annotation:
         annotation = annotation.copy()
         annotation['index'] = annotation.pop('file_index')
     return annotation
 
 
-def _annotation_to_block(annotation: dict) -> dict:
+def _annotation_to_block(annotation: dict[str, Any]) -> dict[str, Any]:
     # ``index`` is reserved for stream aggregation in content blocks.
     if annotation.get('type') == 'file_citation' and 'index' in annotation:
         annotation = annotation.copy()
@@ -189,7 +200,9 @@ def _annotation_to_block(annotation: dict) -> dict:
     return annotation
 
 
-def _assistant_items(items: list, msg: dict, store: bool | None) -> None:
+def _assistant_items(
+    items: list[dict[str, Any]], msg: dict[str, Any], store: bool | None
+) -> None:
     content = msg.get('content')
     if isinstance(content, list):
         for block in content:
@@ -218,7 +231,7 @@ def _assistant_items(items: list, msg: dict, store: bool | None) -> None:
                             item['phase'] = phase
                         break
                 else:
-                    new_item: dict = {
+                    new_item: dict[str, Any] = {
                         'type': 'message',
                         'content': [new_block],
                         'role': 'assistant',
@@ -279,9 +292,11 @@ def _assistant_items(items: list, msg: dict, store: bool | None) -> None:
         )
 
 
-def build_input(messages: list[BaseMessage], store: bool | None = None) -> list:
+def build_input(
+    messages: list[BaseMessage], store: bool | None = None
+) -> list[dict[str, Any]]:
     """Translate the conversation into Responses API input items."""
-    items: list = []
+    items: list[dict[str, Any]] = []
     for message in messages:
         msg = message_to_dict(message, api='responses')
         if not isinstance(message, AIMessage) and isinstance(msg['content'], list):
@@ -289,7 +304,7 @@ def build_input(messages: list[BaseMessage], store: bool | None = None) -> list:
                 if isinstance(block, dict) and block.get('type') == 'non_standard':
                     msg['content'][i] = block['value']
         msg.pop('name', None)
-        if msg['role'] == 'tool':
+        if isinstance(message, ToolMessage):
             computer_output = _computer_call_output(message)
             custom_output = _custom_tool_output(message)
             if computer_output:
@@ -333,7 +348,9 @@ def build_input(messages: list[BaseMessage], store: bool | None = None) -> list:
     return items
 
 
-def build_payload(messages: list[BaseMessage], payload: dict) -> dict:
+def build_payload(
+    messages: list[BaseMessage], payload: dict[str, Any]
+) -> dict[str, Any]:
     """Rewrite a Chat Completions payload into a Responses API one."""
     for legacy in ('max_tokens', 'max_completion_tokens'):
         if legacy in payload:
@@ -353,7 +370,7 @@ def build_payload(messages: list[BaseMessage], payload: dict) -> dict:
 
     payload['input'] = build_input(messages, store=payload.get('store'))
     if tools := payload.pop('tools', None):
-        new_tools: list = []
+        new_tools: list[dict[str, Any]] = []
         for tool in tools:
             if tool['type'] == 'function' and 'function' in tool:
                 extra = {k: v for k, v in tool.items() if k not in ('type', 'function')}
@@ -395,7 +412,7 @@ def build_payload(messages: list[BaseMessage], payload: dict) -> dict:
             else:
                 schema_dict = schema
             if schema_dict == {'type': 'json_object'}:
-                text_format: dict | None = {'type': 'json_object'}
+                text_format: dict[str, Any] | None = {'type': 'json_object'}
             elif (
                 isinstance(
                     response_format := to_response_format(schema_dict, strict=strict),
@@ -424,7 +441,7 @@ def build_payload(messages: list[BaseMessage], payload: dict) -> dict:
 # ── Reply ────────────────────────────────────────────────────────────────────
 
 
-def _output_text(response: Any) -> str:
+def _output_text(response: Response) -> str:
     return ''.join(
         content.text
         for output in response.output
@@ -435,7 +452,7 @@ def _output_text(response: Any) -> str:
 
 
 def response_to_message(
-    response: Any, schema: Any = None, metadata: dict | None = None
+    response: Any, schema: Any = None, metadata: dict[str, Any] | None = None
 ) -> AIMessage:
     """Build the assistant message of a Responses API reply."""
     if response.error:
@@ -471,10 +488,10 @@ def response_to_message(
         else None
     )
 
-    content: list = []
-    tool_calls = []
-    invalid_tool_calls = []
-    additional_kwargs: dict = {}
+    content: list[Any] = []
+    tool_calls: list[ToolCall] = []
+    invalid_tool_calls: list[InvalidToolCall] = []
+    additional_kwargs: dict[str, Any] = {}
     for output in response.output:
         if output.type == 'message':
             phase = getattr(output, 'phase', None)
@@ -519,32 +536,20 @@ def response_to_message(
                 error = str(e)
             if error is None:
                 tool_calls.append(
-                    {
-                        'type': 'tool_call',
-                        'name': output.name,
-                        'args': args,
-                        'id': output.call_id,
-                    }
+                    tool_call(name=output.name, args=args, id=output.call_id)
                 )
             else:
                 invalid_tool_calls.append(
-                    {
-                        'type': 'invalid_tool_call',
-                        'name': output.name,
-                        'args': args,
-                        'id': output.call_id,
-                        'error': error,
-                    }
+                    invalid_tool_call(
+                        name=output.name, args=args, id=output.call_id, error=error
+                    )
                 )
         elif output.type == 'custom_tool_call':
             content.append(output.model_dump(exclude_none=True, mode='json'))
             tool_calls.append(
-                {
-                    'type': 'tool_call',
-                    'name': output.name,
-                    'args': {'__arg1': output.input},
-                    'id': output.call_id,
-                }
+                tool_call(
+                    name=output.name, args={'__arg1': output.input}, id=output.call_id
+                )
             )
         elif output.type in ('reasoning', *_PASSTHROUGH_ITEMS):
             content.append(output.model_dump(exclude_none=True, mode='json'))
@@ -606,35 +611,40 @@ class StreamState:
 
 
 def event_to_chunk(
-    event: Any, state: StreamState, schema: Any = None, metadata: dict | None = None
+    event: ResponseStreamEvent,
+    state: StreamState,
+    schema: Any = None,
+    metadata: dict[str, Any] | None = None,
 ) -> AIMessageChunk | None:
     """Translate one Responses API stream event into a message chunk."""
-    content: list = []
-    tool_call_chunks: list = []
-    additional_kwargs: dict = {}
+    content: list[Any] = []
+    tool_call_chunks: list[ToolCallChunk] = []
+    additional_kwargs: dict[str, Any] = {}
     response_metadata = metadata or {}
     response_metadata['model_provider'] = 'openai'
     usage = None
     chunk_position: Literal['last'] | None = None
     chunk_id = None
-    item = getattr(event, 'item', None)
     if event.type == 'response.output_text.delta':
         state.advance(event.output_index, event.content_index)
         content.append({'type': 'text', 'text': event.delta, 'index': state.index})
     elif event.type == 'response.output_text.annotation.added':
         state.advance(event.output_index, event.content_index)
-        annotation = (
-            event.annotation
-            if isinstance(event.annotation, dict)
-            else event.annotation.model_dump(exclude_none=True, mode='json')
-        )
-        content.append(
-            {
-                'type': 'text',
-                'annotations': [_annotation_to_block(annotation)],
-                'index': state.index,
-            }
-        )
+        annotation = event.annotation
+        if annotation is not None:
+            content.append(
+                {
+                    'type': 'text',
+                    'annotations': [
+                        _annotation_to_block(
+                            annotation
+                            if isinstance(annotation, dict)
+                            else annotation.model_dump(exclude_none=True, mode='json')
+                        )
+                    ],
+                    'index': state.index,
+                }
+            )
     elif event.type == 'response.output_text.done':
         state.advance(event.output_index, event.content_index)
         content.append(
@@ -644,7 +654,7 @@ def event_to_chunk(
         response = _coerce_response(event.response)
         chunk_id = response.id
         response_metadata['id'] = response.id
-    elif event.type in ('response.completed', 'response.incomplete'):
+    elif isinstance(event, ResponseCompletedEvent | ResponseIncompleteEvent):
         message = response_to_message(_coerce_response(event.response), schema=schema)
         if parsed := message.additional_kwargs.get('parsed'):
             additional_kwargs['parsed'] = parsed
@@ -653,91 +663,95 @@ def event_to_chunk(
             k: v for k, v in message.response_metadata.items() if k != 'id'
         }
         chunk_position = 'last'
-    elif event.type == 'response.output_item.added' and item.type == 'message':
-        if phase := getattr(item, 'phase', None):
-            state.advance(event.output_index, 0)
-            content.append(
-                {'type': 'text', 'text': '', 'phase': phase, 'index': state.index}
+    elif event.type == 'response.output_item.added':
+        item = event.item
+        if item.type == 'message':
+            if phase := item.phase:
+                state.advance(event.output_index, 0)
+                content.append(
+                    {'type': 'text', 'text': '', 'phase': phase, 'index': state.index}
+                )
+        elif item.type == 'function_call':
+            state.advance(event.output_index)
+            tool_call_chunks.append(
+                tool_call_chunk(
+                    name=item.name,
+                    args=item.arguments,
+                    id=item.call_id,
+                    index=state.index,
+                )
             )
-    elif event.type == 'response.output_item.added' and item.type == 'function_call':
-        state.advance(event.output_index)
-        tool_call_chunks.append(
-            {
-                'type': 'tool_call_chunk',
+            block: dict[str, Any] = {
+                'type': 'function_call',
                 'name': item.name,
-                'args': item.arguments,
-                'id': item.call_id,
+                'arguments': item.arguments,
+                'call_id': item.call_id,
+                'id': item.id,
                 'index': state.index,
             }
-        )
-        block: dict = {
-            'type': 'function_call',
-            'name': item.name,
-            'arguments': item.arguments,
-            'call_id': item.call_id,
-            'id': item.id,
-            'index': state.index,
-        }
-        if getattr(item, 'namespace', None) is not None:
-            block['namespace'] = item.namespace
-        async_flag = getattr(item, 'async_', None)
-        if async_flag is None:
-            async_flag = getattr(item, 'async', None)
-        if async_flag is not None:
-            block['async'] = async_flag
-        content.append(block)
-    elif event.type == 'response.output_item.done' and item.type in _PASSTHROUGH_ITEMS:
-        state.advance(event.output_index)
-        block = item.model_dump(exclude_none=True, mode='json')
-        block['index'] = state.index
-        content.append(block)
-    elif event.type == 'response.output_item.done' and item.type == 'custom_tool_call':
-        state.advance(event.output_index)
-        block = item.model_dump(exclude_none=True, mode='json')
-        block['index'] = state.index
-        content.append(block)
-        tool_call_chunks.append(
-            {
-                'type': 'tool_call_chunk',
-                'name': item.name,
-                'args': json.dumps({'__arg1': item.input}),
-                'id': item.call_id,
-                'index': state.index,
-            }
-        )
+            if item.namespace is not None:
+                block['namespace'] = item.namespace
+            async_flag = item.async_
+            if async_flag is None:
+                async_flag = getattr(item, 'async', None)
+            if async_flag is not None:
+                block['async'] = async_flag
+            content.append(block)
+        elif item.type == 'reasoning':
+            state.advance(event.output_index)
+            state.sub_index = 0
+            reasoning = item.model_dump(exclude_none=True, mode='json')
+            # The encrypted content is complete only on the ``done`` event.
+            reasoning.pop('encrypted_content', None)
+            reasoning['index'] = state.index
+            content.append(reasoning)
+        else:
+            return None
+    elif event.type == 'response.output_item.done':
+        item = event.item
+        if item.type in _PASSTHROUGH_ITEMS:
+            state.advance(event.output_index)
+            block = item.model_dump(exclude_none=True, mode='json')
+            block['index'] = state.index
+            content.append(block)
+        elif item.type == 'custom_tool_call':
+            state.advance(event.output_index)
+            block = item.model_dump(exclude_none=True, mode='json')
+            block['index'] = state.index
+            content.append(block)
+            tool_call_chunks.append(
+                tool_call_chunk(
+                    name=item.name,
+                    args=json.dumps({'__arg1': item.input}),
+                    id=item.call_id,
+                    index=state.index,
+                )
+            )
+        elif (
+            item.type == 'reasoning'
+            and item.encrypted_content is not None
+            and item.encrypted_content != ''
+        ):
+            state.advance(event.output_index)
+            content.append(
+                {
+                    'type': 'reasoning',
+                    'id': item.id,
+                    'summary': [],
+                    'encrypted_content': item.encrypted_content,
+                    'index': state.index,
+                }
+            )
+        else:
+            return None
     elif event.type == 'response.function_call_arguments.delta':
         state.advance(event.output_index)
-        tool_call_chunks.append(
-            {'type': 'tool_call_chunk', 'args': event.delta, 'index': state.index}
-        )
+        tool_call_chunks.append(tool_call_chunk(args=event.delta, index=state.index))
         content.append(
             {'type': 'function_call', 'arguments': event.delta, 'index': state.index}
         )
     elif event.type == 'response.refusal.done':
         content.append({'type': 'refusal', 'refusal': event.refusal})
-    elif event.type == 'response.output_item.added' and item.type == 'reasoning':
-        state.advance(event.output_index)
-        state.sub_index = 0
-        reasoning = item.model_dump(exclude_none=True, mode='json')
-        # The encrypted content is complete only on the ``done`` event.
-        reasoning.pop('encrypted_content', None)
-        reasoning['index'] = state.index
-        content.append(reasoning)
-    elif (
-        event.type == 'response.output_item.done'
-        and item.type == 'reasoning'
-        and item.encrypted_content
-    ):
-        state.advance(event.output_index)
-        content.append(
-            {
-                'type': 'reasoning',
-                'id': item.id,
-                'summary': [],
-                'encrypted_content': item.encrypted_content,
-                'index': state.index,
-            }
-        )
     elif event.type == 'response.reasoning_summary_part.added':
         state.advance(event.output_index)
         content.append(

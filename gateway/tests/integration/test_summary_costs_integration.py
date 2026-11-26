@@ -9,6 +9,7 @@ from unittest.mock import MagicMock
 import uuid
 
 import pytest
+from typing_extensions import override
 
 from tests.common.db_integration_ch import DatabaseIntegrationClickhouse
 from tests.common.db_mock import get_sample_event
@@ -39,8 +40,11 @@ from radicalbit_ai_gateway.services.event_service import EventService
 from radicalbit_ai_gateway.services.group_service import GroupService
 from radicalbit_ai_gateway.services.key_service import KeyService
 
+PROJECT = uuid.UUID(int=7)
+
 
 class TestSummaryCostsIntegration(DatabaseIntegrationClickhouse):
+    @override
     @classmethod
     def setUpClass(cls):
         super().setUpClass()
@@ -89,6 +93,7 @@ class TestSummaryCostsIntegration(DatabaseIntegrationClickhouse):
         events = [
             # Input tokens with different costs
             get_sample_event(
+                project_uuid=PROJECT,
                 event_type='INPUT_TOKEN_PROCESSED',
                 route_name=route_name,
                 timestamp=datetime.datetime(
@@ -102,6 +107,7 @@ class TestSummaryCostsIntegration(DatabaseIntegrationClickhouse):
                 cost=0.03,  # First input cost
             ),
             get_sample_event(
+                project_uuid=PROJECT,
                 event_type='INPUT_TOKEN_PROCESSED',
                 route_name=route_name,
                 timestamp=datetime.datetime(
@@ -116,6 +122,7 @@ class TestSummaryCostsIntegration(DatabaseIntegrationClickhouse):
             ),
             # Output tokens
             get_sample_event(
+                project_uuid=PROJECT,
                 event_type='OUTPUT_TOKEN_PROCESSED',
                 route_name=route_name,
                 timestamp=datetime.datetime(
@@ -130,6 +137,7 @@ class TestSummaryCostsIntegration(DatabaseIntegrationClickhouse):
             ),
             # CACHE_HIT event (should be excluded since cache_enabled=False)
             get_sample_event(
+                project_uuid=PROJECT,
                 event_type='CACHE_HIT',
                 route_name=route_name,
                 timestamp=datetime.datetime(
@@ -146,7 +154,7 @@ class TestSummaryCostsIntegration(DatabaseIntegrationClickhouse):
 
         # Query without cache enabled (route has no caching config)
         result = self.event_service.get_summary_costs(
-            None,
+            PROJECT,
             self.gateway_config,
             route_names=[route_name],
             _from=None,
@@ -156,16 +164,6 @@ class TestSummaryCostsIntegration(DatabaseIntegrationClickhouse):
 
         # Build expected DTO with all fields explicitly set
         expected = CostDataDTO(
-            input_cost=0.045,
-            output_cost=0.045,
-            total_cost=0.09,
-            cache_triggered=None,
-            cache_saved_tokens_input=None,
-            cache_saved_tokens_output=None,
-            saved_amount_input=None,
-            saved_amount_output=None,
-            total_cached_tokens=None,
-            total_saved_amount=None,
             # The breakdowns are always returned
             total=0.09,
             totals=TotalCostDTO(
@@ -212,12 +210,12 @@ class TestSummaryCostsIntegration(DatabaseIntegrationClickhouse):
         # Update gateway config to include caching
         gw = get_default_gateway_with_caching(route_name=route_name)
         self.gateway_config.routes[route_name] = gw.routes[route_name]
-        self.event_service.gateway_config = self.gateway_config
 
         # Insert test events
         events = [
             # Standard input/output tokens (should be counted in base costs)
             get_sample_event(
+                project_uuid=PROJECT,
                 event_type='INPUT_TOKEN_PROCESSED',
                 route_name=route_name,
                 timestamp=datetime.datetime(
@@ -231,6 +229,7 @@ class TestSummaryCostsIntegration(DatabaseIntegrationClickhouse):
                 cost=0.03,
             ),
             get_sample_event(
+                project_uuid=PROJECT,
                 event_type='OUTPUT_TOKEN_PROCESSED',
                 route_name=route_name,
                 timestamp=datetime.datetime(
@@ -245,6 +244,7 @@ class TestSummaryCostsIntegration(DatabaseIntegrationClickhouse):
             ),
             # Cache hits (for counting cache_triggered)
             get_sample_event(
+                project_uuid=PROJECT,
                 event_type='CACHE_HIT',
                 route_name=route_name,
                 timestamp=datetime.datetime(
@@ -255,6 +255,7 @@ class TestSummaryCostsIntegration(DatabaseIntegrationClickhouse):
                 value=1,
             ),
             get_sample_event(
+                project_uuid=PROJECT,
                 event_type='CACHE_HIT',
                 route_name=route_name,
                 timestamp=datetime.datetime(
@@ -266,6 +267,7 @@ class TestSummaryCostsIntegration(DatabaseIntegrationClickhouse):
             ),
             # Cache input tokens with costs
             get_sample_event(
+                project_uuid=PROJECT,
                 event_type='CACHE_INPUT_TOKENS',
                 route_name=route_name,
                 timestamp=datetime.datetime(
@@ -279,6 +281,7 @@ class TestSummaryCostsIntegration(DatabaseIntegrationClickhouse):
             ),
             # Cache output tokens with costs
             get_sample_event(
+                project_uuid=PROJECT,
                 event_type='CACHE_OUTPUT_TOKENS',
                 route_name=route_name,
                 timestamp=datetime.datetime(
@@ -297,7 +300,7 @@ class TestSummaryCostsIntegration(DatabaseIntegrationClickhouse):
 
         # Query with cache enabled, without saved tokens
         result = self.event_service.get_summary_costs(
-            None,
+            PROJECT,
             self.gateway_config,
             route_names=[route_name],
             _from=None,
@@ -307,16 +310,6 @@ class TestSummaryCostsIntegration(DatabaseIntegrationClickhouse):
 
         # Build expected DTO with all expected values
         expected = CostDataDTO(
-            input_cost=0.03,
-            output_cost=0.045,
-            total_cost=0.075,
-            cache_triggered=2,
-            cache_saved_tokens_input=None,
-            cache_saved_tokens_output=None,
-            saved_amount_input=0.024,
-            saved_amount_output=0.036,
-            total_cached_tokens=None,
-            total_saved_amount=0.06,
             total=0.075,
             totals=TotalCostDTO(input=0.03, cached_input=0.0, output=0.045, saved=0.06),
             chat_models=ChatModelsCostDTO(
@@ -356,12 +349,12 @@ class TestSummaryCostsIntegration(DatabaseIntegrationClickhouse):
         # Update gateway config to include caching
         gw = get_default_gateway_with_caching(route_name=route_name)
         self.gateway_config.routes[route_name] = gw.routes[route_name]
-        self.event_service.gateway_config = self.gateway_config
 
         # Insert test events
         events = [
             # Standard input/output tokens
             get_sample_event(
+                project_uuid=PROJECT,
                 event_type='INPUT_TOKEN_PROCESSED',
                 route_name=route_name,
                 timestamp=datetime.datetime(
@@ -375,6 +368,7 @@ class TestSummaryCostsIntegration(DatabaseIntegrationClickhouse):
                 cost=0.03,
             ),
             get_sample_event(
+                project_uuid=PROJECT,
                 event_type='OUTPUT_TOKEN_PROCESSED',
                 route_name=route_name,
                 timestamp=datetime.datetime(
@@ -389,6 +383,7 @@ class TestSummaryCostsIntegration(DatabaseIntegrationClickhouse):
             ),
             # Cache hits
             get_sample_event(
+                project_uuid=PROJECT,
                 event_type='CACHE_HIT',
                 route_name=route_name,
                 timestamp=datetime.datetime(
@@ -400,6 +395,7 @@ class TestSummaryCostsIntegration(DatabaseIntegrationClickhouse):
             ),
             # Cache input tokens with both cost and value
             get_sample_event(
+                project_uuid=PROJECT,
                 event_type='CACHE_INPUT_TOKENS',
                 route_name=route_name,
                 timestamp=datetime.datetime(
@@ -412,6 +408,7 @@ class TestSummaryCostsIntegration(DatabaseIntegrationClickhouse):
                 cost=0.024,  # Cost
             ),
             get_sample_event(
+                project_uuid=PROJECT,
                 event_type='CACHE_INPUT_TOKENS',
                 route_name=route_name,
                 timestamp=datetime.datetime(
@@ -425,6 +422,7 @@ class TestSummaryCostsIntegration(DatabaseIntegrationClickhouse):
             ),
             # Cache output tokens with both cost and value
             get_sample_event(
+                project_uuid=PROJECT,
                 event_type='CACHE_OUTPUT_TOKENS',
                 route_name=route_name,
                 timestamp=datetime.datetime(
@@ -443,7 +441,7 @@ class TestSummaryCostsIntegration(DatabaseIntegrationClickhouse):
 
         # Query with cache enabled AND saved tokens
         result = self.event_service.get_summary_costs(
-            None,
+            PROJECT,
             self.gateway_config,
             route_names=[route_name],
             _from=None,
@@ -453,16 +451,6 @@ class TestSummaryCostsIntegration(DatabaseIntegrationClickhouse):
 
         # Build expected DTO with all expected values
         expected = CostDataDTO(
-            input_cost=0.03,
-            output_cost=0.045,
-            total_cost=0.075,
-            cache_triggered=1,
-            cache_saved_tokens_input=2000,
-            cache_saved_tokens_output=400,
-            saved_amount_input=0.06,
-            saved_amount_output=0.036,
-            total_cached_tokens=2400,
-            total_saved_amount=0.096,
             total=0.075,
             totals=TotalCostDTO(
                 input=0.03, cached_input=0.0, output=0.045, saved=0.096
@@ -505,7 +493,6 @@ class TestSummaryCostsIntegration(DatabaseIntegrationClickhouse):
         # Add route to gateway config
         gw = get_default_gateway(route_name=route_name)
         self.gateway_config.routes[route_name] = gw.routes[route_name]
-        self.event_service.gateway_config = self.gateway_config
 
         # Define time range
         _from = datetime.datetime(2026, 1, 15, 12, 0, 0, tzinfo=datetime.timezone.utc)
@@ -515,6 +502,7 @@ class TestSummaryCostsIntegration(DatabaseIntegrationClickhouse):
         events = [
             # BEFORE range (at 10:00) - should be EXCLUDED
             get_sample_event(
+                project_uuid=PROJECT,
                 event_type='INPUT_TOKEN_PROCESSED',
                 route_name=route_name,
                 timestamp=datetime.datetime(
@@ -529,6 +517,7 @@ class TestSummaryCostsIntegration(DatabaseIntegrationClickhouse):
             ),
             # WITHIN range (at 13:00) - should be INCLUDED
             get_sample_event(
+                project_uuid=PROJECT,
                 event_type='INPUT_TOKEN_PROCESSED',
                 route_name=route_name,
                 timestamp=datetime.datetime(
@@ -543,6 +532,7 @@ class TestSummaryCostsIntegration(DatabaseIntegrationClickhouse):
             ),
             # WITHIN range (at 13:30) - should be INCLUDED
             get_sample_event(
+                project_uuid=PROJECT,
                 event_type='OUTPUT_TOKEN_PROCESSED',
                 route_name=route_name,
                 timestamp=datetime.datetime(
@@ -557,6 +547,7 @@ class TestSummaryCostsIntegration(DatabaseIntegrationClickhouse):
             ),
             # AFTER range (at 15:00) - should be EXCLUDED
             get_sample_event(
+                project_uuid=PROJECT,
                 event_type='INPUT_TOKEN_PROCESSED',
                 route_name=route_name,
                 timestamp=datetime.datetime(
@@ -576,7 +567,7 @@ class TestSummaryCostsIntegration(DatabaseIntegrationClickhouse):
 
         # Query with time range
         result = self.event_service.get_summary_costs(
-            None,
+            PROJECT,
             self.gateway_config,
             route_names=[route_name],
             _from=_from,
@@ -586,16 +577,6 @@ class TestSummaryCostsIntegration(DatabaseIntegrationClickhouse):
 
         # Build expected DTO with only events within [12:00, 14:00]
         expected = CostDataDTO(
-            input_cost=0.03,
-            output_cost=0.045,
-            total_cost=0.075,
-            cache_triggered=None,
-            cache_saved_tokens_input=None,
-            cache_saved_tokens_output=None,
-            saved_amount_input=None,
-            saved_amount_output=None,
-            total_cached_tokens=None,
-            total_saved_amount=None,
             total=0.075,
             totals=TotalCostDTO(input=0.03, cached_input=0.0, output=0.045, saved=None),
             chat_models=ChatModelsCostDTO(
@@ -642,12 +623,12 @@ class TestSummaryCostsIntegration(DatabaseIntegrationClickhouse):
             embedding_model_id='text-embedding-3-small',
         )
         self.gateway_config.routes[route_name] = route_config
-        self.event_service.gateway_config = self.gateway_config
 
         # Insert test events
         events = [
             # Standard input/output tokens (cache_type='')
             get_sample_event(
+                project_uuid=PROJECT,
                 event_type='INPUT_TOKEN_PROCESSED',
                 route_name=route_name,
                 timestamp=datetime.datetime(
@@ -662,6 +643,7 @@ class TestSummaryCostsIntegration(DatabaseIntegrationClickhouse):
                 cache_type='',  # Standard - included in main query
             ),
             get_sample_event(
+                project_uuid=PROJECT,
                 event_type='OUTPUT_TOKEN_PROCESSED',
                 route_name=route_name,
                 timestamp=datetime.datetime(
@@ -678,6 +660,7 @@ class TestSummaryCostsIntegration(DatabaseIntegrationClickhouse):
             # Semantic cache events (cache_type='semantic')
             # These will be retrieved via get_semantic_cache_details()
             get_sample_event(
+                project_uuid=PROJECT,
                 event_type='CACHE_HIT',
                 route_name=route_name,
                 timestamp=datetime.datetime(
@@ -689,6 +672,7 @@ class TestSummaryCostsIntegration(DatabaseIntegrationClickhouse):
                 cache_type='semantic',
             ),
             get_sample_event(
+                project_uuid=PROJECT,
                 event_type='INPUT_TOKEN_PROCESSED',  # Embedding inference
                 route_name=route_name,
                 timestamp=datetime.datetime(
@@ -703,6 +687,7 @@ class TestSummaryCostsIntegration(DatabaseIntegrationClickhouse):
                 cache_type='semantic',
             ),
             get_sample_event(
+                project_uuid=PROJECT,
                 event_type='CACHE_INPUT_TOKENS',  # LLM input savings
                 route_name=route_name,
                 timestamp=datetime.datetime(
@@ -722,7 +707,7 @@ class TestSummaryCostsIntegration(DatabaseIntegrationClickhouse):
 
         # Query with semantic cache enabled
         result = self.event_service.get_summary_costs(
-            None,
+            PROJECT,
             self.gateway_config,
             route_names=[route_name],
             _from=None,
@@ -736,16 +721,6 @@ class TestSummaryCostsIntegration(DatabaseIntegrationClickhouse):
         # Cache savings: 0.024
         # Net savings: 0.024 - 0.01 = 0.014 (embedding cost is subtracted from savings)
         expected = CostDataDTO(
-            input_cost=0.04,
-            output_cost=0.045,
-            total_cost=0.085,
-            cache_triggered=1,
-            cache_saved_tokens_input=800,
-            cache_saved_tokens_output=0,
-            saved_amount_input=0.024,
-            saved_amount_output=0.0,
-            total_cached_tokens=800,
-            total_saved_amount=0.014,
             total=0.085,
             totals=TotalCostDTO(
                 input=0.04, cached_input=0.0, output=0.045, saved=0.014
@@ -782,13 +757,12 @@ class TestSummaryCostsIntegration(DatabaseIntegrationClickhouse):
         # Add route to gateway config
         gw = get_default_gateway(route_name=route_name)
         self.gateway_config.routes[route_name] = gw.routes[route_name]
-        self.event_service.gateway_config = self.gateway_config
 
         # No events inserted
 
         # Query the route
         result = self.event_service.get_summary_costs(
-            None,
+            PROJECT,
             self.gateway_config,
             route_names=[route_name],
             _from=None,
@@ -798,16 +772,6 @@ class TestSummaryCostsIntegration(DatabaseIntegrationClickhouse):
 
         # Build expected DTO - all fields should be 0 or None
         expected = CostDataDTO(
-            input_cost=0.0,
-            output_cost=0.0,
-            total_cost=0.0,
-            cache_triggered=None,
-            cache_saved_tokens_input=None,
-            cache_saved_tokens_output=None,
-            saved_amount_input=None,
-            saved_amount_output=None,
-            total_cached_tokens=None,
-            total_saved_amount=None,
             total=0.0,
             totals=TotalCostDTO(input=0.0, cached_input=0.0, output=0.0, saved=None),
             chat_models=ChatModelsCostDTO(
@@ -844,7 +808,6 @@ class TestSummaryCostsIntegration(DatabaseIntegrationClickhouse):
         # Add route to gateway config
         gw = get_default_gateway(route_name=route_name)
         self.gateway_config.routes[route_name] = gw.routes[route_name]
-        self.event_service.gateway_config = self.gateway_config
 
         request_1_uuid = uuid.UUID(int=1)
         request_2_uuid = uuid.UUID(int=2)
@@ -854,6 +817,7 @@ class TestSummaryCostsIntegration(DatabaseIntegrationClickhouse):
         events = [
             # Request 1: Multiple events
             get_sample_event(
+                project_uuid=PROJECT,
                 request_uuid=request_1_uuid,
                 event_type='INPUT_TOKEN_PROCESSED',
                 route_name=route_name,
@@ -868,6 +832,7 @@ class TestSummaryCostsIntegration(DatabaseIntegrationClickhouse):
                 cost=0.03,
             ),
             get_sample_event(
+                project_uuid=PROJECT,
                 request_uuid=request_1_uuid,
                 event_type='OUTPUT_TOKEN_PROCESSED',
                 route_name=route_name,
@@ -883,6 +848,7 @@ class TestSummaryCostsIntegration(DatabaseIntegrationClickhouse):
             ),
             # Request 2: Different request
             get_sample_event(
+                project_uuid=PROJECT,
                 request_uuid=request_2_uuid,
                 event_type='INPUT_TOKEN_PROCESSED',
                 route_name=route_name,
@@ -898,6 +864,7 @@ class TestSummaryCostsIntegration(DatabaseIntegrationClickhouse):
             ),
             # Request 3: Another request
             get_sample_event(
+                project_uuid=PROJECT,
                 request_uuid=request_3_uuid,
                 event_type='INPUT_TOKEN_PROCESSED',
                 route_name=route_name,
@@ -912,6 +879,7 @@ class TestSummaryCostsIntegration(DatabaseIntegrationClickhouse):
                 cost=0.036,
             ),
             get_sample_event(
+                project_uuid=PROJECT,
                 request_uuid=request_3_uuid,
                 event_type='OUTPUT_TOKEN_PROCESSED',
                 route_name=route_name,
@@ -932,7 +900,7 @@ class TestSummaryCostsIntegration(DatabaseIntegrationClickhouse):
 
         # Query - should aggregate across all requests
         result = self.event_service.get_summary_costs(
-            None,
+            PROJECT,
             self.gateway_config,
             route_names=[route_name],
             _from=None,
@@ -945,16 +913,6 @@ class TestSummaryCostsIntegration(DatabaseIntegrationClickhouse):
         # Expected: output_cost = 0.045 + 0.054 = 0.099
         # Expected: total_cost = 0.09 + 0.099 = 0.189
         expected = CostDataDTO(
-            input_cost=0.09,
-            output_cost=0.099,
-            total_cost=0.189,
-            cache_triggered=None,
-            cache_saved_tokens_input=None,
-            cache_saved_tokens_output=None,
-            saved_amount_input=None,
-            saved_amount_output=None,
-            total_cached_tokens=None,
-            total_saved_amount=None,
             total=0.189,
             totals=TotalCostDTO(input=0.09, cached_input=0.0, output=0.099, saved=None),
             chat_models=ChatModelsCostDTO(
@@ -997,12 +955,12 @@ class TestSummaryCostsIntegration(DatabaseIntegrationClickhouse):
         gw = get_gateway_with_judge_and_semantic_cache(route_name=route_name)
         self.gateway_config.guardrails = gw.guardrails
         self.gateway_config.routes[route_name] = gw.routes[route_name]
-        self.event_service.gateway_config = self.gateway_config
 
         # Insert comprehensive test events
         events = [
             # ===== Chat Model - Standard (non-cached, non-judge) =====
             get_sample_event(
+                project_uuid=PROJECT,
                 event_type='INPUT_TOKEN_PROCESSED',
                 route_name=route_name,
                 timestamp=datetime.datetime(
@@ -1019,6 +977,7 @@ class TestSummaryCostsIntegration(DatabaseIntegrationClickhouse):
                 cache_type='',
             ),
             get_sample_event(
+                project_uuid=PROJECT,
                 event_type='OUTPUT_TOKEN_PROCESSED',
                 route_name=route_name,
                 timestamp=datetime.datetime(
@@ -1034,6 +993,7 @@ class TestSummaryCostsIntegration(DatabaseIntegrationClickhouse):
             ),
             # ===== Chat Model - Cached =====
             get_sample_event(
+                project_uuid=PROJECT,
                 event_type='INPUT_TOKEN_PROCESSED',
                 route_name=route_name,
                 timestamp=datetime.datetime(
@@ -1051,6 +1011,7 @@ class TestSummaryCostsIntegration(DatabaseIntegrationClickhouse):
             ),
             # ===== Chat Model - Judge =====
             get_sample_event(
+                project_uuid=PROJECT,
                 event_type='INPUT_TOKEN_PROCESSED',
                 route_name=route_name,
                 timestamp=datetime.datetime(
@@ -1067,6 +1028,7 @@ class TestSummaryCostsIntegration(DatabaseIntegrationClickhouse):
                 cache_type='',
             ),
             get_sample_event(
+                project_uuid=PROJECT,
                 event_type='OUTPUT_TOKEN_PROCESSED',
                 route_name=route_name,
                 timestamp=datetime.datetime(
@@ -1082,6 +1044,7 @@ class TestSummaryCostsIntegration(DatabaseIntegrationClickhouse):
             ),
             # ===== Chat Model - Judge + Cached =====
             get_sample_event(
+                project_uuid=PROJECT,
                 event_type='INPUT_TOKEN_PROCESSED',
                 route_name=route_name,
                 timestamp=datetime.datetime(
@@ -1099,6 +1062,7 @@ class TestSummaryCostsIntegration(DatabaseIntegrationClickhouse):
             ),
             # ===== Embedding Model - Direct =====
             get_sample_event(
+                project_uuid=PROJECT,
                 event_type='INPUT_TOKEN_PROCESSED',
                 route_name=route_name,
                 timestamp=datetime.datetime(
@@ -1114,6 +1078,7 @@ class TestSummaryCostsIntegration(DatabaseIntegrationClickhouse):
             ),
             # ===== Embedding Model - Semantic Cache =====
             get_sample_event(
+                project_uuid=PROJECT,
                 event_type='INPUT_TOKEN_PROCESSED',
                 route_name=route_name,
                 timestamp=datetime.datetime(
@@ -1129,6 +1094,7 @@ class TestSummaryCostsIntegration(DatabaseIntegrationClickhouse):
             ),
             # ===== Cache Savings =====
             get_sample_event(
+                project_uuid=PROJECT,
                 event_type='CACHE_HIT',
                 route_name=route_name,
                 timestamp=datetime.datetime(
@@ -1140,6 +1106,7 @@ class TestSummaryCostsIntegration(DatabaseIntegrationClickhouse):
                 cache_type='exact',
             ),
             get_sample_event(
+                project_uuid=PROJECT,
                 event_type='CACHE_INPUT_TOKENS',
                 route_name=route_name,
                 timestamp=datetime.datetime(
@@ -1153,6 +1120,7 @@ class TestSummaryCostsIntegration(DatabaseIntegrationClickhouse):
                 cache_type='exact',
             ),
             get_sample_event(
+                project_uuid=PROJECT,
                 event_type='CACHE_OUTPUT_TOKENS',
                 route_name=route_name,
                 timestamp=datetime.datetime(
@@ -1172,7 +1140,7 @@ class TestSummaryCostsIntegration(DatabaseIntegrationClickhouse):
 
         # Query with cache enabled and saved tokens
         result = self.event_service.get_summary_costs(
-            None,
+            PROJECT,
             self.gateway_config,
             route_names=[route_name],
             _from=None,
@@ -1185,16 +1153,7 @@ class TestSummaryCostsIntegration(DatabaseIntegrationClickhouse):
         # Output: 0.072
         # Total: 0.164
         expected = CostDataDTO(
-            input_cost=0.092,
-            output_cost=0.072,
-            total_cost=0.164,
-            cache_triggered=1,
-            cache_saved_tokens_input=1500,
-            cache_saved_tokens_output=700,
-            saved_amount_input=0.045,
-            saved_amount_output=0.063,
-            total_cached_tokens=2200,
-            total_saved_amount=0.105,  # 0.108 - 0.003 (semantic embedding cost)
+            # 0.108 - 0.003 (semantic embedding cost)
             # Nested breakdowns
             total=0.164,  # chat_models.total (0.156) + embedding_models.total (0.008)
             totals=TotalCostDTO(
@@ -1279,6 +1238,7 @@ class TestSummaryCostsIntegration(DatabaseIntegrationClickhouse):
         self.insert(
             [
                 get_sample_event(
+                    project_uuid=PROJECT,
                     event_type='INPUT_TOKEN_PROCESSED',
                     route_name=route_name,
                     timestamp=timestamp,
@@ -1288,6 +1248,7 @@ class TestSummaryCostsIntegration(DatabaseIntegrationClickhouse):
                     cost=0.25,
                 ),
                 get_sample_event(
+                    project_uuid=PROJECT,
                     event_type='OUTPUT_TOKEN_PROCESSED',
                     route_name=route_name,
                     timestamp=timestamp,
@@ -1297,6 +1258,7 @@ class TestSummaryCostsIntegration(DatabaseIntegrationClickhouse):
                     cost=0.0,
                 ),
                 get_sample_event(
+                    project_uuid=PROJECT,
                     event_type='CACHE_INPUT_TOKENS',
                     route_name=route_name,
                     timestamp=timestamp,
@@ -1309,17 +1271,19 @@ class TestSummaryCostsIntegration(DatabaseIntegrationClickhouse):
         )
 
         result = self.event_service.get_summary_costs(
-            None, config, route_names=[route_name]
+            PROJECT, config, route_names=[route_name]
         )
 
+        assert result.decision_models is not None
         assert result.decision_models.input == pytest.approx(0.25)
         assert result.decision_models.total == pytest.approx(0.25)
         assert result.chat_models is None
+        assert result.totals is not None
         assert result.totals.input == pytest.approx(0.25)
         assert result.totals.output == pytest.approx(0.0)
         assert result.total == pytest.approx(0.25)
 
-        all_routes = self.event_service.get_all_routes_costs(None, config)
+        all_routes = self.event_service.get_all_routes_costs(PROJECT, config)
         assert all_routes.total == pytest.approx(0.25)
         summary = all_routes.routes[0].summary
         assert summary.model_dump(by_alias=True)['decisionModels'] == {

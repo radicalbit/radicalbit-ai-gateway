@@ -28,11 +28,16 @@ from radicalbit_ai_gateway.models.project_budget_limiting import ProjectBudgetLi
 from radicalbit_ai_gateway.models.request_identity import RequestIdentity
 from radicalbit_ai_gateway.utils.exceptions import (
     AudioDurationLimitExceeded,
+    BudgetLimitExceeded,
     BudgetLimitExceededError,
     InputTokenLimitExceeded,
     OutputTokenLimitExceeded,
+    RBRateLimitExceeded,
     RequestRateLimitExceeded,
+    TokenLimitExceeded,
 )
+
+LimitBlock = TokenLimitExceeded | RBRateLimitExceeded | BudgetLimitExceeded
 
 P = '2f1c6d4e-0000-4000-8000-0000000000aa'  # project
 C = '7a3b9e10-0000-4000-8000-0000000000bb'  # credential
@@ -169,13 +174,17 @@ def project_key_and_maximum(value: float, window) -> tuple[str, int]:
 async def cleared_credential_key(category: str, window) -> str:
     with patch.object(InMemoryStorage, 'delete', autospec=True) as delete:
         await shared_limits.clear(credential_window(C, category, *window))
-    return delete.call_args.args[1]
+    key = delete.call_args.args[1]
+    assert isinstance(key, str)
+    return key
 
 
 async def cleared_project_key(window) -> str:
     with patch.object(InMemoryStorage, 'delete', autospec=True) as delete:
         await shared_limits.clear(project_window(P, *window))
-    return delete.call_args.args[1]
+    key = delete.call_args.args[1]
+    assert isinstance(key, str)
+    return key
 
 
 _FILL_AND_DEMAND = {
@@ -201,7 +210,7 @@ def frozen_clock(now: int):
         yield
 
 
-async def block(scope: str, category: str) -> Exception:
+async def block(scope: str, category: str) -> LimitBlock:
     maximum = 0.5 if category == 'budget' else 1
     route, credential, project = RouteLimits(), [], []
     if scope == 'route':
@@ -218,7 +227,9 @@ async def block(scope: str, category: str) -> Exception:
         await request_limits.check(demand)
     else:
         await request_limits.count(fill)
-    with pytest.raises(Exception) as error:
+    with pytest.raises(
+        (TokenLimitExceeded, RBRateLimitExceeded, BudgetLimitExceeded)
+    ) as error:
         await request_limits.check(demand)
     return error.value
 

@@ -1,15 +1,24 @@
 from enum import StrEnum
-from typing import Annotated, Literal, Union
+from typing import Annotated, Generic, Literal, TypeVar, Union
 
 from pydantic import BaseModel, Field
 
 from radicalbit_ai_gateway.models.event_type import EventType
 from radicalbit_ai_gateway.models.request_event_type import RequestStatus, RequestType
 
+EventTypeT = TypeVar('EventTypeT', bound=EventType)
 
-class EventBase(BaseModel):
+
+class EventBase(BaseModel, Generic[EventTypeT]):
+    """The fields every event payload has.
+
+    Each payload narrows ``event_type`` to its own types through the type
+    parameter: ``EventPayload`` discriminates on it, and the field keeps its
+    place in the serialized payload.
+    """
+
     request_uuid: str
-    event_type: EventType
+    event_type: EventTypeT
     route_name: str
     value: float
     api_key_uuid: str
@@ -21,8 +30,7 @@ class EventBase(BaseModel):
     project_name: str = ''
 
 
-class ModelInvocationPayload(EventBase):
-    event_type: Literal[EventType.MODEL_INVOCATION]
+class ModelInvocationPayload(EventBase[Literal[EventType.MODEL_INVOCATION]]):
     model_id: str
     model_type: str
     cache_type: str | None = None
@@ -30,8 +38,7 @@ class ModelInvocationPayload(EventBase):
     is_routing: bool = False
 
 
-class InputTokenProcessedPayload(EventBase):
-    event_type: Literal[EventType.INPUT_TOKEN_PROCESSED]
+class InputTokenProcessedPayload(EventBase[Literal[EventType.INPUT_TOKEN_PROCESSED]]):
     model_id: str | None = None
     model_type: str | None = None
     cache_type: str | None = None
@@ -40,8 +47,7 @@ class InputTokenProcessedPayload(EventBase):
     is_routing: bool = False
 
 
-class OutputTokenProcessedPayload(EventBase):
-    event_type: Literal[EventType.OUTPUT_TOKEN_PROCESSED]
+class OutputTokenProcessedPayload(EventBase[Literal[EventType.OUTPUT_TOKEN_PROCESSED]]):
     model_id: str | None = None
     model_type: str | None = None
     cache_type: str | None = None
@@ -49,39 +55,54 @@ class OutputTokenProcessedPayload(EventBase):
     is_routing: bool = False
 
 
-class FallbackEventPayload(EventBase):
-    event_type: Literal[EventType.FALLBACK]
+class FallbackEventPayload(EventBase[Literal[EventType.FALLBACK]]):
     target: str
     fallback: str
     is_judge: bool = False
     is_routing: bool = False
 
 
-class CacheEventPayload(EventBase):
-    event_type: Literal[
-        EventType.CACHE_HIT, EventType.CACHE_INPUT_TOKENS, EventType.CACHE_OUTPUT_TOKENS
+class CacheEventPayload(
+    EventBase[
+        Literal[
+            EventType.CACHE_HIT,
+            EventType.CACHE_INPUT_TOKENS,
+            EventType.CACHE_OUTPUT_TOKENS,
+        ]
     ]
+):
     cache_type: str
     model_id: str
 
 
-class GuardrailEventPayload(EventBase):
-    event_type: Literal[EventType.GUARDRAIL]
+class GuardrailEventBehavior(StrEnum):
+    """What a triggered guardrail did, as its event records it: the behavior
+    of a check, REDACT for a presidio_anonymizer.
+
+    A StrEnum so the event row stores 'BLOCK', not 'GuardrailEventBehavior.BLOCK'.
+    """
+
+    BLOCK = 'BLOCK'
+    WARN = 'WARN'
+    SOFT_BLOCK = 'SOFT_BLOCK'
+    REDACT = 'REDACT'
+
+
+class GuardrailEventPayload(EventBase[Literal[EventType.GUARDRAIL]]):
     name: str
     type: str
     where: str
     parameters: str
-    behavior: str
+    behavior: GuardrailEventBehavior
     is_judge: bool = False
 
 
-class RoutingEventPayload(EventBase):
-    event_type: Literal[EventType.ROUTING]
+class RoutingEventPayload(EventBase[Literal[EventType.ROUTING]]):
     routing_name: str
     selected_model_id: str
 
 
-class McpInvocationEventPayload(EventBase):
+class McpInvocationEventPayload(EventBase[Literal[EventType.MCP_INVOCATION]]):
     """One addressed MCP invocation, with the server and object it addressed.
 
     ``mcp_target`` is the tool for ``tools/call``, the prompt for
@@ -89,7 +110,6 @@ class McpInvocationEventPayload(EventBase):
     ``mcp_alias`` are empty when the route does not configure that server.
     """
 
-    event_type: Literal[EventType.MCP_INVOCATION]
     mcp_method: str
     mcp_alias: str = ''
     mcp_target: str = ''
@@ -106,7 +126,23 @@ class LimitScope(StrEnum):
     CREDENTIAL = 'credential'
 
 
-class LimitEventPayload(EventBase):
+class LimitEventPayload(
+    EventBase[
+        Literal[
+            EventType.RATE_LIMIT,
+            EventType.TOKEN_INPUT_LIMIT,
+            EventType.TOKEN_OUTPUT_LIMIT,
+            EventType.AUDIO_DURATION_LIMIT,
+            EventType.BUDGET_LIMIT,
+            EventType.CREDENTIAL_RATE_LIMIT,
+            EventType.CREDENTIAL_TOKEN_INPUT_LIMIT,
+            EventType.CREDENTIAL_TOKEN_OUTPUT_LIMIT,
+            EventType.CREDENTIAL_BUDGET_LIMIT,
+            EventType.PROJECT_BUDGET_LIMIT,
+            EventType.LIMIT_THRESHOLD,
+        ]
+    ]
+):
     """A limit blocked a request, or its consumption crossed a threshold.
 
     Names the exact limit and its window state. A ``LIMIT_THRESHOLD`` event
@@ -120,19 +156,6 @@ class LimitEventPayload(EventBase):
     limiter's id for the current window, None if no window was open.
     """
 
-    event_type: Literal[
-        EventType.RATE_LIMIT,
-        EventType.TOKEN_INPUT_LIMIT,
-        EventType.TOKEN_OUTPUT_LIMIT,
-        EventType.AUDIO_DURATION_LIMIT,
-        EventType.BUDGET_LIMIT,
-        EventType.CREDENTIAL_RATE_LIMIT,
-        EventType.CREDENTIAL_TOKEN_INPUT_LIMIT,
-        EventType.CREDENTIAL_TOKEN_OUTPUT_LIMIT,
-        EventType.CREDENTIAL_BUDGET_LIMIT,
-        EventType.PROJECT_BUDGET_LIMIT,
-        EventType.LIMIT_THRESHOLD,
-    ]
     limit_scope: LimitScope
     category: str
     window_seconds: int

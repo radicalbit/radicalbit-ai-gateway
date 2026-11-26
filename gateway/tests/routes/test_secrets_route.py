@@ -4,10 +4,12 @@ import uuid
 
 from fastapi import FastAPI, Request
 from starlette.testclient import TestClient
+from typing_extensions import override
 
 from tests.common.fake_secret_provider import FakeSecretProvider
 
 from radicalbit_ai_gateway.db.dao.project_config_dao import ProjectConfigDAO
+from radicalbit_ai_gateway.middleware.exception_handlers import add_exception_handler
 from radicalbit_ai_gateway.models.secret_dto import ProjectRef, SecretOut, SecretStatus
 from radicalbit_ai_gateway.routes.secrets_route import SecretsRoute, SecretsRouteConfig
 from radicalbit_ai_gateway.services.secret_service import SecretService
@@ -18,14 +20,15 @@ from radicalbit_ai_gateway.utils.exceptions import (
 
 
 class TestSecretsRoute(unittest.TestCase):
+    @override
     def setUp(self):
         self.prefix = '/public/api/v1'
         self.secret_service = MagicMock(spec_set=SecretService)
         router = SecretsRoute.get_secrets_router(self.secret_service)
         app = FastAPI(title='AI Gateway', debug=True)
         app.include_router(router, prefix=self.prefix)
-        app.add_exception_handler(
-            SecretsBackendError, secrets_backend_exception_handler
+        add_exception_handler(
+            app, SecretsBackendError, secrets_backend_exception_handler
         )
         self.client = TestClient(app)
 

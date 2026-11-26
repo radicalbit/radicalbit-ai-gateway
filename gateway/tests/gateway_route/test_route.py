@@ -53,9 +53,10 @@ def test_transcription_invoker_only_receives_transcription_fallbacks():
         cost_service=cost_service,
     )
 
-    assert ai_gateway.transcription_invoker.fallbacks == [transcription_fallback]
+    invoker = ai_gateway.transcription_invoker
+    assert invoker is not None
+    assert invoker.fallbacks == [transcription_fallback]
     fallback_model_ids = {
-        m.model_id
-        for m, _ in ai_gateway.transcription_invoker.model_map['gpt4o-transcribe'][2]
+        m.model_id for m, _ in invoker.model_map['gpt4o-transcribe'][2]
     }
     assert fallback_model_ids == {'gpt4o-mini-transcribe'}

@@ -9,7 +9,9 @@ from radicalbit_ai_gateway.db.database import Database, BaseTable
 from radicalbit_ai_gateway.db.tables.alert_rule_table import *
 from radicalbit_ai_gateway.db.tables.group_route_table import *
 from radicalbit_ai_gateway.db.tables.group_table import *
+from radicalbit_ai_gateway.db.tables.key_limit_table import *
 from radicalbit_ai_gateway.db.tables.key_table import *
+from radicalbit_ai_gateway.db.tables.project_budget_limit_table import *
 from radicalbit_ai_gateway.db.tables.project_config_table import *
 from radicalbit_ai_gateway.db.tables.project_table import *
 from radicalbit_ai_gateway.utils.app_config import get_app_config

@@ -201,8 +201,9 @@ async def test_in_request_trace_keeps_a_stream_in_the_endpoint_trace():
     assert [item async for item in unrelated] == ['chunk']
 
     _, model, orphan = exporter.get_finished_spans()
-    assert model.context.trace_id == endpoint.context.trace_id
-    assert model.parent.span_id == endpoint.context.span_id
+    assert model.context.trace_id == endpoint.get_span_context().trace_id
+    assert model.parent is not None
+    assert model.parent.span_id == endpoint.get_span_context().span_id
     # Without it, the stream's spans open a trace of their own.
     assert orphan.parent is None
     assert context_api.get_current() == before

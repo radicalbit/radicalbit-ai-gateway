@@ -8,6 +8,7 @@ gateway screens and caches and for the call's span.
 from __future__ import annotations
 
 import json
+from typing import Any
 
 # The event that opens a stream and carries the message's ``model``.
 MESSAGE_START = 'message_start'
@@ -15,7 +16,7 @@ MESSAGE_START = 'message_start'
 MESSAGE_DELTA = 'message_delta'
 
 
-def stream_usage(event: str, data: str, usage: dict) -> dict:
+def stream_usage(event: str, data: str, usage: dict[str, Any]) -> dict[str, Any]:
     """Return ``usage`` updated with what an upstream event says about it."""
     if event == MESSAGE_START:
         message = json.loads(data).get('message') or {}
@@ -32,12 +33,12 @@ class MessageBuilder:
     """
 
     def __init__(self) -> None:
-        self._message: dict | None = None
-        self._blocks: dict[int, dict] = {}
+        self._message: dict[str, Any] | None = None
+        self._blocks: dict[int, dict[str, Any]] = {}
         # The JSON text of each tool use's input, as it comes.
         self._inputs: dict[int, str] = {}
         #: The usage read so far, as ``stream_usage`` reads it.
-        self.usage: dict = {}
+        self.usage: dict[str, Any] = {}
         #: The data of the upstream's ``error`` event, if one came.
         self.error: str | None = None
 
@@ -76,7 +77,7 @@ class MessageBuilder:
             payload = json.loads(data)
             self._add_delta(payload.get('index', 0), payload.get('delta') or {})
 
-    def _add_delta(self, index: int, delta: dict) -> None:
+    def _add_delta(self, index: int, delta: dict[str, Any]) -> None:
         block = self._blocks.setdefault(index, {})
         delta_type = delta.get('type')
         if delta_type == 'text_delta':
@@ -94,7 +95,7 @@ class MessageBuilder:
         elif delta_type == 'citations_delta' and 'citation' in delta:
             block['citations'] = [*(block.get('citations') or []), delta['citation']]
 
-    def message(self) -> dict | None:
+    def message(self) -> dict[str, Any] | None:
         """Return the message built so far, with its content blocks in their
         order and the usage read; nothing before ``message_start``.
 

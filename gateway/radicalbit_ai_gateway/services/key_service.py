@@ -1,5 +1,6 @@
 from collections.abc import Iterable, Mapping, Sequence
 import datetime
+from decimal import Decimal
 import logging
 from uuid import UUID
 
@@ -102,7 +103,7 @@ class KeyService:
         route_configs: Mapping[str, GatewayRouteConfig] | None = None,
     ) -> KeyFullOut:
         key = await self.key_dao.get_by_uuid(key_uuid)
-        if not key:
+        if key is None:
             raise KeyNotFoundError(f'Key with UUID {key_uuid} not exists')
         key_out = KeyFullOut.from_key_obscured(
             key=key,
@@ -159,7 +160,7 @@ class KeyService:
                 hashed_key=api_key_sec.hashed_key, obscured_key=api_key_sec.obscured_key
             )
             inserted = await self.key_dao.insert(to_insert)
-            return KeyFullOut.from_key(
+            return KeyFullOut.from_new_key(
                 key=inserted, plain_api_key=api_key_sec.plain_key
             )
         except IntegrityError as e:
@@ -207,7 +208,7 @@ class KeyService:
         self, key_uuid: UUID, include_groups: bool = False
     ) -> KeyFullOut:
         key = await self.key_dao.get_by_uuid(key_uuid)
-        if not key:
+        if key is None:
             raise KeyNotFoundError(f'Key with UUID {key_uuid} not exists')
         if key.owner != 'gateway':
             raise KeyExternallyManagedError(
@@ -234,7 +235,7 @@ class KeyService:
 
     async def update_key_name(self, key_uuid: UUID, key_in: KeyUpdateIn) -> KeyFullOut:
         key = await self.key_dao.get_by_uuid(key_uuid)
-        if not key:
+        if key is None:
             raise KeyNotFoundError(f'Key with UUID {key_uuid} not exists')
         if key.owner != 'gateway':
             raise KeyExternallyManagedError(
@@ -264,7 +265,7 @@ class KeyService:
         Raises GracePeriodOutOfBoundsError when the grace period ends after the expiry.
         """
         key = await self.key_dao.get_by_uuid(key_uuid)
-        if not key:
+        if key is None:
             raise KeyNotFoundError(f'Key with UUID {key_uuid} not exists')
         if key.owner != 'gateway':
             raise KeyExternallyManagedError(
@@ -291,7 +292,7 @@ class KeyService:
             raise KeyRotationConflictError(
                 f'Key {key_uuid} was rotated by another request, please retry'
             )
-        return KeyFullOut.from_key(
+        return KeyFullOut.from_new_key(
             key=rotated,
             plain_api_key=api_key_sec.plain_key,
             include_groups=True,
@@ -301,7 +302,7 @@ class KeyService:
     async def end_grace_period(self, key_uuid: UUID) -> KeyFullOut:
         """Stop the previous value now."""
         key = await self.key_dao.get_by_uuid(key_uuid)
-        if not key:
+        if key is None:
             raise KeyNotFoundError(f'Key with UUID {key_uuid} not exists')
         ended = await self.key_dao.end_grace_period(
             key_uuid, now=datetime.datetime.now(tz=UTC)
@@ -318,11 +319,12 @@ class KeyService:
         self, key_uuid: UUID, key_group_in: KeyGroupIn, include_groups: bool
     ) -> KeyFullOut:
         key = await self.key_dao.get_by_uuid(key_uuid)
-        if not key:
+        if key is None:
             raise KeyNotFoundError(f'Key with UUID {key_uuid} not exists')
         if key.group_uuid:
+            group = key.group.name if key.group is not None else key.group_uuid
             raise KeyGroupAlreadyExistsError(
-                f'Key with UUID {key_uuid} already has a group assigned: {key.group.name}'
+                f'Key with UUID {key_uuid} already has a group assigned: {group}'
             )
         if key.owner != 'gateway':
             raise KeyExternallyManagedError(
@@ -330,7 +332,7 @@ class KeyService:
             )
         _ensure_not_expired(key)
         group = await self.group_dao.get_by_uuid(key_group_in.group)
-        if group and key.owner != group.owner:
+        if group is not None and key.owner != group.owner:
             raise KeyOperationNotAllowedError(
                 f'Cannot assign a {key.owner!r} key to a {group.owner!r} group'
             )
@@ -353,7 +355,7 @@ class KeyService:
         self, key_uuid: UUID, group_uuid: UUID
     ) -> KeyFullOut:
         key = await self.key_dao.get_by_uuid(key_uuid)
-        if not key:
+        if key is None:
             raise KeyNotFoundError(f'Key with UUID {key_uuid} not exists')
         if key.owner != 'gateway':
             raise KeyExternallyManagedError(
@@ -428,7 +430,7 @@ class KeyService:
                         outcome = GroupLimitOutcome.SKIPPED
                     else:
                         outcome = GroupLimitOutcome.OVERWRITTEN
-                        existing.max_value = limit_in.value
+                        existing.max_value = Decimal(str(limit_in.value))
                         existing.updated_at = now
                         to_update.append(existing)
                 results.append(
@@ -500,7 +502,7 @@ class KeyService:
 
     async def get_associable_keys(self, group_uuid: UUID) -> list[KeyFullOut]:
         group = await self.group_dao.get_by_uuid(group_uuid)
-        if not group:
+        if group is None:
             raise GroupNotFoundError(f'Group with UUID {group_uuid} not exists')
         if group.owner != 'gateway':
             return []
@@ -515,7 +517,7 @@ class KeyService:
         self, key_uuid: UUID, include_routes: bool, include_keys: bool
     ) -> list[GroupFullOut]:
         key = await self.key_dao.get_by_uuid(key_uuid)
-        if not key:
+        if key is None:
             raise KeyNotFoundError(f'Key with UUID {key_uuid} not exists')
         if key.owner != 'gateway':
             return []
@@ -535,7 +537,7 @@ class KeyService:
 
     async def get_key_by_hashed_key(self, hashed_api_key) -> KeyFullOut:
         key = await self.key_dao.get_key_by_hashed_key(hashed_api_key=hashed_api_key)
-        if not key:
+        if key is None:
             raise KeyNotFoundError('Key with does not exists')
         return KeyFullOut.from_key_obscured(
             key=key, include_groups=True, include_limits=True
@@ -552,7 +554,7 @@ class KeyService:
         route_configs: Mapping[str, GatewayRouteConfig] | None = None,
     ) -> KeyLimitsAddedOut:
         key = await self.key_dao.get_by_uuid(key_uuid)
-        if not key:
+        if key is None:
             raise KeyNotFoundError(f'Key with UUID {key_uuid} not exists')
         _ensure_not_expired(key)
         existing_signatures = {
@@ -629,7 +631,7 @@ class KeyService:
 
     async def get_limits_for_key(self, key_uuid: UUID) -> list[CredentialLimitOut]:
         key = await self.key_dao.get_by_uuid(key_uuid)
-        if not key:
+        if key is None:
             raise KeyNotFoundError(f'Key with UUID {key_uuid} not exists')
         return [
             CredentialLimitOut.from_key_limit(limit)
@@ -644,7 +646,7 @@ class KeyService:
         route_configs: Mapping[str, GatewayRouteConfig] | None = None,
     ) -> CredentialLimitUpdatedOut:
         key = await self.key_dao.get_by_uuid(key_uuid)
-        if not key:
+        if key is None:
             raise KeyNotFoundError(f'Key with UUID {key_uuid} not exists')
         _ensure_not_expired(key)
         limit = await self.key_limit_dao.get_by_uuid(limit_uuid)
@@ -664,7 +666,7 @@ class KeyService:
                 f'{value_in.value:g} is not a valid max for a {limit.category} limit'
             ) from e
         previous_value = float(limit.max_value)
-        limit.max_value = value_in.value
+        limit.max_value = Decimal(str(value_in.value))
         limit.updated_at = datetime.datetime.now(tz=UTC)
         await self.key_limit_dao.save_many([], [limit])
         logger.info(
@@ -695,7 +697,7 @@ class KeyService:
         self, key_uuid: UUID, limit_uuid: UUID
     ) -> CredentialLimitOut:
         key = await self.key_dao.get_by_uuid(key_uuid)
-        if not key:
+        if key is None:
             raise KeyNotFoundError(f'Key with UUID {key_uuid} not exists')
         _ensure_not_expired(key)
         limit = await self.key_limit_dao.get_by_uuid(limit_uuid)

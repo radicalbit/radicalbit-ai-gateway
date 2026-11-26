@@ -12,10 +12,13 @@ send the requests and read the store) may change.
 from dataclasses import replace
 from decimal import Decimal
 import json
+from typing import Any
 
 import numpy as np
+from openai.types.chat import ChatCompletion
 import pytest
 import tiktoken
+from typing_extensions import override
 
 from tests.common import db_mock, provider_responses as upstream
 from tests.common.audio import make_wav_bytes
@@ -41,7 +44,7 @@ CACHE_HIT = 'X-RB-AIGATEWAY-CACHE-HIT'
 EMAIL = 'ada.lovelace@analytical-engine.example.com'
 
 
-def _priced(model_id: str, name: str, **extra) -> dict:
+def _priced(model_id: str, name: str, **extra) -> dict[str, Any]:
     return {
         'model_id': model_id,
         'model': name,
@@ -177,8 +180,9 @@ class FakeSemanticIndex(SemanticCache):
     def __init__(self):
         self.similarity_threshold = 1.0
         self.index_name = 'ai_gateway_idx'
-        self.docs: dict[str, dict] = {}
+        self.docs: dict[str, dict[str, Any]] = {}
 
+    @override
     async def get(self, cache_key: str, **kwargs) -> str | None:
         embeddings = kwargs.get('embeddings')
         if embeddings is None:
@@ -190,9 +194,12 @@ class FakeSemanticIndex(SemanticCache):
                 doc[tag] == kwargs[tag]
                 for tag in ('project_uuid', 'route_name', 'key_uuid')
             ):
-                return doc['response']
+                response = doc['response']
+                assert isinstance(response, str)
+                return response
         return None
 
+    @override
     async def set(self, cache_key: str, response: str, ttl: int | None, **kwargs):
         embeddings = kwargs.get('embeddings')
         if embeddings is None:
@@ -208,7 +215,7 @@ class FakeSemanticIndex(SemanticCache):
         }
 
 
-def _build_routes() -> dict:
+def _build_routes() -> dict[str, Any]:
     routes = build_routes(CONFIG, project_uuid=PROJECT)
     for name in (
         'semantic',
@@ -222,7 +229,9 @@ def _build_routes() -> dict:
 
 def _use_semantic_index(route, index: FakeSemanticIndex) -> None:
     route.gateway_cache = GatewayCache(index)
-    route.cache = replace(route.cache, backend=route.gateway_cache)
+    route.cache = replace(
+        route.cache, enabled=replace(route.cache.enabled, backend=route.gateway_cache)
+    )
 
 
 def _stored(route) -> dict[str, str]:
@@ -262,9 +271,10 @@ class _Gateway(Gateway):
     embed_texts = ('one', 'two')
 
     def stored(self, route: str) -> dict[str, str]:
+        assert self.routes is not None
         return _stored(self.routes[f'proj/{route}'])
 
-    def cache_events(self) -> list[tuple]:
+    def cache_events(self) -> list[tuple[Any, ...]]:
         """Return the cache events: type, value, cost, cache type, model."""
         return [
             (
@@ -278,7 +288,7 @@ class _Gateway(Gateway):
             if e['EVENT_TYPE'] in CACHE_EVENTS
         ]
 
-    def model_events(self) -> list[tuple]:
+    def model_events(self) -> list[tuple[Any, ...]]:
         """Return the model events: type, model, model type, cache type, value."""
         return [
             (
@@ -301,14 +311,14 @@ def _cache_headers(response) -> dict[str, str]:
     }
 
 
-def _body(response) -> dict:
+def _body(response) -> dict[str, Any]:
     body = response.json()
     for field in ('id', 'created', 'created_at', 'completed_at'):
         body.pop(field, None)
     return body
 
 
-def _sse(response) -> list:
+def _sse(response) -> list[Any]:
     """Return the data frames of a stream, without ids and timestamps."""
     frames = []
     for line in response.text.splitlines():
@@ -329,7 +339,7 @@ def _sse(response) -> list:
     return frames
 
 
-def _entries(stored: dict[str, str]) -> dict[str, dict]:
+def _entries(stored: dict[str, str]) -> dict[str, dict[str, Any]]:
     """Return stored entries as JSON, without ids and timestamps."""
     entries = {}
     for key, raw in stored.items():
@@ -427,8 +437,12 @@ def _hit_events(model: str, cache_type: str = 'in-memory', tokens=(11, 5)):
     return events
 
 
-def _hit_metrics(route: str, model: str, tokens=(11, 5)) -> list[tuple]:
-    metrics = [('cache_hit_counter', 1, {'route_name': route})]
+def _hit_metrics(
+    route: str, model: str, tokens=(11, 5)
+) -> list[tuple[str, int, dict[str, str]]]:
+    metrics: list[tuple[str, int, dict[str, str]]] = [
+        ('cache_hit_counter', 1, {'route_name': route})
+    ]
     attributes = {'route_name': route, 'model_name': model}
     if tokens[0]:
         metrics.append(('cache_input_tokens', tokens[0], attributes))
@@ -603,7 +617,7 @@ def test_responses_hit(gateway):
         frames = _sse(stream)
         assert [frame['type'] for frame in frames] == RESPONSES_STREAM_EVENTS
         assert frames[-1]['response'] == {
-            **GOLDEN['responses_body'],
+            **_golden_body('responses_body'),
             'model': route,
         }
     assert _entries(gateway.stored('chat')) == {
@@ -691,7 +705,7 @@ def _tokens(text: str) -> list[int]:
     return tiktoken.encoding_for_model('text-embedding-3-small').encode(text)
 
 
-def _embedding_call(model: str = 'e1') -> list[tuple]:
+def _embedding_call(model: str = 'e1') -> list[tuple[str, str, str, str, float]]:
     """Return the events of the semantic cache's embedding call, flagged semantic."""
     return [
         ('MODEL_INVOCATION', model, 'embeddings', 'semantic', 1.0),
@@ -1012,6 +1026,12 @@ GOLDEN = {
 }
 
 
+def _golden_body(name: str) -> dict[str, Any]:
+    body = GOLDEN[name]
+    assert isinstance(body, dict)
+    return body
+
+
 # ---------------------------------------------------------------------------
 # Trace spans: the cache's spans, in the order they end, and their category
 # ---------------------------------------------------------------------------
@@ -1260,7 +1280,7 @@ def test_stream_and_non_stream_requests_share_an_entry(gateway):
     hit = gateway.chat([], route='guarded')
 
     assert _cache_headers(hit) == {CACHE_HIT: 'true'}
-    assert _body(hit) == {**GOLDEN['chat_body'], 'model': 'guarded'}
+    assert _body(hit) == {**_golden_body('chat_body'), 'model': 'guarded'}
 
 
 def test_a_stream_does_not_replay_a_reply_with_tool_calls(gateway):
@@ -1357,16 +1377,20 @@ OUTPUT_WARN = {
 
 
 def _stream_text(response) -> str:
-    return ''.join(
-        frame['choices'][0]['delta'].get('content') or ''
-        for frame in _sse(response)
-        if frame != '[DONE]' and frame['choices']
-    )
+    parts: list[str] = []
+    for frame in _sse(response):
+        if frame != '[DONE]' and frame['choices']:
+            content = frame['choices'][0]['delta'].get('content') or ''
+            assert isinstance(content, str)
+            parts.append(content)
+    return ''.join(parts)
 
 
 def _entry_text(gateway, route: str) -> str:
     (raw,) = gateway.stored(route).values()
-    return json.loads(raw)['choices'][0]['message']['content']
+    content = ChatCompletion.model_validate_json(raw).choices[0].message.content
+    assert content is not None
+    return content
 
 
 def test_a_buffered_stream_stores_its_screened_reply(gateway):
@@ -1520,7 +1544,11 @@ def test_a_cache_that_is_down_is_skipped(gateway, stream):
     """
     route = gateway.routes['proj/chat']
     saved = route.cache
-    route.cache = replace(route.cache, backend=_BrokenBackend(route.cache.backend))
+    enabled = route.cache.enabled
+    route.cache = replace(
+        route.cache,
+        enabled=replace(enabled, backend=_BrokenBackend(enabled.backend)),
+    )
     try:
         response = gateway.chat([_stream() if stream else _completion()], stream=stream)
     finally:

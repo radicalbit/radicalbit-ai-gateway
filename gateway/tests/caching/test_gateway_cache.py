@@ -17,17 +17,24 @@ from radicalbit_ai_gateway.llm.messages import HumanMessage
 
 PROJECT_UUID = str(TEST_PROJECT_UUID)
 KEY_PREFIX = f'response:aigateway:cache:{PROJECT_UUID}:rb-gateway:fake-uuid:'
-TRANSCRIPTION = {
-    'project_uuid': PROJECT_UUID,
-    'route_name': 'rb-gateway',
-    'key_uuid': 'fake-uuid',
-    'audio_bytes': b'fake-audio-bytes',
-    'model_id': 'whisper-1',
-    'response_format': 'json',
-    'language': None,
-    'prompt': None,
-    'temperature': None,
-}
+
+
+def _transcription_key(
+    audio_bytes: bytes = b'fake-audio-bytes', response_format: str = 'json'
+) -> str:
+    return transcription_key(
+        project_uuid=PROJECT_UUID,
+        route_name='rb-gateway',
+        key_uuid='fake-uuid',
+        audio_bytes=audio_bytes,
+        model_id='whisper-1',
+        response_format=response_format,
+        language=None,
+        prompt=None,
+        temperature=None,
+    )
+
+
 RESPONSE = ChatCompletion(
     id='run--a62e3f0c-045a-4d35-9f24-698fd7ef93c6-0',
     choices=[
@@ -104,7 +111,7 @@ def test_the_chat_key_hashes_the_request_under_project_route_and_credential():
             ),
             id='embedding',
         ),
-        pytest.param(transcription_key(**TRANSCRIPTION), id='transcription'),
+        pytest.param(_transcription_key(), id='transcription'),
     ],
 )
 def test_embedding_and_transcription_keys_sit_under_project_route_and_credential(key):
@@ -112,19 +119,19 @@ def test_embedding_and_transcription_keys_sit_under_project_route_and_credential
 
 
 @pytest.mark.parametrize(
-    ('field', 'other'),
+    'other',
     [
-        pytest.param('audio_bytes', b'other-audio-bytes', id='audio-bytes'),
-        pytest.param('response_format', 'verbose_json', id='params'),
+        pytest.param(
+            _transcription_key(audio_bytes=b'other-audio-bytes'), id='audio-bytes'
+        ),
+        pytest.param(_transcription_key(response_format='verbose_json'), id='params'),
     ],
 )
 def test_the_transcription_key_is_deterministic_and_differs_by_audio_and_params(
-    field, other
+    other,
 ):
-    assert transcription_key(**TRANSCRIPTION) == transcription_key(**TRANSCRIPTION)
-    assert transcription_key(**TRANSCRIPTION) != transcription_key(
-        **{**TRANSCRIPTION, field: other}
-    )
+    assert _transcription_key() == _transcription_key()
+    assert _transcription_key() != other
 
 
 async def test_a_response_is_cached_until_its_ttl_and_without_one_for_good(

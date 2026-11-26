@@ -1,14 +1,13 @@
 import asyncio
-from collections.abc import Iterator
+from collections.abc import AsyncIterator, Iterator
 from datetime import datetime, timezone
 import logging
 from time import sleep
-from typing import Annotated, Literal
+from typing import Annotated, Any, Literal
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query, Request
 from fastapi.sse import EventSourceResponse
-from starlette.responses import StreamingResponse
 
 from radicalbit_ai_gateway.db.database import run_from_worker
 from radicalbit_ai_gateway.models.event_dto import (
@@ -18,6 +17,9 @@ from radicalbit_ai_gateway.models.event_dto import (
     InvocationChartDataDTO,
     LastNEvents,
     ModelCostDTO,
+    MostExpensiveRouteDTO,
+    MostRequestedErrorRouteDTO,
+    MostRequestedRouteDTO,
     RequestChartDataDTO,
     RequestGroupedChartDataDTO,
     TokenChartDataDTO,
@@ -25,7 +27,7 @@ from radicalbit_ai_gateway.models.event_dto import (
 )
 from radicalbit_ai_gateway.models.gateway_config import GatewayConfig
 from radicalbit_ai_gateway.models.gateway_route_out import GatewayRouteOut
-from radicalbit_ai_gateway.models.guardrails import Guardrail, GuardrailType
+from radicalbit_ai_gateway.models.guardrails import JudgeGuardrail, JudgeParameter
 from radicalbit_ai_gateway.models.model import Model
 from radicalbit_ai_gateway.models.project_entry import ProjectEntry
 from radicalbit_ai_gateway.models.prompt_dto import (
@@ -65,14 +67,19 @@ def _build_chat_prompt_item(model_obj: Model) -> PromptItemOut:
 
 
 def _build_judge_prompt_item(
-    gname: str, guardrail: Guardrail, config: GatewayConfig
+    gname: str, judge_params: JudgeParameter, config: GatewayConfig
 ) -> PromptItemOut:
-    judge_params = guardrail.parameters
     judge_model = config.chat_models_by_id.get(judge_params.model_id)
     model_name = judge_model.model if judge_model else judge_params.model_id
     prompt_text = judge_params.prompt
     prompt_manager = PromptManager.get_global()
-    if prompt_text is None and prompt_manager:
+    # A judge sets exactly one of prompt and prompt_ref.
+    if (
+        prompt_text is None
+        and judge_params.prompt_ref is not None
+        and judge_params.prompt_ref != ''
+        and prompt_manager
+    ):
         try:
             prompt_text = prompt_manager.get_judge_prompt(judge_params.prompt_ref)
         except FileNotFoundError:
@@ -97,10 +104,10 @@ def _get_route_prompts(route_name: str, config: GatewayConfig) -> RoutePromptsOu
     ]
     global_guardrails = {g.name: g for g in (config.guardrails or [])}
     judge_items = [
-        _build_judge_prompt_item(gname, global_guardrails[gname], config)
+        _build_judge_prompt_item(gname, guardrail.parameters, config)
         for gname in (route_config.guardrails or [])
-        if gname in global_guardrails
-        and global_guardrails[gname].type == GuardrailType.JUDGE
+        if (guardrail := global_guardrails.get(gname)) is not None
+        and isinstance(guardrail, JudgeGuardrail)
     ]
     return RoutePromptsOut(route_name=route_name, prompts=chat_items + judge_items)
 
@@ -297,10 +304,8 @@ class DashboardRoute:
             tags: Annotated[list[str] | None, Depends(parse_tags_query)] = None,
         ):
             project = run_from_worker(project_service.get_by_uuid, project_uuid)
-            project_entry: ProjectEntry = request.app.state.project_configs.get(
-                project.name
-            )
-            if not project_entry:
+            project_entry: object = request.app.state.project_configs.get(project.name)
+            if not isinstance(project_entry, ProjectEntry):
                 raise GatewayNotFoundError(
                     f'No active configuration for project {project.name}'
                 )
@@ -370,7 +375,7 @@ class DashboardRoute:
             _to: Annotated[int | None, Query()] = None,
             tags: Annotated[list[str] | None, Depends(parse_tags_query)] = None,
             _: None = Depends(validate_sse_params),
-        ) -> StreamingResponse:
+        ) -> Iterator[dict[str, Any]]:
             run_from_worker(project_service.validate_exists, project_uuid)
             while True:
                 from_datetime, to_datetime = compute_sse_time_range(_gte, _from, _to)
@@ -499,7 +504,7 @@ class DashboardRoute:
             request: Request,
             routes: Annotated[list[str] | None, Query()] = None,
             window_statuses: Annotated[list[WindowStatus] | None, Query()] = None,
-        ) -> StreamingResponse:
+        ) -> AsyncIterator[list[dict[str, Any]]]:
             project = await project_service.get_by_uuid(project_uuid)
             project_gateway_routes = {
                 k: v
@@ -532,7 +537,7 @@ class DashboardRoute:
             include_models: Annotated[bool, Query()] = False,
             tags: Annotated[list[str] | None, Depends(parse_tags_query)] = None,
             _: None = Depends(validate_sse_params),
-        ) -> StreamingResponse:
+        ) -> Iterator[dict[str, Any]]:
             run_from_worker(project_service.validate_exists, project_uuid)
             while True:
                 from_datetime, to_datetime = compute_sse_time_range(_gte, _from, _to)
@@ -567,7 +572,7 @@ class DashboardRoute:
             _to: Annotated[int | None, Query()] = None,
             tags: Annotated[list[str] | None, Depends(parse_tags_query)] = None,
             _: None = Depends(validate_sse_params),
-        ) -> StreamingResponse:
+        ) -> Iterator[MostRequestedRouteDTO | dict[str, Any]]:
             project = run_from_worker(project_service.get_by_uuid, project_uuid)
             project_entry = request.app.state.project_configs.get(project.name)
             if not project_entry:
@@ -604,7 +609,7 @@ class DashboardRoute:
             _to: Annotated[int | None, Query()] = None,
             tags: Annotated[list[str] | None, Depends(parse_tags_query)] = None,
             _: None = Depends(validate_sse_params),
-        ) -> StreamingResponse:
+        ) -> Iterator[MostRequestedErrorRouteDTO | dict[str, Any]]:
             project = run_from_worker(project_service.get_by_uuid, project_uuid)
             project_entry = request.app.state.project_configs.get(project.name)
             if not project_entry:
@@ -642,7 +647,7 @@ class DashboardRoute:
             group_by: Literal['keys', 'groups', 'models'] = Query(),
             tags: Annotated[list[str] | None, Depends(parse_tags_query)] = None,
             _: None = Depends(validate_sse_params),
-        ) -> StreamingResponse:
+        ) -> Iterator[dict[str, Any]]:
             run_from_worker(project_service.validate_exists, project_uuid)
             while True:
                 from_datetime, to_datetime = compute_sse_time_range(_gte, _from, _to)
@@ -676,7 +681,7 @@ class DashboardRoute:
             _to: Annotated[int | None, Query()] = None,
             tags: Annotated[list[str] | None, Depends(parse_tags_query)] = None,
             _: None = Depends(validate_sse_params),
-        ) -> StreamingResponse:
+        ) -> Iterator[dict[str, Any]]:
             run_from_worker(project_service.validate_exists, project_uuid)
             while True:
                 from_datetime, to_datetime = compute_sse_time_range(_gte, _from, _to)
@@ -711,7 +716,7 @@ class DashboardRoute:
             _to: Annotated[int | None, Query()] = None,
             tags: Annotated[list[str] | None, Depends(parse_tags_query)] = None,
             _: None = Depends(validate_sse_params),
-        ) -> StreamingResponse:
+        ) -> Iterator[dict[str, Any]]:
             run_from_worker(project_service.validate_exists, project_uuid)
             while True:
                 from_datetime, to_datetime = compute_sse_time_range(_gte, _from, _to)
@@ -746,7 +751,7 @@ class DashboardRoute:
             _to: Annotated[int | None, Query()] = None,
             tags: Annotated[list[str] | None, Depends(parse_tags_query)] = None,
             _: None = Depends(validate_sse_params),
-        ) -> StreamingResponse:
+        ) -> Iterator[dict[str, Any]]:
             run_from_worker(project_service.validate_exists, project_uuid)
             while True:
                 from_datetime, to_datetime = compute_sse_time_range(_gte, _from, _to)
@@ -854,7 +859,7 @@ class DashboardRoute:
             _with_saved_tokens: bool = Query(False),
             tags: Annotated[list[str] | None, Depends(parse_tags_query)] = None,
             _: None = Depends(validate_sse_params),
-        ) -> StreamingResponse:
+        ) -> Iterator[dict[str, Any]]:
             project = run_from_worker(project_service.get_by_uuid, project_uuid)
             project_entry = request.app.state.project_configs.get(project.name)
             if not project_entry:
@@ -893,7 +898,7 @@ class DashboardRoute:
             _to: Annotated[int | None, Query()] = None,
             tags: Annotated[list[str] | None, Depends(parse_tags_query)] = None,
             _: None = Depends(validate_sse_params),
-        ) -> StreamingResponse:
+        ) -> Iterator[MostExpensiveRouteDTO | dict[str, Any]]:
             project = run_from_worker(project_service.get_by_uuid, project_uuid)
             project_entry = request.app.state.project_configs.get(project.name)
             if not project_entry:
@@ -932,7 +937,7 @@ class DashboardRoute:
             tags: Annotated[list[str] | None, Depends(parse_tags_query)] = None,
             _: None = Depends(validate_sse_params),
             __: None = Depends(validate_project_exists),
-        ) -> Iterator[dict]:
+        ) -> Iterator[dict[str, Any]]:
             while True:
                 # Recomputed every tick, so a rolling look-back really rolls.
                 from_datetime, to_datetime = compute_sse_time_range(_gte, _from, _to)
@@ -956,7 +961,7 @@ class DashboardRoute:
             _from: int | None,
             _to: int | None,
             tags: list[str] | None,
-        ) -> Iterator[dict]:
+        ) -> Iterator[dict[str, Any]]:
             """One entity's chart, refreshed every tick.
 
             Shared by the three drill-down streams so they cannot drift on
@@ -997,7 +1002,7 @@ class DashboardRoute:
             tags: Annotated[list[str] | None, Depends(parse_tags_query)] = None,
             _: None = Depends(validate_sse_params),
             __: None = Depends(validate_project_exists),
-        ) -> Iterator[dict]:
+        ) -> Iterator[dict[str, Any]]:
             yield from mcp_entity_ticks(
                 project_uuid=project_uuid,
                 group_by='services',
@@ -1029,7 +1034,7 @@ class DashboardRoute:
             tags: Annotated[list[str] | None, Depends(parse_tags_query)] = None,
             _: None = Depends(validate_sse_params),
             __: None = Depends(validate_project_exists),
-        ) -> Iterator[dict]:
+        ) -> Iterator[dict[str, Any]]:
             yield from mcp_entity_ticks(
                 project_uuid=project_uuid,
                 group_by='groups',
@@ -1061,7 +1066,7 @@ class DashboardRoute:
             tags: Annotated[list[str] | None, Depends(parse_tags_query)] = None,
             _: None = Depends(validate_sse_params),
             __: None = Depends(validate_project_exists),
-        ) -> Iterator[dict]:
+        ) -> Iterator[dict[str, Any]]:
             yield from mcp_entity_ticks(
                 project_uuid=project_uuid,
                 group_by='keys',

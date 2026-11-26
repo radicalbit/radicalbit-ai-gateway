@@ -7,14 +7,17 @@ from openai.types.chat import ChatCompletion, ChatCompletionMessage
 from openai.types.chat.chat_completion import Choice
 from openai.types.create_embedding_response import CreateEmbeddingResponse, Usage
 
-from radicalbit_ai_gateway.models.guardrails import Guardrail, GuardrailWhereType
+from radicalbit_ai_gateway.models.guardrails import (
+    CheckClassGuardrail,
+    GuardrailWhereType,
+)
 
 
 @dataclass
 class SoftBlock:
     """Information about a triggered soft block guardrail."""
 
-    guardrail: Guardrail
+    guardrail: CheckClassGuardrail
     where: GuardrailWhereType
     message: str  # client-facing fallback
 

@@ -45,7 +45,11 @@ def _expire_on_redis(client: Redis, key: str) -> None:
 async def backend(request):
     if request.param == 'memory':
         with freeze_time(datetime(2024, 1, 1, 12, tzinfo=UTC)) as frozen:
-            yield Backend(InMemoryStorage(), lambda key: frozen.tick(2), ttl_slack=0)
+
+            def expire(key: str) -> None:
+                frozen.tick(2)
+
+            yield Backend(InMemoryStorage(), expire, ttl_slack=0)
         return
     url = request.getfixturevalue('redis_connection_url')
     client = Redis.from_url(url)

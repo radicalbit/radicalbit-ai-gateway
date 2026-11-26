@@ -9,6 +9,7 @@ counted and recorded.
 from contextlib import ExitStack, contextmanager
 import json
 from types import SimpleNamespace
+from typing import Any, TypedDict
 from unittest.mock import patch
 
 import pytest
@@ -69,6 +70,12 @@ ROOMY_CREDENTIAL = (
 ROOMY_PROJECT = (project_limit(10),)
 
 
+def _sse_events(reply: CannedResponse) -> list[Any]:
+    """Return the events of a canned stream."""
+    assert reply.sse_events is not None
+    return reply.sse_events
+
+
 @pytest.fixture
 def gateway():
     with open_gateway(messages_routes(CLAUDE), use_pook=True) as gateway:
@@ -113,7 +120,9 @@ async def _counters(route) -> dict[str, int]:
     return {name: await consumed(window) for name, window in windows.items()}
 
 
-def _counted(requests: int, input_tokens: int, output_tokens: int, cost: int) -> dict:
+def _counted(
+    requests: int, input_tokens: int, output_tokens: int, cost: int
+) -> dict[str, Any]:
     """Return the counters after usage counted once at every scope."""
     return {
         'route requests': requests,
@@ -130,7 +139,15 @@ def _counted(requests: int, input_tokens: int, output_tokens: int, cost: int) ->
 
 # 21 new input tokens, 4 read from the cache, 5 written to it for 5 minutes:
 # 30 input tokens on the limits. 7 output tokens.
-CACHED_REPLY = {'input_tokens': 21, 'cache_read': 4, 'cache_5m': 5}
+class _CachedReply(TypedDict):
+    """The token counts of a reply, as the canned replies take them."""
+
+    input_tokens: int
+    cache_read: int
+    cache_5m: int
+
+
+CACHED_REPLY: _CachedReply = {'input_tokens': 21, 'cache_read': 4, 'cache_5m': 5}
 
 
 def _mock_cached_reply(stream: bool):
@@ -156,7 +173,9 @@ def _refused(response) -> str:
     assert error_shape(response.json()) == error_shape(
         error_body('rate_limit_error', '')
     )
-    return response.json()['error']['message']
+    message = response.json()['error']['message']
+    assert isinstance(message, str)
+    return message
 
 
 # ── Request rate limits ─────────────────────────────────────────────────────
@@ -192,15 +211,15 @@ LONG = 'alpha ' * 60
 TOOL_USE = {'type': 'tool_use', 'id': 'toolu_1', 'name': 'lookup', 'input': {}}
 
 
-def _tool_result(content) -> dict:
+def _tool_result(content) -> dict[str, Any]:
     return {'type': 'tool_result', 'tool_use_id': 'toolu_1', 'content': content}
 
 
-def _conversation(*messages: dict, system=BODY['system']) -> dict:
+def _conversation(*messages: dict[str, Any], system=BODY['system']) -> dict[str, Any]:
     return {**BODY, 'system': system, 'messages': list(messages)}
 
 
-def _user(*blocks) -> dict:
+def _user(*blocks) -> dict[str, Any]:
     return {'role': 'user', 'content': list(blocks)}
 
 
@@ -381,12 +400,12 @@ def _stream_with_whole_final_usage() -> str:
     reads its usage there.
     """
     reply = canned.anthropic_stream(**CACHED_REPLY)
-    start_usage = reply.sse_events[0]['message']['usage']
+    start_usage = _sse_events(reply)[0]['message']['usage']
     events = [
         {**event, 'usage': {**start_usage, **event['usage']}}
         if event['type'] == 'message_delta'
         else event
-        for event in reply.sse_events
+        for event in _sse_events(reply)
     ]
     return CannedResponse(sse_events=events, sse_format='anthropic').sse_text()
 

@@ -1,6 +1,9 @@
-import pytest
+from typing import Any
 
-from radicalbit_ai_gateway.llm.messages import HumanMessage
+import pytest
+from typing_extensions import override
+
+from radicalbit_ai_gateway.llm.messages import BaseMessage, HumanMessage
 from radicalbit_ai_gateway.models.gateway_config import GatewayConfig
 import radicalbit_ai_gateway.preprocessing as preprocessing_module
 from radicalbit_ai_gateway.preprocessing import (
@@ -40,6 +43,7 @@ def _config(plugins):
 
 
 class Upper(PreprocessingPlugin):
+    @override
     async def preprocess(self, messages, config):
         for m in messages:
             if isinstance(m.content, str):
@@ -48,6 +52,7 @@ class Upper(PreprocessingPlugin):
 
 
 class Suffix(PreprocessingPlugin):
+    @override
     async def preprocess(self, messages, config):
         suffix = (config or {}).get('suffix', '')
         for m in messages:
@@ -59,9 +64,11 @@ class Suffix(PreprocessingPlugin):
 class AlwaysOn(PreprocessingPlugin):
     """Overrides gating to run regardless of the ``enabled`` flag."""
 
+    @override
     def is_enabled(self, config):
         return True
 
+    @override
     async def preprocess(self, messages, config):
         for m in messages:
             if isinstance(m.content, str):
@@ -72,10 +79,12 @@ class AlwaysOn(PreprocessingPlugin):
 class Validating(PreprocessingPlugin):
     """Validates its own slice: requires a ``threshold`` key."""
 
+    @override
     def validate(self, config):
         if 'threshold' not in config:
             raise ValueError('threshold required')
 
+    @override
     async def preprocess(self, messages, config):
         return messages
 
@@ -89,21 +98,24 @@ class SchemaPlugin(PreprocessingPlugin):
 
     config_schema = SchemaConfig
 
+    @override
     async def preprocess(self, messages, config):
         return messages
 
 
 class Boom(PreprocessingPlugin):
+    @override
     async def preprocess(self, messages, config):
         raise RuntimeError('Error')
 
 
 class BadRequest(PreprocessingPlugin):
+    @override
     async def preprocess(self, messages, config):
         raise GatewayBadRequest('Error')
 
 
-def _on(key: str, **extra) -> dict:
+def _on(key: str, **extra) -> dict[str, Any]:
     """Plugins that enables *key* with optional plugin-specific settings."""
     return {key: {'enabled': True, **extra}}
 
@@ -117,7 +129,7 @@ def test_config_key_is_top_level_package():
 
 
 async def test_no_plugins_is_noop():
-    messages = [HumanMessage(content='hello')]
+    messages: list[BaseMessage] = [HumanMessage(content='hello')]
     out = await run_preprocessing(messages)
     assert out is messages
     assert out[0].content == 'hello'
@@ -207,7 +219,7 @@ async def test_failing_plugin_is_fail_closed():
 async def test_chain_stops_after_failure():
     register_preprocessing_plugin(Boom(), name='boom')
     register_preprocessing_plugin(Upper(), name='upper')
-    messages = [HumanMessage(content='hello')]
+    messages: list[BaseMessage] = [HumanMessage(content='hello')]
     plugins = {**_on('boom'), **_on('upper')}
     with pytest.raises(PreprocessingError):
         await run_preprocessing(messages, plugins)

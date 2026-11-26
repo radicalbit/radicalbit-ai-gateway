@@ -1,4 +1,6 @@
+from collections.abc import Callable
 from types import SimpleNamespace
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 import uuid
 
@@ -10,6 +12,7 @@ from starlette.testclient import TestClient
 from tests.common import db_mock
 from tests.common.sse import first_events
 
+from radicalbit_ai_gateway.middleware.exception_handlers import add_exception_handler
 from radicalbit_ai_gateway.models.auth_dto import (
     GroupFullOut,
     GroupsRouteOut,
@@ -26,6 +29,7 @@ from radicalbit_ai_gateway.models.project_budget_limiting import (
     ProjectBudgetLimitValueIn,
 )
 from radicalbit_ai_gateway.models.project_dto import ProjectFilter
+from radicalbit_ai_gateway.route_meta import read_route_meta
 from radicalbit_ai_gateway.routes.project_route import ProjectRoute, ProjectRouteConfig
 from radicalbit_ai_gateway.services.config_generator_service import (
     ConfigGeneratorService,
@@ -81,7 +85,7 @@ def _app(deps, config: ProjectRouteConfig | None = None) -> FastAPI:
         config_generator_service=deps.config_generator_service,
     )
     app = FastAPI(title='AI Gateway', debug=True)
-    app.add_exception_handler(AuthRegistryError, auth_registry_exception_handler)
+    add_exception_handler(app, AuthRegistryError, auth_registry_exception_handler)
     app.include_router(router, prefix=PREFIX)
     return app
 
@@ -327,6 +331,21 @@ def test_generate_config_rejected_when_served(client, deps):
 
     assert res.status_code == 400
     deps.config_generator_service.generate_config.assert_not_awaited()
+
+
+def test_generate_config_is_not_served_without_a_generator(deps):
+    """A router given no config generator has no generate-config endpoint,
+    instead of one that fails on every call.
+    """
+    deps.config_generator_service = None
+    deps.project_service.get_config.return_value = db_mock.get_sample_config_slot_out(
+        uuid=CID, config_file='# x'
+    )
+    client = TestClient(_app(deps), raise_server_exceptions=False)
+
+    res = client.post(f'{CONFIG}/generate-config', json={'description': 'make it'})
+
+    assert res.status_code == 404
 
 
 @pytest.mark.parametrize(
@@ -595,7 +614,7 @@ def test_a_service_error_becomes_its_error_response(
 # --- route_meta ---
 
 
-def _get_endpoint(app, path_suffix: str, method: str = 'PATCH') -> object:
+def _get_endpoint(app, path_suffix: str, method: str = 'PATCH') -> Callable[..., Any]:
     """Return the endpoint function for a given path suffix and method."""
 
     def _find_route(routes):
@@ -625,7 +644,7 @@ def _get_endpoint(app, path_suffix: str, method: str = 'PATCH') -> object:
 def test_update_budget_limit_value_is_audited_on_the_project(client):
     endpoint = _get_endpoint(client.app, 'budget-limits/{limit_uuid}', 'PATCH')
 
-    assert endpoint._route_meta == {
+    assert read_route_meta(endpoint) == {
         'entity_type': 'PROJECT',
         'entity_uuid_param': 'project_uuid',
     }
@@ -644,7 +663,7 @@ def test_config_mutation_routes_have_entity_uuid_param(deps):
     ]
     for path_suffix, method in config_routes:
         endpoint = _get_endpoint(client.app, path_suffix, method)
-        meta = getattr(endpoint, '_route_meta', None)
+        meta = read_route_meta(endpoint)
         assert meta is not None, f'{path_suffix} missing _route_meta'
         assert meta.get('entity_uuid_param') == 'project_uuid', (
             f'{path_suffix} missing entity_uuid_param'

@@ -50,7 +50,10 @@ def test_validator_error_fails_config_validation():
 
 
 def test_no_extension_is_a_noop():
-    register_plugins_validator(lambda plugins: 1 / 0)
+    def validate(plugins: object) -> None:
+        raise AssertionError('the validator ran without plugins')
+
+    register_plugins_validator(validate)
 
     _config(None)
 

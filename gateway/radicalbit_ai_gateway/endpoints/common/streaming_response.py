@@ -1,105 +1,92 @@
 """StreamingResponse subclass that defers the HTTP status code decision.
 
-The generator can yield plain ``str`` content (normal chunks) or a
-``(str, int)`` tuple where the second element is the desired HTTP status
-code, optionally followed by a ``dict`` of extra response headers.  The
-status code and headers from the **first** yielded item are used for the
-``http.response.start`` ASGI message, so errors that surface on the very
-first chunk (e.g. invalid API key) still produce a non-200 response.
+A stream that cannot start raises ``StreamRefused`` before its first frame:
+the response then answers with the refusal's status, headers and body, so
+errors that surface on the very first chunk (e.g. invalid API key) still
+produce a non-200 response. Once the first frame is sent, the status is the
+response's own.
 """
 
-from collections.abc import AsyncIterable
-import logging
+from collections.abc import Mapping
 
 from starlette.responses import StreamingResponse
 from starlette.types import Send
+from typing_extensions import override
 
-from radicalbit_ai_gateway.utils.app_config import get_app_config
 
-app_config = get_app_config()
-logger = logging.getLogger(app_config.log_config.logger_name)
+class StreamRefused(Exception):
+    """A stream that failed before its first frame: the HTTP error to answer
+    with instead.
+    """
+
+    def __init__(
+        self, body: str, status_code: int, headers: Mapping[str, str] | None = None
+    ) -> None:
+        super().__init__(body)
+        self.body = body
+        self.status_code = status_code
+        self.headers = dict(headers or {})
 
 
 class StreamingResponseWithStatusCode(StreamingResponse):
-    """Like ``StreamingResponse`` but lets the generator choose the status code."""
+    """Like ``StreamingResponse``, but a stream that raises ``StreamRefused``
+    before its first frame answers with the refusal's status code.
+    """
 
+    def _encode(self, chunk: str | bytes | memoryview) -> bytes | memoryview:
+        if isinstance(chunk, bytes | memoryview):
+            return chunk
+        return chunk.encode(self.charset or 'utf-8')
+
+    async def _start(self, send: Send, status_code: int) -> None:
+        await send(
+            {
+                'type': 'http.response.start',
+                'status': status_code,
+                'headers': self.raw_headers,
+            }
+        )
+
+    @override
     async def stream_response(self, send: Send) -> None:
-        body_iterator: AsyncIterable[str | bytes | memoryview[int]] = self.body_iterator
-
-        first_chunk_content: str | bytes | memoryview[int]
-        status_code = self.status_code
-
-        async for chunk in body_iterator:
-            if isinstance(chunk, tuple):
-                first_chunk_content, status_code, *extra = chunk
-                for name, value in (extra[0] if extra else {}).items():
-                    self.headers[name] = value
-            else:
-                first_chunk_content = chunk
-
-            # Send the response start with the resolved status code
-            await send(
-                {
-                    'type': 'http.response.start',
-                    'status': status_code,
-                    'headers': self.raw_headers,
-                }
-            )
-
-            # Send the first chunk body
+        body_iterator = aiter(self.body_iterator)
+        try:
+            first_chunk = await anext(body_iterator)
+        except StopAsyncIteration:
+            # An empty stream: headers and an empty body.
+            await self._start(send, self.status_code)
+            await send({'type': 'http.response.body', 'body': b'', 'more_body': False})
+            return
+        except StreamRefused as refused:
+            # The error is the whole response.
+            for name, value in refused.headers.items():
+                self.headers[name] = value
+            await self._start(send, refused.status_code)
             await send(
                 {
                     'type': 'http.response.body',
-                    'body': first_chunk_content
-                    if isinstance(first_chunk_content, bytes | memoryview)
-                    else first_chunk_content.encode(self.charset or 'utf-8'),
-                    'more_body': status_code < 400,
-                }
-            )
-
-            # For error responses, stop after the first (error) chunk
-            if status_code >= 400:
-                return
-
-            break
-        else:
-            # Empty iterator — send headers + empty body
-            await send(
-                {
-                    'type': 'http.response.start',
-                    'status': status_code,
-                    'headers': self.raw_headers,
-                }
-            )
-            await send(
-                {
-                    'type': 'http.response.body',
-                    'body': b'',
+                    'body': self._encode(refused.body),
                     'more_body': False,
                 }
             )
             return
 
-        # Stream remaining chunks (all plain strings at this point)
+        await self._start(send, self.status_code)
+        await send(
+            {
+                'type': 'http.response.body',
+                'body': self._encode(first_chunk),
+                'more_body': True,
+            }
+        )
         async for chunk in body_iterator:
-            if isinstance(chunk, tuple):
-                # Shouldn't happen after the first chunk, but handle gracefully
-                chunk = chunk[0]
             await send(
                 {
                     'type': 'http.response.body',
-                    'body': chunk
-                    if isinstance(chunk, bytes | memoryview)
-                    else chunk.encode(self.charset or 'utf-8'),
+                    'body': self._encode(chunk),
                     'more_body': True,
                 }
             )
 
         # Final empty body to signal end of stream
-        await send(
-            {
-                'type': 'http.response.body',
-                'body': b'',
-                'more_body': False,
-            }
-        )
+        await send({'type': 'http.response.body', 'body': b'', 'more_body': False})

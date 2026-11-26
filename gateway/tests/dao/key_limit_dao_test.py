@@ -1,21 +1,30 @@
+from decimal import Decimal
 import uuid
 
 import pytest
 from sqlalchemy.exc import IntegrityError
+from typing_extensions import override
 
 from tests.common import db_mock
 from tests.common.db_integration import AsyncDatabaseIntegration
 
 from radicalbit_ai_gateway.db.dao.key_dao import KeyDAO
 from radicalbit_ai_gateway.db.dao.key_limit_dao import KeyLimitDAO
+from radicalbit_ai_gateway.db.tables.key_limit_table import KeyLimit
 
 
 class KeyLimitDAOTest(AsyncDatabaseIntegration):
+    @override
     @classmethod
     def setUpClass(cls):
         super().setUpClass()
         cls.key_dao = KeyDAO(cls.db)
         cls.key_limit_dao = KeyLimitDAO(cls.db)
+
+    async def _limit(self, limit_uuid: uuid.UUID) -> KeyLimit:
+        found = await self.key_limit_dao.get_by_uuid(limit_uuid)
+        assert found is not None
+        return found
 
     async def _insert_key(self, name='rb-key'):
         key = db_mock.get_sample_key(uuid=uuid.uuid4(), name=name)
@@ -31,7 +40,7 @@ class KeyLimitDAOTest(AsyncDatabaseIntegration):
         key = await self._insert_key()
         limit = db_mock.get_sample_key_limit(uuid=uuid.uuid4(), key_uuid=key.uuid)
         await self.key_limit_dao.insert(limit)
-        res = await self.key_limit_dao.get_by_uuid(limit.uuid)
+        res = await self._limit(limit.uuid)
         assert res.uuid == limit.uuid
 
     async def test_get_by_key_uuid(self):
@@ -101,12 +110,12 @@ class KeyLimitDAOTest(AsyncDatabaseIntegration):
         existing = await self.key_limit_dao.insert(
             db_mock.get_sample_key_limit(uuid=uuid.uuid4(), key_uuid=key.uuid)
         )
-        existing.max_value = 99.0
+        existing.max_value = Decimal('99')
         new = db_mock.get_sample_key_limit(
             uuid=uuid.uuid4(), key_uuid=key.uuid, category='request_rate'
         )
         await self.key_limit_dao.save_many([new], [existing])
-        assert (await self.key_limit_dao.get_by_uuid(existing.uuid)).max_value == 99.0
+        assert (await self._limit(existing.uuid)).max_value == 99.0
         assert await self.key_limit_dao.get_by_uuid(new.uuid) is not None
 
     async def test_save_many_is_atomic_on_conflict(self):
@@ -114,12 +123,12 @@ class KeyLimitDAOTest(AsyncDatabaseIntegration):
         existing = await self.key_limit_dao.insert(
             db_mock.get_sample_key_limit(uuid=uuid.uuid4(), key_uuid=key.uuid)
         )
-        existing.max_value = 99.0
+        existing.max_value = Decimal('99')
         # Same category/algorithm/window as the existing one
         duplicate = db_mock.get_sample_key_limit(uuid=uuid.uuid4(), key_uuid=key.uuid)
         with pytest.raises(IntegrityError):
             await self.key_limit_dao.save_many([duplicate], [existing])
-        assert (await self.key_limit_dao.get_by_uuid(existing.uuid)).max_value == 10.0
+        assert (await self._limit(existing.uuid)).max_value == 10.0
 
     async def test_insert_many_is_atomic_on_conflict(self):
         key = await self._insert_key()

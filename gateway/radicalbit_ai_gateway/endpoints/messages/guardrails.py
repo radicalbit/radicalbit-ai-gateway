@@ -8,6 +8,7 @@ The input guardrails read the request as a ``Conversation`` of the messages
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
+from typing import Any
 
 from radicalbit_ai_gateway.endpoints.messages.output import MessagesOutput, with_text
 from radicalbit_ai_gateway.gateway_route.scope import RequestScope
@@ -27,7 +28,7 @@ class MessagesReply:
     redactable = True
 
     @classmethod
-    def of(cls, message: dict) -> MessagesReply:
+    def of(cls, message: dict[str, Any]) -> MessagesReply:
         output = MessagesOutput(message)
         return cls(output, output.messages())
 
@@ -37,13 +38,15 @@ class MessagesReply:
     def with_messages(self, messages: list[BaseMessage]) -> MessagesReply:
         return replace(self, items=messages)
 
-    def message(self) -> dict:
+    def message(self) -> dict[str, Any]:
         """Return the answer with the texts of this reply written in."""
         self.output.write_back(self.items)
         return self.output.message
 
 
-async def screen_output(scope: RequestScope, message: dict) -> dict:
+async def screen_output(
+    scope: RequestScope[dict[str, Any], dict[str, Any]], message: dict[str, Any]
+) -> dict[str, Any]:
     """Apply the output guardrails to the text of an answer and return the
     answer to send. A soft block replaces the reply. The flags go on the
     scope.
@@ -56,7 +59,9 @@ async def screen_output(scope: RequestScope, message: dict) -> dict:
 
 
 @workflow(name='apply_messages_output_guardrails')
-async def _screen_output(scope: RequestScope, message: dict) -> dict:
+async def _screen_output(
+    scope: RequestScope[dict[str, Any], dict[str, Any]], message: dict[str, Any]
+) -> dict[str, Any]:
     screened = await scope.guardrails.screen_output(MessagesReply.of(message))
     if screened.soft_block:
         scope.flags |= GuardrailFlags(output_warned=True, output_blocked=True)

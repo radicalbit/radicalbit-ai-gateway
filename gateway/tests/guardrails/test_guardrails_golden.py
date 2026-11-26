@@ -7,6 +7,7 @@ guardrail events and log lines are compared with literals. Only the drivers
 """
 
 import json
+from typing import Any
 from unittest.mock import patch
 
 import pook
@@ -53,7 +54,7 @@ JEV = {
 }
 
 
-def _redact(name: str, where: str) -> dict:
+def _redact(name: str, where: str) -> dict[str, Any]:
     return {
         'name': name,
         'type': 'presidio_anonymizer',
@@ -62,7 +63,9 @@ def _redact(name: str, where: str) -> dict:
     }
 
 
-def _contains(name: str, where: str, behavior: str, value: str, **extra) -> dict:
+def _contains(
+    name: str, where: str, behavior: str, value: str, **extra
+) -> dict[str, Any]:
     return {
         'name': name,
         'type': 'contains',
@@ -84,8 +87,8 @@ SOFT_IO = _contains('soft_io', 'io', 'soft_block', 'softout')
 
 
 def _build_routes(
-    *guardrails: dict, unknown: tuple[str, ...] = (), **chat_route
-) -> dict:
+    *guardrails: dict[str, Any], unknown: tuple[str, ...] = (), **chat_route
+) -> dict[str, Any]:
     """Build a chat, an embedding and a decision route, each with
     ``guardrails`` (output ones on the chat route only).
     """
@@ -118,7 +121,7 @@ def _build_routes(
 
 @pytest.fixture
 def gateway(caplog):
-    events: list = []
+    events: list[Any] = []
     with open_gateway(
         caplog=caplog,
         use_pook=True,
@@ -128,6 +131,7 @@ def gateway(caplog):
         ],
         gateway_class=_Gateway,
     ) as gateway:
+        assert isinstance(gateway, _Gateway)
         gateway.events = events
         yield gateway
 
@@ -135,21 +139,23 @@ def gateway(caplog):
 class _Gateway(Gateway):
     """Sends the requests with no canned replies: pook answers for the providers."""
 
-    def chat(self, text: str, stream: bool = False):
-        return super().chat(None, text=text, stream=stream)
+    events: list[Any]
 
-    def responses(self, text: str, stream: bool = False):
-        return super().responses(None, text=text, stream=stream)
+    def send_chat(self, text: str, stream: bool = False):
+        return self.chat(None, text=text, stream=stream)
 
-    def embed(self, texts: list[str]):
-        return super().embed(None, texts=texts)
+    def send_responses(self, text: str, stream: bool = False):
+        return self.responses(None, text=text, stream=stream)
 
-    def decide(self, ticket: str):
+    def send_embed(self, texts: list[str]):
+        return self.embed(None, texts=texts)
+
+    def send_decide(self, ticket: str):
         return self.post(
             '/v1/systemone', json={'model': 'proj/agent', 'state': {'ticket': ticket}}
         )
 
-    def guardrail_events(self) -> list[tuple]:
+    def guardrail_events(self) -> list[tuple[Any, ...]]:
         return [(e.name, e.type, e.where, e.behavior, e.is_judge) for e in self.events]
 
     def guardrail_logs(self) -> list[tuple[str, str]]:
@@ -200,7 +206,7 @@ def _mock_openai_stream(*parts: str):
     return mock
 
 
-def _openai_response(text: str) -> dict:
+def _openai_response(text: str) -> dict[str, Any]:
     return {
         'id': 'resp_1',
         'object': 'response',
@@ -268,7 +274,7 @@ def _mock_openai_embeddings():
     return mock
 
 
-def _sse(response) -> list:
+def _sse(response) -> list[Any]:
     """Return the data frames of a stream, without ids and timestamps."""
     frames = []
     for line in response.text.splitlines():
@@ -285,7 +291,7 @@ def _sse(response) -> list:
     return frames
 
 
-def _completion(response) -> dict:
+def _completion(response) -> dict[str, Any]:
     body = response.json()
     body.pop('id')
     body.pop('created')
@@ -303,12 +309,12 @@ OUTPUT_SOFT_BLOCK_MESSAGE = (
     'This response has been blocked due to policy violation: soft_out'
 )
 
-REDACT_IN_EVENT = ('redact_in', 'PRESIDIO_ANONYMIZER', 'INPUT', 'BLOCK', False)
+REDACT_IN_EVENT = ('redact_in', 'PRESIDIO_ANONYMIZER', 'INPUT', 'REDACT', False)
 REDACT_IN_LOG = (
     'WARNING',
     (
         '[GUARDRAIL TRIGGERED] [route=chat] [name=redact_in] '
-        '[type=PRESIDIO_ANONYMIZER] [where=INPUT] [behavior=BLOCK]'
+        '[type=PRESIDIO_ANONYMIZER] [where=INPUT] [behavior=REDACT]'
     ),
 )
 SOFT_IN_LOG = (
@@ -326,7 +332,7 @@ def test_chat_input_soft_block_after_a_redaction(gateway):
     app.state.routes = gateway_routes
     openai = _mock_openai('never')
 
-    response = gateway.chat(f'Mail {EMAIL} softme')
+    response = gateway.send_chat(f'Mail {EMAIL} softme')
 
     assert response.status_code == 200
     assert _completion(response) == {
@@ -374,7 +380,7 @@ def test_chat_input_soft_block_without_a_redaction(gateway, extra):
     app.state.routes = _build_routes(SOFT_IN, *extra)
 
     for stream in (False, True):
-        response = gateway.chat('please softme', stream=stream)
+        response = gateway.send_chat('please softme', stream=stream)
 
         assert response.status_code == 200
         assert _guardrail_headers(response) == {
@@ -387,9 +393,9 @@ def test_chat_input_soft_block_without_a_redaction(gateway, extra):
 def test_chat_stream_cache_hit_after_a_redaction(gateway, extra):
     app.state.routes = _build_routes(REDACT_IN, *extra, caching={'type': 'exact'})
     _mock_openai_stream('a reply')
-    gateway.chat(f'Mail {EMAIL}', stream=True)
+    gateway.send_chat(f'Mail {EMAIL}', stream=True)
 
-    response = gateway.chat(f'Mail {EMAIL}', stream=True)
+    response = gateway.send_chat(f'Mail {EMAIL}', stream=True)
 
     assert response.status_code == 200
     assert response.headers['X-RB-AIGATEWAY-CACHE-HIT'] == 'true'
@@ -403,7 +409,7 @@ def test_chat_live_stream_input_soft_block_after_a_redaction(gateway):
     app.state.routes = _build_routes(REDACT_IN, SOFT_IN)
     openai = _mock_openai_stream('never')
 
-    response = gateway.chat(f'Mail {EMAIL} softme', stream=True)
+    response = gateway.send_chat(f'Mail {EMAIL} softme', stream=True)
 
     assert response.status_code == 200
     assert _sse(response) == [
@@ -436,7 +442,7 @@ def test_chat_buffered_stream_input_soft_block_after_a_redaction(gateway):
     app.state.routes = _build_routes(REDACT_IN, SOFT_IN, WARN_OUT)
     openai = _mock_openai_stream('never')
 
-    response = gateway.chat(f'Mail {EMAIL} softme', stream=True)
+    response = gateway.send_chat(f'Mail {EMAIL} softme', stream=True)
 
     assert response.status_code == 200
     assert _sse(response) == [
@@ -464,7 +470,7 @@ def test_chat_warns_on_input_and_output(gateway):
     app.state.routes = _build_routes(WARN_IN, WARN_OUT)
     _mock_openai('a warnout reply')
 
-    response = gateway.chat('please warnme')
+    response = gateway.send_chat('please warnme')
 
     assert response.status_code == 200
     assert response.json()['choices'][0]['message']['content'] == 'a warnout reply'
@@ -501,7 +507,7 @@ def test_chat_unknown_guardrail_names_are_logged_where_guardrails_run(gateway):
     app.state.routes = _build_routes(REDACT_IN, WARN_IN, unknown=('ghost',))
     _mock_openai('a reply')
 
-    response = gateway.chat('please warnme')
+    response = gateway.send_chat('please warnme')
 
     assert response.status_code == 200
     assert gateway.guardrail_logs() == [
@@ -522,7 +528,7 @@ def test_chat_buffered_stream_warns_on_input_and_output(gateway):
     app.state.routes = _build_routes(WARN_IN, WARN_OUT)
     _mock_openai_stream('a warnout ', 'reply')
 
-    response = gateway.chat('please warnme', stream=True)
+    response = gateway.send_chat('please warnme', stream=True)
 
     assert response.status_code == 200
     assert [f['choices'][0]['delta'].get('content') for f in _sse(response)[:-1]] == [
@@ -542,7 +548,7 @@ def test_chat_output_soft_block_keeps_the_usage(gateway):
     app.state.routes = _build_routes(WARN_OUT, SOFT_OUT)
     _mock_openai('a softout warnout reply')
 
-    response = gateway.chat('hello')
+    response = gateway.send_chat('hello')
 
     assert response.status_code == 200
     body = _completion(response)
@@ -565,7 +571,7 @@ def test_chat_output_redaction(gateway):
     app.state.routes = _build_routes(REDACT_OUT)
     _mock_openai(f'Write to {EMAIL}')
 
-    response = gateway.chat('hello')
+    response = gateway.send_chat('hello')
 
     assert response.status_code == 200
     assert (
@@ -577,13 +583,13 @@ def test_chat_output_redaction(gateway):
         'X-RB-AIGATEWAY-GUARDRAILS-OUTPUT-WARN': 'true',
     }
     assert gateway.guardrail_events() == [
-        ('redact_out', 'PRESIDIO_ANONYMIZER', 'OUTPUT', 'BLOCK', False)
+        ('redact_out', 'PRESIDIO_ANONYMIZER', 'OUTPUT', 'REDACT', False)
     ]
     assert gateway.guardrail_logs()[-1] == (
         'WARNING',
         (
             '[GUARDRAIL TRIGGERED] [route=chat] [name=redact_out] '
-            '[type=PRESIDIO_ANONYMIZER] [where=OUTPUT] [behavior=BLOCK]'
+            '[type=PRESIDIO_ANONYMIZER] [where=OUTPUT] [behavior=REDACT]'
         ),
     )
 
@@ -593,7 +599,7 @@ def test_chat_input_block(gateway, stream):
     app.state.routes = _build_routes(BLOCK_IN)
     openai = _mock_openai('never')
 
-    response = gateway.chat('please blockme', stream=stream)
+    response = gateway.send_chat('please blockme', stream=stream)
 
     assert response.status_code == 400
     assert response.json() == {
@@ -627,7 +633,7 @@ def test_chat_input_block(gateway, stream):
     assert not openai.isdone()
 
 
-def _buffered_soft_block_error(name: str, where: str) -> dict:
+def _buffered_soft_block_error(name: str, where: str) -> dict[str, Any]:
     return {
         'error': {
             'message': f'This response has been blocked due to policy violation: {name}',
@@ -653,7 +659,7 @@ def test_chat_buffered_stream_output_soft_block_is_a_400(gateway):
     app.state.routes = _build_routes(WARN_OUT, SOFT_OUT)
     _mock_openai_stream('a softout reply')
 
-    response = gateway.chat('hello', stream=True)
+    response = gateway.send_chat('hello', stream=True)
 
     assert response.status_code == 400
     assert response.json() == _buffered_soft_block_error('soft_out', 'OUTPUT')
@@ -669,7 +675,7 @@ def test_chat_buffered_stream_output_redaction(gateway):
     app.state.routes = _build_routes(REDACT_OUT)
     _mock_openai_stream('Write to ', EMAIL)
 
-    response = gateway.chat('hello', stream=True)
+    response = gateway.send_chat('hello', stream=True)
 
     assert response.status_code == 200
     # The redacted text goes out in the first content chunk.
@@ -682,7 +688,7 @@ def test_chat_buffered_stream_output_redaction(gateway):
     assert EMAIL not in response.text
     assert _guardrail_headers(response) == GOLDEN_HEADERS['buffered_redact']
     assert gateway.guardrail_events() == [
-        ('redact_out', 'PRESIDIO_ANONYMIZER', 'OUTPUT', 'BLOCK', False)
+        ('redact_out', 'PRESIDIO_ANONYMIZER', 'OUTPUT', 'REDACT', False)
     ]
 
 
@@ -691,7 +697,7 @@ def test_chat_buffered_stream_redacts_before_the_output_check(gateway):
     app.state.routes = _build_routes(REDACT_OUT, block_email)
     _mock_openai_stream(f'Write to {EMAIL}')
 
-    response = gateway.chat('hello', stream=True)
+    response = gateway.send_chat('hello', stream=True)
 
     assert response.status_code == 200
     assert 'Write to <EMAIL_ADDRESS>' in response.text
@@ -702,7 +708,7 @@ def test_chat_buffered_stream_output_block(gateway):
     app.state.routes = _build_routes(block_out)
     _mock_openai_stream('a bad reply')
 
-    response = gateway.chat('hello', stream=True)
+    response = gateway.send_chat('hello', stream=True)
 
     assert response.status_code == 400
     assert response.json()['error']['message'] == 'no'
@@ -716,7 +722,7 @@ def test_chat_buffered_stream_soft_block_names_an_io_guardrail(gateway):
     app.state.routes = _build_routes(SOFT_IO)
     _mock_openai_stream('a softout reply')
 
-    response = gateway.chat('hello', stream=True)
+    response = gateway.send_chat('hello', stream=True)
 
     assert response.status_code == 400
     assert response.json() == _buffered_soft_block_error('soft_io', 'IO')
@@ -726,7 +732,7 @@ def test_chat_buffered_stream_soft_block_with_an_unknown_name_on_the_route(gatew
     app.state.routes = _build_routes(SOFT_OUT, unknown=('ghost',))
     _mock_openai_stream('a softout reply')
 
-    response = gateway.chat('hello', stream=True)
+    response = gateway.send_chat('hello', stream=True)
 
     assert response.status_code == 400
     assert response.json() == _buffered_soft_block_error('soft_out', 'OUTPUT')
@@ -741,7 +747,7 @@ def test_responses_input_soft_block_after_a_redaction(gateway):
     app.state.routes = _build_routes(REDACT_IN, SOFT_IN)
     openai = _mock_openai_responses('never')
 
-    response = gateway.responses(f'Mail {EMAIL} softme')
+    response = gateway.send_responses(f'Mail {EMAIL} softme')
 
     assert response.status_code == 200
     assert response.json()['output'][0]['content'][0]['text'] == (
@@ -768,7 +774,7 @@ def test_responses_output_soft_block(gateway, stream):
     else:
         _mock_openai_responses('a softout reply')
 
-    response = gateway.responses('hello', stream=stream)
+    response = gateway.send_responses('hello', stream=stream)
 
     assert response.status_code == 200
     assert OUTPUT_SOFT_BLOCK_MESSAGE in response.text
@@ -785,7 +791,7 @@ def test_responses_output_redaction_and_warn(gateway):
     app.state.routes = _build_routes(WARN_IN, REDACT_OUT)
     _mock_openai_responses(f'Write to {EMAIL}')
 
-    response = gateway.responses('please warnme')
+    response = gateway.send_responses('please warnme')
 
     assert response.status_code == 200
     assert response.json()['output'][0]['content'][0]['text'] == (
@@ -798,7 +804,7 @@ def test_responses_output_redaction_and_warn(gateway):
     }
     assert gateway.guardrail_events() == [
         ('warn_in', 'CONTAINS', 'INPUT', 'WARN', False),
-        ('redact_out', 'PRESIDIO_ANONYMIZER', 'OUTPUT', 'BLOCK', False),
+        ('redact_out', 'PRESIDIO_ANONYMIZER', 'OUTPUT', 'REDACT', False),
     ]
 
 
@@ -811,7 +817,7 @@ def test_embeddings_soft_block_after_a_redaction(gateway):
     app.state.routes = _build_routes(REDACT_IN, SOFT_IN)
     openai = _mock_openai_embeddings()
 
-    response = gateway.embed([f'Mail {EMAIL}', 'softme'])
+    response = gateway.send_embed([f'Mail {EMAIL}', 'softme'])
 
     assert response.status_code == 200
     assert response.json() == {
@@ -824,7 +830,7 @@ def test_embeddings_soft_block_after_a_redaction(gateway):
     assert _guardrail_headers(response) == {}
     assert not openai.isdone()
     assert gateway.guardrail_events() == [
-        ('redact_in', 'PRESIDIO_ANONYMIZER', 'INPUT', 'BLOCK', False),
+        ('redact_in', 'PRESIDIO_ANONYMIZER', 'INPUT', 'REDACT', False),
         ('soft_in', 'CONTAINS', 'INPUT', 'SOFT_BLOCK', False),
     ]
 
@@ -833,7 +839,7 @@ def test_embeddings_are_redacted_before_going_upstream(gateway):
     app.state.routes = _build_routes(REDACT_IN)
     openai = _mock_openai_embeddings()
 
-    response = gateway.embed([f'Mail {EMAIL}'])
+    response = gateway.send_embed([f'Mail {EMAIL}'])
 
     assert response.status_code == 200
     [sent] = openai.matches[0].json['input']
@@ -845,7 +851,7 @@ def test_embeddings_block_logs_the_block(gateway):
     app.state.routes = _build_routes(BLOCK_IN)
     openai = _mock_openai_embeddings()
 
-    response = gateway.embed(['please blockme'])
+    response = gateway.send_embed(['please blockme'])
 
     assert response.status_code == 400
     assert response.json()['error']['message'] == 'no'
@@ -863,7 +869,7 @@ def test_embeddings_block_logs_the_block(gateway):
 def test_decision_soft_block_is_a_400(gateway):
     app.state.routes = _build_routes(SOFT_IN)
 
-    response = gateway.decide('please softme')
+    response = gateway.send_decide('please softme')
 
     assert response.status_code == 400
     assert response.json() == {

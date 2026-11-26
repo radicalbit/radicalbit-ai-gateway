@@ -2,6 +2,7 @@ from dataclasses import dataclass
 import json
 import logging
 import time
+from typing import Any
 
 from radicalbit_ai_gateway.invocation.decision_model_invoker import (
     DECISION_MODEL_TYPE,
@@ -69,7 +70,7 @@ class _Answer:
 
     key: str
     confidence: float | None
-    probabilities: dict | None
+    probabilities: dict[str, Any] | None
 
 
 class DecisionRouter:
@@ -137,20 +138,23 @@ class DecisionRouter:
         chosen = next(o for o in self._options if o.key == answer.key)
         min_confidence = self._config.min_confidence
         # Equal to min_confidence passes.
-        if min_confidence is not None and answer.confidence < min_confidence:
+        # A rule with min_confidence reads only answers with a confidence.
+        if min_confidence is not None and (
+            answer.confidence is None or answer.confidence < min_confidence
+        ):
             return self._default(REASON_LOW_CONFIDENCE)
         _set_attributes(chosen_model_id=chosen.model_id, default_used=False)
         return self._models_by_id[chosen.model_id]
 
     async def _ask(
-        self, body: dict, record_spend: RoutingSpendRecorder | None
+        self, body: dict[str, Any], record_spend: RoutingSpendRecorder | None
     ) -> _Answer:
         """Ask the decision model, then the fallback if the first gives no answer."""
         model_id = self._config.decision_model_id
         fallback_id = self._config.fallback_model_id
         _set_attributes(model_id=model_id, fallback_used=False)
 
-        async def ask(candidate: Candidate) -> Reply:
+        async def ask(candidate: Candidate) -> Reply[object]:
             if candidate.is_fallback:
                 logger.warning(
                     'Decision routing falls back from model %s to model %s',
@@ -179,7 +183,10 @@ class DecisionRouter:
         return Model(model_id=model_id, model=f'typesafe/{model_id}')
 
     async def _ask_model(
-        self, model_id: str, body: dict, record_spend: RoutingSpendRecorder | None
+        self,
+        model_id: str,
+        body: dict[str, Any],
+        record_spend: RoutingSpendRecorder | None,
     ) -> object:
         """Return the decision model's answer. Raise TryNext when it gives
         none, and Skip when the project does not define it: it is never called.
@@ -235,11 +242,11 @@ class DecisionRouter:
 
     def _read_choice(self, payload: object) -> _Answer:
         """Read Jev's answer: `choice` is the chosen key, `confidence` how sure it is."""
-        try:
-            answer = payload['answers'][QUESTION_ID]
-            key = answer['choice']
-        except (KeyError, TypeError):
-            raise _BadAnswer from None
+        answers = payload.get('answers') if isinstance(payload, dict) else None
+        answer = answers.get(QUESTION_ID) if isinstance(answers, dict) else None
+        if not isinstance(answer, dict) or 'choice' not in answer:
+            raise _BadAnswer
+        key = answer['choice']
         if not isinstance(key, str) or key not in {o.key for o in self._options}:
             raise _BadAnswer
         confidence = answer.get('confidence')

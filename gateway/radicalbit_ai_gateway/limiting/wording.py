@@ -9,7 +9,7 @@ them by accident.
 from collections.abc import Callable
 from dataclasses import dataclass
 import logging
-from typing import Any
+from typing import Any, Literal
 
 from radicalbit_ai_gateway.limiter import WindowStats
 from radicalbit_ai_gateway.limiting.windows import Category, Window
@@ -42,7 +42,18 @@ ErrorBuilder = Callable[[Window, int, WindowStats, RequestIdentity], AppError]
 
 @dataclass(frozen=True)
 class Block:
-    event_type: EventType
+    event_type: Literal[
+        EventType.RATE_LIMIT,
+        EventType.TOKEN_INPUT_LIMIT,
+        EventType.TOKEN_OUTPUT_LIMIT,
+        EventType.AUDIO_DURATION_LIMIT,
+        EventType.BUDGET_LIMIT,
+        EventType.CREDENTIAL_RATE_LIMIT,
+        EventType.CREDENTIAL_TOKEN_INPUT_LIMIT,
+        EventType.CREDENTIAL_TOKEN_OUTPUT_LIMIT,
+        EventType.CREDENTIAL_BUDGET_LIMIT,
+        EventType.PROJECT_BUDGET_LIMIT,
+    ]
     metric: Any  # an OpenTelemetry counter, or None
     error: ErrorBuilder
 

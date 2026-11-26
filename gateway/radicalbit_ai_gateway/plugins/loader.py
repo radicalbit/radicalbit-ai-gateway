@@ -1,5 +1,6 @@
 from importlib.metadata import entry_points
 import logging
+from types import ModuleType
 
 from radicalbit_ai_gateway.utils.app_config import get_app_config
 
@@ -7,7 +8,7 @@ app_config = get_app_config()
 logger = logging.getLogger(app_config.log_config.logger_name)
 
 _EP_GROUP = 'radicalbit_ai_gateway.plugins'
-_plugin_modules: dict[str, object] = {}
+_plugin_modules: dict[str, ModuleType] = {}
 
 
 def discover_plugins():

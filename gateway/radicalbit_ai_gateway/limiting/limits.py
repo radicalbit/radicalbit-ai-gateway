@@ -289,10 +289,14 @@ class RequestLimits:
                     tokens = count_tokens(demand.input.text, demand.input.model)
                 cost = tokens
             elif category is Category.AUDIO_SECONDS:
-                if demand.audio_seconds == 'unknown':
+                seconds = demand.audio_seconds
+                if seconds == 'unknown':
                     log_unknown_audio_duration(self.identity)
                     continue
-                cost = round(demand.audio_seconds)
+                if seconds is None:
+                    # Not demanded: _demands skipped it already.
+                    continue
+                cost = round(seconds)
             else:
                 cost = 1
             span = _span_name(category, demand) if scope is ROUTE else None

@@ -4,12 +4,14 @@ from contextlib import nullcontext
 from dataclasses import replace
 import json
 from types import SimpleNamespace
+from typing import Any, TypedDict
 import unittest
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
 import pook
 import pytest
+from typing_extensions import override
 
 from tests.common import db_mock
 from tests.common.gateway_harness import build_routes, open_gateway
@@ -75,11 +77,11 @@ CLIENT_BODY = {**TYPESAFE_BODY, 'model': 'jev'}
 
 
 def _build_routes(
-    *decision_models: dict,
-    guardrails: list[dict] | None = None,
-    top_level: dict | None = None,
+    *decision_models: dict[str, Any],
+    guardrails: list[dict[str, Any]] | None = None,
+    top_level: dict[str, Any] | None = None,
     **route_config,
-) -> dict:
+) -> dict[str, Any]:
     return build_routes(
         {
             'decision_models': list(decision_models),
@@ -114,8 +116,17 @@ JEV_TO_JEV_EU = [{'target': 'jev', 'fallbacks': ['jev-eu'], 'type': 'decision'}]
 
 
 CACHE_EMIT = 'radicalbit_ai_gateway.caching.route_cache.emit_event'
+
+
 # No Redis client in these tests: an exact cache falls back to in-memory.
-EXACT_CACHE = {
+class _ExactCache(TypedDict):
+    """An exact cache: the route's caching and the top-level cache config."""
+
+    caching: dict[str, Any]
+    top_level: dict[str, Any]
+
+
+EXACT_CACHE: _ExactCache = {
     'caching': {'type': 'exact'},
     'top_level': {'cache': {'redis_host': 'localhost', 'redis_port': 6379}},
 }
@@ -124,7 +135,7 @@ GUARDRAIL_EMIT = 'radicalbit_ai_gateway.guardrails.guardrail_check.emit_event'
 REDACT_EMIT = 'radicalbit_ai_gateway.guardrails.guardrail_redact.emit_event'
 
 
-def _check_guardrail(behavior: str, value: str) -> dict:
+def _check_guardrail(behavior: str, value: str) -> dict[str, Any]:
     return {
         'name': f'{behavior}_check',
         'type': 'contains',
@@ -144,6 +155,7 @@ REDACT_EMAIL = {
 
 
 class TestDecisionModelEndpoint(unittest.TestCase):
+    @override
     def setUp(self):
         self.emitted = []
         self.guardrail_events = []
@@ -168,7 +180,7 @@ class TestDecisionModelEndpoint(unittest.TestCase):
         self.api_key = gateway.api_key
         self.request_events = gateway.request_events
 
-    def _post(self, model: str = ROUTE_KEY, headers: dict | None = None):
+    def _post(self, model: str = ROUTE_KEY, headers: dict[str, Any] | None = None):
         return self.client.post(
             '/v1/systemone',
             json={'state': STATE, 'model': model, 'questions': QUESTIONS},
@@ -262,7 +274,7 @@ class TestDecisionModelEndpoint(unittest.TestCase):
             fallback=JEV_TO_JEV_EU,
         )
 
-    def _span_attributes(self) -> dict:
+    def _span_attributes(self) -> dict[str, Any]:
         return {c.args[0]: c.args[1] for c in self.span.set_attribute.call_args_list}
 
     def test_exhausted_retries_fall_back_to_the_next_decision_model(self):
@@ -605,7 +617,10 @@ class TestDecisionModelEndpoint(unittest.TestCase):
         semantic_cache = MagicMock(spec=SemanticCache)
         route = app.state.routes[ROUTE_KEY]
         route.gateway_cache = GatewayCache(semantic_cache)
-        route.cache = replace(route.cache, backend=route.gateway_cache)
+        route.cache = replace(
+            route.cache,
+            enabled=replace(route.cache.enabled, backend=route.gateway_cache),
+        )
         typesafe = self._spy_on_typesafe().times(2)
 
         self._post()
