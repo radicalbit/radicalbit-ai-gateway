@@ -1,12 +1,16 @@
+import HtmlAnchor from '@Components/html-anchor';
 import IconBadge from '@Components/icon-badge';
 import InfoPopover from '@Components/info-popover';
 import Lucide from '@Components/lucide';
-import { numberFormatterFloat, numberFormatterInt } from '@Src/constants';
+import {
+  PathsEnum, SEARCH_PARAMS, numberFormatterFloat, numberFormatterInt,
+} from '@Src/constants';
 import { useGetProjectBudgetWithRange } from '@State/usage/vertical-hooks';
 import { BarChart } from '@radicalbit/radicalbit-design-system';
 import {
   Hourglass, TableColumnsSplit, Timer, Wallet,
 } from 'lucide-react';
+import { useSearchParams } from 'react-router-dom';
 
 const STATUS_TO_TYPE = {
   ok: 'success',
@@ -111,7 +115,14 @@ const columns = [
 export default columns;
 
 function RouteName({ routeName }) {
-  return <span className="font-bold">{routeName}</span>;
+  const [searchParams] = useSearchParams();
+  const projectUuid = searchParams.get('projectUuid');
+
+  return (
+    <HtmlAnchor className="font-bold" to={`/${PathsEnum.ROUTES}/${routeName}?${SEARCH_PARAMS.routes}=${encodeURIComponent(routeName)}&projectUuid=${projectUuid}`}>
+      {routeName}
+    </HtmlAnchor>
+  );
 }
 
 function BudgetLimit({ progressBar }) {
