@@ -3213,6 +3213,7 @@ dev = [
 ]
 migrations = [
     { name = "alembic" },
+    { name = "anyio" },
     { name = "psycopg", extra = ["binary"] },
     { name = "pydantic-settings" },
     { name = "sqlalchemy", extra = ["asyncio"] },
@@ -3286,6 +3287,7 @@ dev = [
 ]
 migrations = [
     { name = "alembic", specifier = ">=1.18.1" },
+    { name = "anyio", specifier = ">=4.15.1" },
     { name = "psycopg", extras = ["binary"], specifier = ">=3.2.0" },
     { name = "pydantic-settings", specifier = ">=2.12.0" },
     { name = "sqlalchemy", extras = ["asyncio"], specifier = ">=2.1.9" },
