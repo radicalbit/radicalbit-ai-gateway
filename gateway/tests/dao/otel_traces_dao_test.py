@@ -1,4 +1,4 @@
-import datetime
+import datetime as dt
 import math
 from typing import TypedDict
 from uuid import UUID
@@ -15,23 +15,23 @@ from radicalbit_ai_gateway.db.dao.otel_traces_dao import OtelTracesDAO
 from radicalbit_ai_gateway.db.models.trace import SpanRecord, SpanStats
 from radicalbit_ai_gateway.models.request_event_type import RequestType
 
-T0 = datetime.datetime(2025, 1, 8, 10, 0, 0, tzinfo=datetime.timezone.utc)
-SEC = datetime.timedelta(seconds=1)
-MIN = datetime.timedelta(minutes=1)
-H = datetime.timedelta(hours=1)
-D = datetime.timedelta(days=1)
+T0 = dt.datetime(2025, 1, 8, 10, 0, 0, tzinfo=dt.timezone.utc)
+SEC = dt.timedelta(seconds=1)
+MIN = dt.timedelta(minutes=1)
+H = dt.timedelta(hours=1)
+D = dt.timedelta(days=1)
 
 
 class _Window(TypedDict):
-    _from: datetime.datetime
-    _to: datetime.datetime
+    _from: dt.datetime
+    _to: dt.datetime
 
 
 class _Filters(TypedDict):
     project_uuid: UUID
     route_names: list[str] | None
-    _from: datetime.datetime | None
-    _to: datetime.datetime | None
+    _from: dt.datetime | None
+    _to: dt.datetime | None
     tags: list[str] | None
 
 
@@ -314,7 +314,7 @@ class OtelTracesDAOTest(DatabaseIntegrationClickhouse):
         def record(
             trace_id: str,
             span_id: str,
-            at: datetime.datetime = T0,
+            at: dt.datetime = T0,
             span_name: str = 'invoke',
             status_code: str = 'Unset',
             parent_span_id: str = '',
@@ -398,7 +398,7 @@ class OtelTracesDAOTest(DatabaseIntegrationClickhouse):
                     status_code='Error',
                     status_message='Something went wrong',
                     span_attributes={'custom.attr.1': 'value1'},
-                    events_timestamp=[T0, T0 + datetime.timedelta(milliseconds=5)],
+                    events_timestamp=[T0, T0 + dt.timedelta(milliseconds=5)],
                     events_name=['event-1', 'exception'],
                     events_attributes=[{'key': 'value'}, {'error.type': 'test_error'}],
                 ),
@@ -559,8 +559,8 @@ class OtelTracesDAOTest(DatabaseIntegrationClickhouse):
         ]
         # The orphan must not bucket to the Unix epoch: weeks start on Monday
         # and come back as naive UTC dates.
-        week = datetime.datetime(2025, 1, 6)
-        week_ts = int(week.replace(tzinfo=datetime.timezone.utc).timestamp())
+        week = dt.datetime(2025, 1, 6)
+        week_ts = int(week.replace(tzinfo=dt.timezone.utc).timestamp())
         assert chart('weeks') == [
             (week, week_ts, 'error', 2),
             (week, week_ts, 'success', 3),

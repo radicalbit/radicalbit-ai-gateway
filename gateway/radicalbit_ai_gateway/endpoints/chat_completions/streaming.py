@@ -1,7 +1,7 @@
 """Building the chunks of a chat completions stream."""
 
 from dataclasses import dataclass
-import datetime
+import datetime as dt
 from time import time
 from typing import Any
 import uuid
@@ -157,7 +157,7 @@ def build_usage_chunk(
     return ChatCompletionChunk(
         id=request_id,
         object='chat.completion.chunk',
-        created=int(datetime.datetime.now().timestamp()),
+        created=int(dt.datetime.now().timestamp()),
         model=model_id_invoked,
         choices=[],
         usage=CompletionUsage(

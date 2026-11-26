@@ -1,5 +1,5 @@
 from collections.abc import Iterable, Mapping, Sequence
-import datetime
+import datetime as dt
 from decimal import Decimal
 import logging
 from uuid import UUID
@@ -272,7 +272,7 @@ class KeyService:
                 f'Key {key_uuid} cannot be rotated because owner is "{key.owner}"'
             )
         _ensure_not_expired(key)
-        now = datetime.datetime.now(tz=UTC)
+        now = dt.datetime.now(tz=UTC)
         if previous_value_authenticates(key.expires_on, key.grace_ends_at, now):
             raise KeyRotationConflictError(
                 f'Key {key_uuid} is in a grace period until {key.grace_ends_at}: '
@@ -305,7 +305,7 @@ class KeyService:
         if key is None:
             raise KeyNotFoundError(f'Key with UUID {key_uuid} not exists')
         ended = await self.key_dao.end_grace_period(
-            key_uuid, now=datetime.datetime.now(tz=UTC)
+            key_uuid, now=dt.datetime.now(tz=UTC)
         )
         if ended is None:
             raise KeyRotationConflictError(
@@ -399,7 +399,7 @@ class KeyService:
             (skip.key_uuid, skip.category.value, skip.algorithm.value, skip.window_size)
             for skip in limits_in.skip
         }
-        now = datetime.datetime.now(tz=UTC)
+        now = dt.datetime.now(tz=UTC)
         to_insert: list[KeyLimit] = []
         to_update: list[KeyLimit] = []
         members: list[GroupMemberLimitsOut] = []
@@ -667,7 +667,7 @@ class KeyService:
             ) from e
         previous_value = float(limit.max_value)
         limit.max_value = Decimal(str(value_in.value))
-        limit.updated_at = datetime.datetime.now(tz=UTC)
+        limit.updated_at = dt.datetime.now(tz=UTC)
         await self.key_limit_dao.save_many([], [limit])
         logger.info(
             'Limit %s of key %s: max %s -> %s',

@@ -5,7 +5,7 @@ series exist, in which bucket, with what count. Nothing here looks at how the
 SQL is put together.
 """
 
-import datetime
+import datetime as dt
 from typing import Literal, TypedDict
 import uuid
 
@@ -27,8 +27,8 @@ Bucket = tuple[int, str, int]
 
 class _Filters(TypedDict, total=False):
     route_names: list[str] | None
-    _from: datetime.datetime | None
-    _to: datetime.datetime | None
+    _from: dt.datetime | None
+    _to: dt.datetime | None
     tags: list[str] | None
 
 
@@ -40,7 +40,7 @@ KEY_2 = uuid.UUID(int=2)
 GROUP_1 = uuid.UUID(int=101)
 GROUP_2 = uuid.UUID(int=102)
 
-BASE_TIME = datetime.datetime(2025, 1, 8, 10, 0, 0, tzinfo=datetime.timezone.utc)
+BASE_TIME = dt.datetime(2025, 1, 8, 10, 0, 0, tzinfo=dt.timezone.utc)
 
 
 def mcp_event(
@@ -48,7 +48,7 @@ def mcp_event(
     api_key_uuid: uuid.UUID = KEY_1,
     group_uuid: uuid.UUID = GROUP_1,
     route_name: str = 'route-a',
-    timestamp: datetime.datetime = BASE_TIME,
+    timestamp: dt.datetime = BASE_TIME,
     tags: list[str] | None = None,
     event_type: str = 'MCP_INVOCATION',
     mcp_method: str = 'tools/call',
@@ -71,7 +71,7 @@ def mcp_event(
     )
 
 
-def ts(moment: datetime.datetime) -> int:
+def ts(moment: dt.datetime) -> int:
     return int(moment.timestamp())
 
 
@@ -80,8 +80,8 @@ def buckets(points) -> list[tuple[int, str, int]]:
 
 
 H0 = ts(BASE_TIME)
-H1 = ts(BASE_TIME + datetime.timedelta(hours=1))
-H3 = ts(BASE_TIME + datetime.timedelta(hours=3))
+H1 = ts(BASE_TIME + dt.timedelta(hours=1))
+H3 = ts(BASE_TIME + dt.timedelta(hours=3))
 
 
 class EventDAOMcpServerChartTest(DatabaseIntegrationClickhouse):
@@ -102,8 +102,8 @@ class EventDAOMcpServerChartTest(DatabaseIntegrationClickhouse):
         group_by: Literal['services', 'groups', 'keys'] = 'services',
         granularity: Granularity = 'hours',
         route_names: list[str] | None = None,
-        _from: datetime.datetime | None = None,
-        _to: datetime.datetime | None = None,
+        _from: dt.datetime | None = None,
+        _to: dt.datetime | None = None,
         tags: list[str] | None = None,
         timezone_offset_seconds: int = 0,
     ) -> list[tuple[int, str, int]]:
@@ -126,8 +126,8 @@ class EventDAOMcpServerChartTest(DatabaseIntegrationClickhouse):
         entity_value: str = 'files',
         granularity: Granularity = 'hours',
         route_names: list[str] | None = None,
-        _from: datetime.datetime | None = None,
-        _to: datetime.datetime | None = None,
+        _from: dt.datetime | None = None,
+        _to: dt.datetime | None = None,
         tags: list[str] | None = None,
         timezone_offset_seconds: int = 0,
         series_column: McpSeriesColumn | None = None,
@@ -153,15 +153,15 @@ class EventDAOMcpServerChartTest(DatabaseIntegrationClickhouse):
         the event type and the project decide what counts. The chart total
         always matches the key table under the same filters.
         """
-        before = BASE_TIME - datetime.timedelta(minutes=1)
-        end = BASE_TIME + datetime.timedelta(hours=1)
-        after = end + datetime.timedelta(minutes=1)
+        before = BASE_TIME - dt.timedelta(minutes=1)
+        end = BASE_TIME + dt.timedelta(hours=1)
+        after = end + dt.timedelta(minutes=1)
         self.insert(
             [
                 mcp_event(tags=['env=prod', 'cost_center=retail']),
                 mcp_event(
                     route_name='route-b',
-                    timestamp=BASE_TIME + datetime.timedelta(minutes=30),
+                    timestamp=BASE_TIME + dt.timedelta(minutes=30),
                     tags=['env=staging'],
                     mcp_method='resources/read',
                 ),
@@ -192,7 +192,7 @@ class EventDAOMcpServerChartTest(DatabaseIntegrationClickhouse):
                 mcp_event(project_uuid=PROJECT_B),
             ]
         )
-        h_before = ts(BASE_TIME - datetime.timedelta(hours=1))
+        h_before = ts(BASE_TIME - dt.timedelta(hours=1))
 
         cases: list[tuple[_Filters, list[Bucket]]] = [
             (
@@ -211,8 +211,8 @@ class EventDAOMcpServerChartTest(DatabaseIntegrationClickhouse):
             ),
             (
                 {
-                    '_from': BASE_TIME + datetime.timedelta(days=1),
-                    '_to': BASE_TIME + datetime.timedelta(days=2),
+                    '_from': BASE_TIME + dt.timedelta(days=1),
+                    '_to': BASE_TIME + dt.timedelta(days=2),
                 },
                 [],
             ),
@@ -253,13 +253,13 @@ class EventDAOMcpServerChartTest(DatabaseIntegrationClickhouse):
         """Weeks start on Monday. At UTC+2, 23:30 UTC already belongs to the
         next local day, whose bucket starts at 22:00 UTC.
         """
-        day = datetime.timedelta(days=1)
+        day = dt.timedelta(days=1)
         self.insert(
             [
                 mcp_event(timestamp=moment)
                 for moment in (
                     BASE_TIME,  # Wednesday 2025-01-08 10:00
-                    BASE_TIME + datetime.timedelta(hours=5),
+                    BASE_TIME + dt.timedelta(hours=5),
                     BASE_TIME.replace(hour=23, minute=30),
                     BASE_TIME + day,
                     BASE_TIME + 7 * day,
@@ -269,7 +269,7 @@ class EventDAOMcpServerChartTest(DatabaseIntegrationClickhouse):
         )
 
         def utc(month, day_, hour=0):
-            return ts(datetime.datetime(2025, month, day_, hour, tzinfo=datetime.UTC))
+            return ts(dt.datetime(2025, month, day_, hour, tzinfo=dt.UTC))
 
         for granularity, offset, expected in (
             (
@@ -317,14 +317,14 @@ class EventDAOMcpServerChartTest(DatabaseIntegrationClickhouse):
                 mcp_event(
                     api_key_uuid=KEY_2,
                     group_uuid=GROUP_1,
-                    timestamp=BASE_TIME + datetime.timedelta(hours=1),
+                    timestamp=BASE_TIME + dt.timedelta(hours=1),
                 ),
                 mcp_event(mcp_alias='search', api_key_uuid=KEY_2, group_uuid=GROUP_2),
                 mcp_event(
                     mcp_alias='search',
                     api_key_uuid=KEY_1,
                     group_uuid=GROUP_2,
-                    timestamp=BASE_TIME + datetime.timedelta(hours=3),
+                    timestamp=BASE_TIME + dt.timedelta(hours=3),
                 ),
             ]
         )
@@ -364,7 +364,7 @@ class EventDAOMcpServerChartTest(DatabaseIntegrationClickhouse):
                     ], value
 
     def test_all_filters_compose(self):
-        in_window = BASE_TIME + datetime.timedelta(minutes=30)
+        in_window = BASE_TIME + dt.timedelta(minutes=30)
         self.insert(
             [
                 # The only rows that survive every filter: one per key.
@@ -383,7 +383,7 @@ class EventDAOMcpServerChartTest(DatabaseIntegrationClickhouse):
                 # Right route and tag, outside the window.
                 mcp_event(
                     route_name='agents',
-                    timestamp=BASE_TIME - datetime.timedelta(days=1),
+                    timestamp=BASE_TIME - dt.timedelta(days=1),
                     tags=['env=prod'],
                     mcp_alias='search',
                 ),
@@ -414,7 +414,7 @@ class EventDAOMcpServerChartTest(DatabaseIntegrationClickhouse):
         filters: _Filters = {
             'route_names': ['agents'],
             '_from': BASE_TIME,
-            '_to': BASE_TIME + datetime.timedelta(hours=1),
+            '_to': BASE_TIME + dt.timedelta(hours=1),
             'tags': ['env=prod'],
         }
 
@@ -437,7 +437,7 @@ class EventDAOMcpServerChartTest(DatabaseIntegrationClickhouse):
                 mcp_event(mcp_target=''),
                 mcp_event(
                     mcp_target='read_file',
-                    timestamp=BASE_TIME + datetime.timedelta(hours=1),
+                    timestamp=BASE_TIME + dt.timedelta(hours=1),
                 ),
                 # Another server's tool, even with the same name.
                 mcp_event(mcp_alias='search', mcp_target='read_file'),

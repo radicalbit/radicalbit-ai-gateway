@@ -3,7 +3,7 @@
 This test uses real ClickHouse data to verify that timezone-aware bucketing works correctly.
 """
 
-import datetime
+import datetime as dt
 from typing import Literal
 from unittest.mock import MagicMock
 import uuid
@@ -22,15 +22,15 @@ from radicalbit_ai_gateway.services.group_service import GroupService
 from radicalbit_ai_gateway.services.key_service import KeyService
 from radicalbit_ai_gateway.services.request_event_service import RequestEventService
 
-_iso = datetime.datetime.fromisoformat
+_iso = dt.datetime.fromisoformat
 
 Granularity = Literal['hours', 'days', 'weeks', 'months']
 
 PROJECT = uuid.UUID(int=7)
 
 
-def _utc(*parts: int) -> datetime.datetime:
-    return datetime.datetime(*parts, tzinfo=datetime.timezone.utc)
+def _utc(*parts: int) -> dt.datetime:
+    return dt.datetime(*parts, tzinfo=dt.timezone.utc)
 
 
 def _token_event(route_name, timestamp, kind, value, cost=0.01):
@@ -154,7 +154,7 @@ class TestChartTimezoneIntegration(DatabaseIntegrationClickhouse):
 
     def test_token_chart_buckets_events_in_the_user_timezone(self):
         cases: list[
-            tuple[Granularity, list[tuple[datetime.datetime, str, int]], str, str]
+            tuple[Granularity, list[tuple[dt.datetime, str, int]], str, str]
         ] = [
             (
                 'days',
@@ -258,8 +258,8 @@ class TestChartTimezoneIntegration(DatabaseIntegrationClickhouse):
             get_sample_event(
                 event_type='INPUT_TOKEN_PROCESSED',
                 route_name=route_name,
-                timestamp=datetime.datetime(
-                    2024, month, 15, 12, 0, 0, tzinfo=datetime.timezone.utc
+                timestamp=dt.datetime(
+                    2024, month, 15, 12, 0, 0, tzinfo=dt.timezone.utc
                 ),
                 api_key_uuid=uuid.UUID(int=1),
                 api_key_name='key-1',
@@ -278,8 +278,8 @@ class TestChartTimezoneIntegration(DatabaseIntegrationClickhouse):
         # Note: _to is exclusive, so 2025-01-01 gives us buckets through Dec 2024
         # The bucket generation creates one extra bucket at the end (Jan 2025)
         # which will have 0 data since we only inserted data for 2024
-        _from = datetime.datetime.fromisoformat('2024-01-01T00:00:00+02:00')
-        _to = datetime.datetime.fromisoformat('2025-01-01T00:00:00+02:00')
+        _from = dt.datetime.fromisoformat('2024-01-01T00:00:00+02:00')
+        _to = dt.datetime.fromisoformat('2025-01-01T00:00:00+02:00')
 
         result = self.event_service.get_token_chart_data(
             PROJECT,
@@ -317,9 +317,9 @@ class TestChartTimezoneIntegration(DatabaseIntegrationClickhouse):
         years_in_buckets = []
         for ts in result.timestamp:
             # Convert timestamp to datetime in GMT+02:00
-            dt = datetime.datetime.fromtimestamp(ts, tz=datetime.timezone.utc)
+            utc_time = dt.datetime.fromtimestamp(ts, tz=dt.timezone.utc)
             # Adjust to GMT+02:00
-            dt_gmt2 = dt + datetime.timedelta(hours=2)
+            dt_gmt2 = utc_time + dt.timedelta(hours=2)
             months_in_buckets.append(dt_gmt2.month)
             years_in_buckets.append(dt_gmt2.year)
 
@@ -356,7 +356,7 @@ class TestChartTimezoneIntegration(DatabaseIntegrationClickhouse):
         )
 
     def test_request_chart_buckets_events_in_the_user_timezone(self):
-        cases: list[tuple[Granularity, list[datetime.datetime], str, str]] = [
+        cases: list[tuple[Granularity, list[dt.datetime], str, str]] = [
             (
                 'days',
                 [

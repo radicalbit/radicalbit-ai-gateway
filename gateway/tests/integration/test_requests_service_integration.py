@@ -4,7 +4,7 @@ The list pages over `request_event`, then attaches tokens and cost from `event`
 and the trace ID from `otel_traces`, one batched query each per page.
 """
 
-import datetime
+import datetime as dt
 from unittest.mock import MagicMock
 import uuid
 
@@ -28,9 +28,9 @@ from radicalbit_ai_gateway.services.requests_service import RequestsService
 
 PROJECT = TEST_PROJECT_UUID
 REQUEST_UUID_ATTR = 'traceloop.association.properties.request_uuid'
-T0 = datetime.datetime(2026, 3, 10, 12, 0, 0, tzinfo=datetime.timezone.utc)
+T0 = dt.datetime(2026, 3, 10, 12, 0, 0, tzinfo=dt.timezone.utc)
 # Before every request these tests store: a list from here reads them all.
-LONG_AGO = T0 - datetime.timedelta(days=365)
+LONG_AGO = T0 - dt.timedelta(days=365)
 
 
 def _request(request_uuid=None, timestamp=T0, **kwargs):
@@ -86,8 +86,8 @@ class TestRequestsServiceIntegration(DatabaseIntegrationClickhouse):
         route_names: list[str] | None = None,
         group_uuids: list[uuid.UUID] | None = None,
         key_uuids: list[uuid.UUID] | None = None,
-        _from: datetime.datetime | None = LONG_AGO,
-        _to: datetime.datetime | None = None,
+        _from: dt.datetime | None = LONG_AGO,
+        _to: dt.datetime | None = None,
         tags: list[str] | None = None,
         request_types: list[RequestType] | None = None,
     ):
@@ -414,7 +414,7 @@ class TestRequestsServiceIntegration(DatabaseIntegrationClickhouse):
 
     def test_a_page_costs_one_events_query_and_one_trace_query(self):
         # Five requests on five different days.
-        seeds = [(uuid.uuid4(), T0 - datetime.timedelta(days=i)) for i in range(5)]
+        seeds = [(uuid.uuid4(), T0 - dt.timedelta(days=i)) for i in range(5)]
         self.insert([_request(u, timestamp=ts) for u, ts in seeds])
         self.insert(
             [
@@ -447,11 +447,9 @@ class TestRequestsServiceIntegration(DatabaseIntegrationClickhouse):
 
     def test_events_of_a_request_that_crossed_midnight_are_attached(self):
         # request_event is written when the request ends, its events before.
-        just_after_midnight = datetime.datetime(
-            2026, 3, 10, 0, 0, 5, tzinfo=datetime.timezone.utc
-        )
-        just_before_midnight = datetime.datetime(
-            2026, 3, 9, 23, 59, 58, tzinfo=datetime.timezone.utc
+        just_after_midnight = dt.datetime(2026, 3, 10, 0, 0, 5, tzinfo=dt.timezone.utc)
+        just_before_midnight = dt.datetime(
+            2026, 3, 9, 23, 59, 58, tzinfo=dt.timezone.utc
         )
         request_uuid = uuid.uuid4()
         self.insert([_request(request_uuid, timestamp=just_after_midnight)])
@@ -492,14 +490,14 @@ class TestRequestsServiceIntegration(DatabaseIntegrationClickhouse):
                     'INPUT_TOKEN_PROCESSED',
                     value=1000,
                     cost=10.0,
-                    timestamp=T0 - datetime.timedelta(days=3),
+                    timestamp=T0 - dt.timedelta(days=3),
                 ),
                 _event(
                     request_uuid,
                     'INPUT_TOKEN_PROCESSED',
                     value=1000,
                     cost=10.0,
-                    timestamp=T0 + datetime.timedelta(days=1),
+                    timestamp=T0 + dt.timedelta(days=1),
                 ),
             ]
         )
@@ -514,7 +512,7 @@ class TestRequestsServiceIntegration(DatabaseIntegrationClickhouse):
         # uuids[0] is the newest
         self.insert(
             [
-                _request(u, timestamp=T0 - datetime.timedelta(minutes=i))
+                _request(u, timestamp=T0 - dt.timedelta(minutes=i))
                 for i, u in enumerate(uuids)
             ]
         )
@@ -577,7 +575,7 @@ class TestRequestsServiceIntegration(DatabaseIntegrationClickhouse):
                     r_old,
                     group_uuid=group_b,
                     api_key_uuid=key_b,
-                    timestamp=T0 - datetime.timedelta(days=2),
+                    timestamp=T0 - dt.timedelta(days=2),
                 ),
             ]
         )
@@ -592,8 +590,8 @@ class TestRequestsServiceIntegration(DatabaseIntegrationClickhouse):
         assert listed(tags=['team=a', 'env=prod']) == {r_tags}
         assert listed(tags=['team=a', 'env=dev']) == set()
         assert listed(
-            _from=T0 - datetime.timedelta(days=3),
-            _to=T0 - datetime.timedelta(days=1),
+            _from=T0 - dt.timedelta(days=3),
+            _to=T0 - dt.timedelta(days=1),
         ) == {r_old}
         assert len(listed()) == 6
 
@@ -619,12 +617,12 @@ class TestRequestsServiceIntegration(DatabaseIntegrationClickhouse):
         )
 
     def test_with_no_start_the_list_covers_the_last_24_hours(self):
-        now = datetime.datetime.now(datetime.timezone.utc)
+        now = dt.datetime.now(dt.timezone.utc)
         recent, old = uuid.uuid4(), uuid.uuid4()
         self.insert(
             [
-                _request(recent, timestamp=now - datetime.timedelta(hours=1)),
-                _request(old, timestamp=now - datetime.timedelta(hours=25)),
+                _request(recent, timestamp=now - dt.timedelta(hours=1)),
+                _request(old, timestamp=now - dt.timedelta(hours=25)),
             ]
         )
 
@@ -636,8 +634,8 @@ class TestRequestsServiceIntegration(DatabaseIntegrationClickhouse):
         inside, before = uuid.uuid4(), uuid.uuid4()
         self.insert(
             [
-                _request(inside, timestamp=T0 - datetime.timedelta(hours=23)),
-                _request(before, timestamp=T0 - datetime.timedelta(hours=25)),
+                _request(inside, timestamp=T0 - dt.timedelta(hours=23)),
+                _request(before, timestamp=T0 - dt.timedelta(hours=25)),
             ]
         )
 
@@ -650,8 +648,7 @@ class TestRequestsServiceIntegration(DatabaseIntegrationClickhouse):
         # instant: together the pages must return each one once, in order.
         offsets = [0, 0, 1, 2, 3, 30, 59, 61, 61.5, 62, 180, 181, 400, 1500, 1501]
         seeds = [
-            (uuid.uuid4(), T0 - datetime.timedelta(minutes=minutes))
-            for minutes in offsets
+            (uuid.uuid4(), T0 - dt.timedelta(minutes=minutes)) for minutes in offsets
         ]
         self.insert([_request(u, timestamp=ts) for u, ts in seeds])
         timestamps = dict(seeds)

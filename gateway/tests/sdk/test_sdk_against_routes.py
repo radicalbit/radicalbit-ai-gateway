@@ -8,7 +8,7 @@ services do is covered by their own tests.
 """
 
 import asyncio
-import datetime
+import datetime as dt
 import inspect
 from unittest.mock import AsyncMock, MagicMock
 import uuid
@@ -178,13 +178,13 @@ def test_the_request_bodies_reach_the_services(gw, monkeypatch):
     add = _mock(monkeypatch, server.group_service, 'add_keys', GROUP)
     upload = _mock(monkeypatch, server.project_service, 'import_config', PROJECT)
 
-    created = gw.credentials.create(name='k', expires_on=datetime.date(2030, 1, 2))
+    created = gw.credentials.create(name='k', expires_on=dt.date(2030, 1, 2))
     gw.credentials.rotate(KEY.uuid, grace_period=None)
     gw.groups.add_credentials(GROUP.uuid, keys=[KEY.uuid])
     gw.configs.upload(PROJECT.uuid, SLOT_A.uuid, file=('c.yaml', b'routes: {}'))
 
     assert created.api_key == 'sk-the-value'
-    assert create.call_args.args[0].expires_on == datetime.date(2030, 1, 2)
+    assert create.call_args.args[0].expires_on == dt.date(2030, 1, 2)
     assert rotate.call_args.args[1].grace_period is None
     assert add.call_args.args[1].keys == [KEY.uuid]
     assert upload.call_args.args[2] == b'routes: {}'

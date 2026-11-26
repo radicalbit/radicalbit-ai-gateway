@@ -4,7 +4,7 @@ This test uses real ClickHouse data to verify that cost aggregation works correc
 for the get_summary_costs service method in EventService.
 """
 
-import datetime
+import datetime as dt
 from unittest.mock import MagicMock
 import uuid
 
@@ -96,9 +96,7 @@ class TestSummaryCostsIntegration(DatabaseIntegrationClickhouse):
                 project_uuid=PROJECT,
                 event_type='INPUT_TOKEN_PROCESSED',
                 route_name=route_name,
-                timestamp=datetime.datetime(
-                    2026, 1, 15, 12, 0, 0, tzinfo=datetime.timezone.utc
-                ),
+                timestamp=dt.datetime(2026, 1, 15, 12, 0, 0, tzinfo=dt.timezone.utc),
                 api_key_uuid=uuid.UUID(int=1),
                 api_key_name='key-1',
                 value=1000,
@@ -110,9 +108,7 @@ class TestSummaryCostsIntegration(DatabaseIntegrationClickhouse):
                 project_uuid=PROJECT,
                 event_type='INPUT_TOKEN_PROCESSED',
                 route_name=route_name,
-                timestamp=datetime.datetime(
-                    2026, 1, 15, 12, 5, 0, tzinfo=datetime.timezone.utc
-                ),
+                timestamp=dt.datetime(2026, 1, 15, 12, 5, 0, tzinfo=dt.timezone.utc),
                 api_key_uuid=uuid.UUID(int=1),
                 api_key_name='key-1',
                 value=500,
@@ -125,9 +121,7 @@ class TestSummaryCostsIntegration(DatabaseIntegrationClickhouse):
                 project_uuid=PROJECT,
                 event_type='OUTPUT_TOKEN_PROCESSED',
                 route_name=route_name,
-                timestamp=datetime.datetime(
-                    2026, 1, 15, 12, 6, 0, tzinfo=datetime.timezone.utc
-                ),
+                timestamp=dt.datetime(2026, 1, 15, 12, 6, 0, tzinfo=dt.timezone.utc),
                 api_key_uuid=uuid.UUID(int=1),
                 api_key_name='key-1',
                 value=300,
@@ -140,9 +134,7 @@ class TestSummaryCostsIntegration(DatabaseIntegrationClickhouse):
                 project_uuid=PROJECT,
                 event_type='CACHE_HIT',
                 route_name=route_name,
-                timestamp=datetime.datetime(
-                    2026, 1, 15, 12, 7, 0, tzinfo=datetime.timezone.utc
-                ),
+                timestamp=dt.datetime(2026, 1, 15, 12, 7, 0, tzinfo=dt.timezone.utc),
                 api_key_uuid=uuid.UUID(int=1),
                 api_key_name='key-1',
                 value=1,
@@ -218,9 +210,7 @@ class TestSummaryCostsIntegration(DatabaseIntegrationClickhouse):
                 project_uuid=PROJECT,
                 event_type='INPUT_TOKEN_PROCESSED',
                 route_name=route_name,
-                timestamp=datetime.datetime(
-                    2026, 1, 15, 12, 0, 0, tzinfo=datetime.timezone.utc
-                ),
+                timestamp=dt.datetime(2026, 1, 15, 12, 0, 0, tzinfo=dt.timezone.utc),
                 api_key_uuid=uuid.UUID(int=1),
                 api_key_name='key-1',
                 value=1000,
@@ -232,9 +222,7 @@ class TestSummaryCostsIntegration(DatabaseIntegrationClickhouse):
                 project_uuid=PROJECT,
                 event_type='OUTPUT_TOKEN_PROCESSED',
                 route_name=route_name,
-                timestamp=datetime.datetime(
-                    2026, 1, 15, 12, 1, 0, tzinfo=datetime.timezone.utc
-                ),
+                timestamp=dt.datetime(2026, 1, 15, 12, 1, 0, tzinfo=dt.timezone.utc),
                 api_key_uuid=uuid.UUID(int=1),
                 api_key_name='key-1',
                 value=500,
@@ -247,9 +235,7 @@ class TestSummaryCostsIntegration(DatabaseIntegrationClickhouse):
                 project_uuid=PROJECT,
                 event_type='CACHE_HIT',
                 route_name=route_name,
-                timestamp=datetime.datetime(
-                    2026, 1, 15, 12, 2, 0, tzinfo=datetime.timezone.utc
-                ),
+                timestamp=dt.datetime(2026, 1, 15, 12, 2, 0, tzinfo=dt.timezone.utc),
                 api_key_uuid=uuid.UUID(int=1),
                 api_key_name='key-1',
                 value=1,
@@ -258,9 +244,7 @@ class TestSummaryCostsIntegration(DatabaseIntegrationClickhouse):
                 project_uuid=PROJECT,
                 event_type='CACHE_HIT',
                 route_name=route_name,
-                timestamp=datetime.datetime(
-                    2026, 1, 15, 12, 3, 0, tzinfo=datetime.timezone.utc
-                ),
+                timestamp=dt.datetime(2026, 1, 15, 12, 3, 0, tzinfo=dt.timezone.utc),
                 api_key_uuid=uuid.UUID(int=1),
                 api_key_name='key-1',
                 value=1,
@@ -270,9 +254,7 @@ class TestSummaryCostsIntegration(DatabaseIntegrationClickhouse):
                 project_uuid=PROJECT,
                 event_type='CACHE_INPUT_TOKENS',
                 route_name=route_name,
-                timestamp=datetime.datetime(
-                    2026, 1, 15, 12, 4, 0, tzinfo=datetime.timezone.utc
-                ),
+                timestamp=dt.datetime(2026, 1, 15, 12, 4, 0, tzinfo=dt.timezone.utc),
                 api_key_uuid=uuid.UUID(int=1),
                 api_key_name='key-1',
                 value=800,
@@ -284,9 +266,7 @@ class TestSummaryCostsIntegration(DatabaseIntegrationClickhouse):
                 project_uuid=PROJECT,
                 event_type='CACHE_OUTPUT_TOKENS',
                 route_name=route_name,
-                timestamp=datetime.datetime(
-                    2026, 1, 15, 12, 5, 0, tzinfo=datetime.timezone.utc
-                ),
+                timestamp=dt.datetime(2026, 1, 15, 12, 5, 0, tzinfo=dt.timezone.utc),
                 api_key_uuid=uuid.UUID(int=1),
                 api_key_name='key-1',
                 value=400,
@@ -357,9 +337,7 @@ class TestSummaryCostsIntegration(DatabaseIntegrationClickhouse):
                 project_uuid=PROJECT,
                 event_type='INPUT_TOKEN_PROCESSED',
                 route_name=route_name,
-                timestamp=datetime.datetime(
-                    2026, 1, 15, 12, 0, 0, tzinfo=datetime.timezone.utc
-                ),
+                timestamp=dt.datetime(2026, 1, 15, 12, 0, 0, tzinfo=dt.timezone.utc),
                 api_key_uuid=uuid.UUID(int=1),
                 api_key_name='key-1',
                 value=1000,
@@ -371,9 +349,7 @@ class TestSummaryCostsIntegration(DatabaseIntegrationClickhouse):
                 project_uuid=PROJECT,
                 event_type='OUTPUT_TOKEN_PROCESSED',
                 route_name=route_name,
-                timestamp=datetime.datetime(
-                    2026, 1, 15, 12, 1, 0, tzinfo=datetime.timezone.utc
-                ),
+                timestamp=dt.datetime(2026, 1, 15, 12, 1, 0, tzinfo=dt.timezone.utc),
                 api_key_uuid=uuid.UUID(int=1),
                 api_key_name='key-1',
                 value=500,
@@ -386,9 +362,7 @@ class TestSummaryCostsIntegration(DatabaseIntegrationClickhouse):
                 project_uuid=PROJECT,
                 event_type='CACHE_HIT',
                 route_name=route_name,
-                timestamp=datetime.datetime(
-                    2026, 1, 15, 12, 2, 0, tzinfo=datetime.timezone.utc
-                ),
+                timestamp=dt.datetime(2026, 1, 15, 12, 2, 0, tzinfo=dt.timezone.utc),
                 api_key_uuid=uuid.UUID(int=1),
                 api_key_name='key-1',
                 value=1,
@@ -398,9 +372,7 @@ class TestSummaryCostsIntegration(DatabaseIntegrationClickhouse):
                 project_uuid=PROJECT,
                 event_type='CACHE_INPUT_TOKENS',
                 route_name=route_name,
-                timestamp=datetime.datetime(
-                    2026, 1, 15, 12, 3, 0, tzinfo=datetime.timezone.utc
-                ),
+                timestamp=dt.datetime(2026, 1, 15, 12, 3, 0, tzinfo=dt.timezone.utc),
                 api_key_uuid=uuid.UUID(int=1),
                 api_key_name='key-1',
                 value=800,  # Token count
@@ -411,9 +383,7 @@ class TestSummaryCostsIntegration(DatabaseIntegrationClickhouse):
                 project_uuid=PROJECT,
                 event_type='CACHE_INPUT_TOKENS',
                 route_name=route_name,
-                timestamp=datetime.datetime(
-                    2026, 1, 15, 12, 4, 0, tzinfo=datetime.timezone.utc
-                ),
+                timestamp=dt.datetime(2026, 1, 15, 12, 4, 0, tzinfo=dt.timezone.utc),
                 api_key_uuid=uuid.UUID(int=1),
                 api_key_name='key-1',
                 value=1200,  # Token count
@@ -425,9 +395,7 @@ class TestSummaryCostsIntegration(DatabaseIntegrationClickhouse):
                 project_uuid=PROJECT,
                 event_type='CACHE_OUTPUT_TOKENS',
                 route_name=route_name,
-                timestamp=datetime.datetime(
-                    2026, 1, 15, 12, 5, 0, tzinfo=datetime.timezone.utc
-                ),
+                timestamp=dt.datetime(2026, 1, 15, 12, 5, 0, tzinfo=dt.timezone.utc),
                 api_key_uuid=uuid.UUID(int=1),
                 api_key_name='key-1',
                 value=400,  # Token count
@@ -495,8 +463,8 @@ class TestSummaryCostsIntegration(DatabaseIntegrationClickhouse):
         self.gateway_config.routes[route_name] = gw.routes[route_name]
 
         # Define time range
-        _from = datetime.datetime(2026, 1, 15, 12, 0, 0, tzinfo=datetime.timezone.utc)
-        _to = datetime.datetime(2026, 1, 15, 14, 0, 0, tzinfo=datetime.timezone.utc)
+        _from = dt.datetime(2026, 1, 15, 12, 0, 0, tzinfo=dt.timezone.utc)
+        _to = dt.datetime(2026, 1, 15, 14, 0, 0, tzinfo=dt.timezone.utc)
 
         # Insert test events at different times
         events = [
@@ -505,9 +473,7 @@ class TestSummaryCostsIntegration(DatabaseIntegrationClickhouse):
                 project_uuid=PROJECT,
                 event_type='INPUT_TOKEN_PROCESSED',
                 route_name=route_name,
-                timestamp=datetime.datetime(
-                    2026, 1, 15, 10, 0, 0, tzinfo=datetime.timezone.utc
-                ),
+                timestamp=dt.datetime(2026, 1, 15, 10, 0, 0, tzinfo=dt.timezone.utc),
                 api_key_uuid=uuid.UUID(int=1),
                 api_key_name='key-1',
                 value=1000,
@@ -520,9 +486,7 @@ class TestSummaryCostsIntegration(DatabaseIntegrationClickhouse):
                 project_uuid=PROJECT,
                 event_type='INPUT_TOKEN_PROCESSED',
                 route_name=route_name,
-                timestamp=datetime.datetime(
-                    2026, 1, 15, 13, 0, 0, tzinfo=datetime.timezone.utc
-                ),
+                timestamp=dt.datetime(2026, 1, 15, 13, 0, 0, tzinfo=dt.timezone.utc),
                 api_key_uuid=uuid.UUID(int=1),
                 api_key_name='key-1',
                 value=1000,
@@ -535,9 +499,7 @@ class TestSummaryCostsIntegration(DatabaseIntegrationClickhouse):
                 project_uuid=PROJECT,
                 event_type='OUTPUT_TOKEN_PROCESSED',
                 route_name=route_name,
-                timestamp=datetime.datetime(
-                    2026, 1, 15, 13, 30, 0, tzinfo=datetime.timezone.utc
-                ),
+                timestamp=dt.datetime(2026, 1, 15, 13, 30, 0, tzinfo=dt.timezone.utc),
                 api_key_uuid=uuid.UUID(int=1),
                 api_key_name='key-1',
                 value=500,
@@ -550,9 +512,7 @@ class TestSummaryCostsIntegration(DatabaseIntegrationClickhouse):
                 project_uuid=PROJECT,
                 event_type='INPUT_TOKEN_PROCESSED',
                 route_name=route_name,
-                timestamp=datetime.datetime(
-                    2026, 1, 15, 15, 0, 0, tzinfo=datetime.timezone.utc
-                ),
+                timestamp=dt.datetime(2026, 1, 15, 15, 0, 0, tzinfo=dt.timezone.utc),
                 api_key_uuid=uuid.UUID(int=1),
                 api_key_name='key-1',
                 value=1000,
@@ -631,9 +591,7 @@ class TestSummaryCostsIntegration(DatabaseIntegrationClickhouse):
                 project_uuid=PROJECT,
                 event_type='INPUT_TOKEN_PROCESSED',
                 route_name=route_name,
-                timestamp=datetime.datetime(
-                    2026, 1, 15, 12, 0, 0, tzinfo=datetime.timezone.utc
-                ),
+                timestamp=dt.datetime(2026, 1, 15, 12, 0, 0, tzinfo=dt.timezone.utc),
                 api_key_uuid=uuid.UUID(int=1),
                 api_key_name='key-1',
                 value=1000,
@@ -646,9 +604,7 @@ class TestSummaryCostsIntegration(DatabaseIntegrationClickhouse):
                 project_uuid=PROJECT,
                 event_type='OUTPUT_TOKEN_PROCESSED',
                 route_name=route_name,
-                timestamp=datetime.datetime(
-                    2026, 1, 15, 12, 1, 0, tzinfo=datetime.timezone.utc
-                ),
+                timestamp=dt.datetime(2026, 1, 15, 12, 1, 0, tzinfo=dt.timezone.utc),
                 api_key_uuid=uuid.UUID(int=1),
                 api_key_name='key-1',
                 value=500,
@@ -663,9 +619,7 @@ class TestSummaryCostsIntegration(DatabaseIntegrationClickhouse):
                 project_uuid=PROJECT,
                 event_type='CACHE_HIT',
                 route_name=route_name,
-                timestamp=datetime.datetime(
-                    2026, 1, 15, 12, 2, 0, tzinfo=datetime.timezone.utc
-                ),
+                timestamp=dt.datetime(2026, 1, 15, 12, 2, 0, tzinfo=dt.timezone.utc),
                 api_key_uuid=uuid.UUID(int=1),
                 api_key_name='key-1',
                 value=1,
@@ -675,9 +629,7 @@ class TestSummaryCostsIntegration(DatabaseIntegrationClickhouse):
                 project_uuid=PROJECT,
                 event_type='INPUT_TOKEN_PROCESSED',  # Embedding inference
                 route_name=route_name,
-                timestamp=datetime.datetime(
-                    2026, 1, 15, 12, 3, 0, tzinfo=datetime.timezone.utc
-                ),
+                timestamp=dt.datetime(2026, 1, 15, 12, 3, 0, tzinfo=dt.timezone.utc),
                 api_key_uuid=uuid.UUID(int=1),
                 api_key_name='key-1',
                 value=300,
@@ -690,9 +642,7 @@ class TestSummaryCostsIntegration(DatabaseIntegrationClickhouse):
                 project_uuid=PROJECT,
                 event_type='CACHE_INPUT_TOKENS',  # LLM input savings
                 route_name=route_name,
-                timestamp=datetime.datetime(
-                    2026, 1, 15, 12, 4, 0, tzinfo=datetime.timezone.utc
-                ),
+                timestamp=dt.datetime(2026, 1, 15, 12, 4, 0, tzinfo=dt.timezone.utc),
                 api_key_uuid=uuid.UUID(int=1),
                 api_key_name='key-1',
                 value=800,
@@ -821,9 +771,7 @@ class TestSummaryCostsIntegration(DatabaseIntegrationClickhouse):
                 request_uuid=request_1_uuid,
                 event_type='INPUT_TOKEN_PROCESSED',
                 route_name=route_name,
-                timestamp=datetime.datetime(
-                    2026, 1, 15, 12, 0, 0, tzinfo=datetime.timezone.utc
-                ),
+                timestamp=dt.datetime(2026, 1, 15, 12, 0, 0, tzinfo=dt.timezone.utc),
                 api_key_uuid=uuid.UUID(int=1),
                 api_key_name='key-1',
                 value=1000,
@@ -836,9 +784,7 @@ class TestSummaryCostsIntegration(DatabaseIntegrationClickhouse):
                 request_uuid=request_1_uuid,
                 event_type='OUTPUT_TOKEN_PROCESSED',
                 route_name=route_name,
-                timestamp=datetime.datetime(
-                    2026, 1, 15, 12, 1, 0, tzinfo=datetime.timezone.utc
-                ),
+                timestamp=dt.datetime(2026, 1, 15, 12, 1, 0, tzinfo=dt.timezone.utc),
                 api_key_uuid=uuid.UUID(int=1),
                 api_key_name='key-1',
                 value=500,
@@ -852,9 +798,7 @@ class TestSummaryCostsIntegration(DatabaseIntegrationClickhouse):
                 request_uuid=request_2_uuid,
                 event_type='INPUT_TOKEN_PROCESSED',
                 route_name=route_name,
-                timestamp=datetime.datetime(
-                    2026, 1, 15, 12, 2, 0, tzinfo=datetime.timezone.utc
-                ),
+                timestamp=dt.datetime(2026, 1, 15, 12, 2, 0, tzinfo=dt.timezone.utc),
                 api_key_uuid=uuid.UUID(int=1),
                 api_key_name='key-1',
                 value=800,
@@ -868,9 +812,7 @@ class TestSummaryCostsIntegration(DatabaseIntegrationClickhouse):
                 request_uuid=request_3_uuid,
                 event_type='INPUT_TOKEN_PROCESSED',
                 route_name=route_name,
-                timestamp=datetime.datetime(
-                    2026, 1, 15, 12, 3, 0, tzinfo=datetime.timezone.utc
-                ),
+                timestamp=dt.datetime(2026, 1, 15, 12, 3, 0, tzinfo=dt.timezone.utc),
                 api_key_uuid=uuid.UUID(int=1),
                 api_key_name='key-1',
                 value=1200,
@@ -883,9 +825,7 @@ class TestSummaryCostsIntegration(DatabaseIntegrationClickhouse):
                 request_uuid=request_3_uuid,
                 event_type='OUTPUT_TOKEN_PROCESSED',
                 route_name=route_name,
-                timestamp=datetime.datetime(
-                    2026, 1, 15, 12, 4, 0, tzinfo=datetime.timezone.utc
-                ),
+                timestamp=dt.datetime(2026, 1, 15, 12, 4, 0, tzinfo=dt.timezone.utc),
                 api_key_uuid=uuid.UUID(int=1),
                 api_key_name='key-1',
                 value=600,
@@ -963,9 +903,7 @@ class TestSummaryCostsIntegration(DatabaseIntegrationClickhouse):
                 project_uuid=PROJECT,
                 event_type='INPUT_TOKEN_PROCESSED',
                 route_name=route_name,
-                timestamp=datetime.datetime(
-                    2026, 1, 15, 12, 0, 0, tzinfo=datetime.timezone.utc
-                ),
+                timestamp=dt.datetime(2026, 1, 15, 12, 0, 0, tzinfo=dt.timezone.utc),
                 api_key_uuid=uuid.UUID(int=1),
                 api_key_name='key-1',
                 value=1000,
@@ -980,9 +918,7 @@ class TestSummaryCostsIntegration(DatabaseIntegrationClickhouse):
                 project_uuid=PROJECT,
                 event_type='OUTPUT_TOKEN_PROCESSED',
                 route_name=route_name,
-                timestamp=datetime.datetime(
-                    2026, 1, 15, 12, 1, 0, tzinfo=datetime.timezone.utc
-                ),
+                timestamp=dt.datetime(2026, 1, 15, 12, 1, 0, tzinfo=dt.timezone.utc),
                 api_key_uuid=uuid.UUID(int=1),
                 api_key_name='key-1',
                 value=500,
@@ -996,9 +932,7 @@ class TestSummaryCostsIntegration(DatabaseIntegrationClickhouse):
                 project_uuid=PROJECT,
                 event_type='INPUT_TOKEN_PROCESSED',
                 route_name=route_name,
-                timestamp=datetime.datetime(
-                    2026, 1, 15, 12, 2, 0, tzinfo=datetime.timezone.utc
-                ),
+                timestamp=dt.datetime(2026, 1, 15, 12, 2, 0, tzinfo=dt.timezone.utc),
                 api_key_uuid=uuid.UUID(int=1),
                 api_key_name='key-1',
                 value=800,
@@ -1014,9 +948,7 @@ class TestSummaryCostsIntegration(DatabaseIntegrationClickhouse):
                 project_uuid=PROJECT,
                 event_type='INPUT_TOKEN_PROCESSED',
                 route_name=route_name,
-                timestamp=datetime.datetime(
-                    2026, 1, 15, 12, 3, 0, tzinfo=datetime.timezone.utc
-                ),
+                timestamp=dt.datetime(2026, 1, 15, 12, 3, 0, tzinfo=dt.timezone.utc),
                 api_key_uuid=uuid.UUID(int=1),
                 api_key_name='key-1',
                 value=600,
@@ -1031,9 +963,7 @@ class TestSummaryCostsIntegration(DatabaseIntegrationClickhouse):
                 project_uuid=PROJECT,
                 event_type='OUTPUT_TOKEN_PROCESSED',
                 route_name=route_name,
-                timestamp=datetime.datetime(
-                    2026, 1, 15, 12, 4, 0, tzinfo=datetime.timezone.utc
-                ),
+                timestamp=dt.datetime(2026, 1, 15, 12, 4, 0, tzinfo=dt.timezone.utc),
                 api_key_uuid=uuid.UUID(int=1),
                 api_key_name='key-1',
                 value=300,
@@ -1047,9 +977,7 @@ class TestSummaryCostsIntegration(DatabaseIntegrationClickhouse):
                 project_uuid=PROJECT,
                 event_type='INPUT_TOKEN_PROCESSED',
                 route_name=route_name,
-                timestamp=datetime.datetime(
-                    2026, 1, 15, 12, 5, 0, tzinfo=datetime.timezone.utc
-                ),
+                timestamp=dt.datetime(2026, 1, 15, 12, 5, 0, tzinfo=dt.timezone.utc),
                 api_key_uuid=uuid.UUID(int=1),
                 api_key_name='key-1',
                 value=400,
@@ -1065,9 +993,7 @@ class TestSummaryCostsIntegration(DatabaseIntegrationClickhouse):
                 project_uuid=PROJECT,
                 event_type='INPUT_TOKEN_PROCESSED',
                 route_name=route_name,
-                timestamp=datetime.datetime(
-                    2026, 1, 15, 12, 6, 0, tzinfo=datetime.timezone.utc
-                ),
+                timestamp=dt.datetime(2026, 1, 15, 12, 6, 0, tzinfo=dt.timezone.utc),
                 api_key_uuid=uuid.UUID(int=1),
                 api_key_name='key-1',
                 value=500,
@@ -1081,9 +1007,7 @@ class TestSummaryCostsIntegration(DatabaseIntegrationClickhouse):
                 project_uuid=PROJECT,
                 event_type='INPUT_TOKEN_PROCESSED',
                 route_name=route_name,
-                timestamp=datetime.datetime(
-                    2026, 1, 15, 12, 7, 0, tzinfo=datetime.timezone.utc
-                ),
+                timestamp=dt.datetime(2026, 1, 15, 12, 7, 0, tzinfo=dt.timezone.utc),
                 api_key_uuid=uuid.UUID(int=1),
                 api_key_name='key-1',
                 value=300,
@@ -1097,9 +1021,7 @@ class TestSummaryCostsIntegration(DatabaseIntegrationClickhouse):
                 project_uuid=PROJECT,
                 event_type='CACHE_HIT',
                 route_name=route_name,
-                timestamp=datetime.datetime(
-                    2026, 1, 15, 12, 8, 0, tzinfo=datetime.timezone.utc
-                ),
+                timestamp=dt.datetime(2026, 1, 15, 12, 8, 0, tzinfo=dt.timezone.utc),
                 api_key_uuid=uuid.UUID(int=1),
                 api_key_name='key-1',
                 value=1,
@@ -1109,9 +1031,7 @@ class TestSummaryCostsIntegration(DatabaseIntegrationClickhouse):
                 project_uuid=PROJECT,
                 event_type='CACHE_INPUT_TOKENS',
                 route_name=route_name,
-                timestamp=datetime.datetime(
-                    2026, 1, 15, 12, 9, 0, tzinfo=datetime.timezone.utc
-                ),
+                timestamp=dt.datetime(2026, 1, 15, 12, 9, 0, tzinfo=dt.timezone.utc),
                 api_key_uuid=uuid.UUID(int=1),
                 api_key_name='key-1',
                 value=1500,  # Saved input tokens
@@ -1123,9 +1043,7 @@ class TestSummaryCostsIntegration(DatabaseIntegrationClickhouse):
                 project_uuid=PROJECT,
                 event_type='CACHE_OUTPUT_TOKENS',
                 route_name=route_name,
-                timestamp=datetime.datetime(
-                    2026, 1, 15, 12, 10, 0, tzinfo=datetime.timezone.utc
-                ),
+                timestamp=dt.datetime(2026, 1, 15, 12, 10, 0, tzinfo=dt.timezone.utc),
                 api_key_uuid=uuid.UUID(int=1),
                 api_key_name='key-1',
                 value=700,  # Saved output tokens
@@ -1232,9 +1150,7 @@ class TestSummaryCostsIntegration(DatabaseIntegrationClickhouse):
                 'routes': {route_name: {'decision_models': ['jev']}},
             }
         )
-        timestamp = datetime.datetime(
-            2026, 1, 15, 12, 0, 0, tzinfo=datetime.timezone.utc
-        )
+        timestamp = dt.datetime(2026, 1, 15, 12, 0, 0, tzinfo=dt.timezone.utc)
         self.insert(
             [
                 get_sample_event(

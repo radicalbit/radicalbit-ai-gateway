@@ -1,5 +1,5 @@
 import copy
-import datetime
+import datetime as dt
 import os
 from typing import Any
 import unittest
@@ -129,8 +129,8 @@ class TestDashboardRoute(unittest.TestCase):
                 value=1,
                 last_event=LastEventFallback(
                     route_name='route-A',
-                    timestamp=datetime.datetime(
-                        2025, 10, 14, 12, 58, 36, 931873, tzinfo=datetime.timezone.utc
+                    timestamp=dt.datetime(
+                        2025, 10, 14, 12, 58, 36, 931873, tzinfo=dt.timezone.utc
                     ),
                     api_key_uuid=uuid.UUID('a45cbeeb-acbe-485b-b619-1b70361bddc6'),
                     target='gpt-4.1',
@@ -142,8 +142,8 @@ class TestDashboardRoute(unittest.TestCase):
                 value=4,
                 last_event=LastEventGuardrail(
                     route_name='route-A',
-                    timestamp=datetime.datetime(
-                        2025, 10, 14, 12, 58, 36, 931873, tzinfo=datetime.timezone.utc
+                    timestamp=dt.datetime(
+                        2025, 10, 14, 12, 58, 36, 931873, tzinfo=dt.timezone.utc
                     ),
                     api_key_uuid=uuid.UUID('28f5ede1-3d66-40c2-ac78-7aeedb5a5c92'),
                     name='PRESIDIO',
@@ -242,8 +242,8 @@ class TestDashboardRoute(unittest.TestCase):
         expected_response = LastNEvents(
             fallbacks=[
                 FallbackEventDetailDTO(
-                    timestamp=datetime.datetime(
-                        2025, 10, 14, 12, 58, 36, 931873, tzinfo=datetime.timezone.utc
+                    timestamp=dt.datetime(
+                        2025, 10, 14, 12, 58, 36, 931873, tzinfo=dt.timezone.utc
                     ),
                     api_key_uuid=api_key_uuid,
                     route_name='route-A',
@@ -253,8 +253,8 @@ class TestDashboardRoute(unittest.TestCase):
                     fallback='llama3.1',
                 ),
                 FallbackEventDetailDTO(
-                    timestamp=datetime.datetime(
-                        2025, 10, 13, 12, 58, 36, 931873, tzinfo=datetime.timezone.utc
+                    timestamp=dt.datetime(
+                        2025, 10, 13, 12, 58, 36, 931873, tzinfo=dt.timezone.utc
                     ),
                     api_key_uuid=api_key_uuid,
                     route_name='route-A',
@@ -266,8 +266,8 @@ class TestDashboardRoute(unittest.TestCase):
             ],
             guardrails=[
                 GuardrailEventDetailDTO(
-                    timestamp=datetime.datetime(
-                        2025, 10, 14, 12, 58, 36, 931873, tzinfo=datetime.timezone.utc
+                    timestamp=dt.datetime(
+                        2025, 10, 14, 12, 58, 36, 931873, tzinfo=dt.timezone.utc
                     ),
                     api_key_uuid=api_key_uuid,
                     route_name='route-A',
@@ -282,8 +282,8 @@ class TestDashboardRoute(unittest.TestCase):
             ],
             cache_triggered=[
                 CacheHitEventDetailDTO(
-                    timestamp=datetime.datetime(
-                        2025, 10, 13, 12, 58, 36, 931873, tzinfo=datetime.timezone.utc
+                    timestamp=dt.datetime(
+                        2025, 10, 13, 12, 58, 36, 931873, tzinfo=dt.timezone.utc
                     ),
                     api_key_uuid=api_key_uuid,
                     route_name='route-A',
@@ -294,8 +294,8 @@ class TestDashboardRoute(unittest.TestCase):
             ],
             rate_limit=[
                 RateLimitEventDetailDTO(
-                    timestamp=datetime.datetime(
-                        2025, 10, 13, 12, 58, 36, 931873, tzinfo=datetime.timezone.utc
+                    timestamp=dt.datetime(
+                        2025, 10, 13, 12, 58, 36, 931873, tzinfo=dt.timezone.utc
                     ),
                     api_key_uuid=api_key_uuid,
                     route_name='route-A',
@@ -755,11 +755,11 @@ def dash():
 
 
 ROUTE = 'rb-gateway'
-UTC = datetime.timezone.utc
+UTC = dt.timezone.utc
 
 
 def _dt(*args, tz=UTC):
-    return datetime.datetime(*args, tzinfo=tz)
+    return dt.datetime(*args, tzinfo=tz)
 
 
 @pytest.mark.parametrize(
@@ -793,16 +793,16 @@ def _dt(*args, tz=UTC):
             '2026-01-01T00:00:00%2B01:00',
             '2026-02-01T00:00:00%2B01:00',
             'groups',
-            _dt(2026, 1, 1, tz=datetime.timezone(datetime.timedelta(hours=1))),
-            _dt(2026, 2, 1, tz=datetime.timezone(datetime.timedelta(hours=1))),
+            _dt(2026, 1, 1, tz=dt.timezone(dt.timedelta(hours=1))),
+            _dt(2026, 2, 1, tz=dt.timezone(dt.timedelta(hours=1))),
             id='positive-offset',
         ),
         pytest.param(
             '2026-01-08T00:00:00-08:00',
             '2026-01-22T00:00:00-08:00',
             'groups',
-            _dt(2026, 1, 8, tz=datetime.timezone(datetime.timedelta(hours=-8))),
-            _dt(2026, 1, 22, tz=datetime.timezone(datetime.timedelta(hours=-8))),
+            _dt(2026, 1, 8, tz=dt.timezone(dt.timedelta(hours=-8))),
+            _dt(2026, 1, 22, tz=dt.timezone(dt.timedelta(hours=-8))),
             id='negative-offset',
         ),
     ],

@@ -1,4 +1,4 @@
-import datetime
+import datetime as dt
 
 from freezegun import freeze_time
 import pytest
@@ -9,13 +9,13 @@ from radicalbit_ai_gateway.models.credential_expiry import (
     utc_today,
 )
 
-_UTC = getattr(datetime, 'UTC', datetime.timezone.utc)
+_UTC = getattr(dt, 'UTC', dt.timezone.utc)
 
-EXPIRES_ON = datetime.date(2026, 11, 10)
+EXPIRES_ON = dt.date(2026, 11, 10)
 
 
-def _at(*args) -> datetime.datetime:
-    return datetime.datetime(*args, tzinfo=_UTC)
+def _at(*args) -> dt.datetime:
+    return dt.datetime(*args, tzinfo=_UTC)
 
 
 @pytest.mark.parametrize(
@@ -49,7 +49,7 @@ def _at(*args) -> datetime.datetime:
             id='00:00:00 UTC the following day',
         ),
         pytest.param(
-            datetime.date(2026, 11, 10),
+            dt.date(2026, 11, 10),
             _at(2026, 11, 10, 9),
             CredentialState.EXPIRING,
             id='expiry date of today',
@@ -62,8 +62,8 @@ def test_get_credential_state(expires_on, now, expected):
 
 def test_compares_against_the_utc_calendar_date_not_the_local_one():
     # 01:30 on Nov 11 in Rome is still Nov 10 in UTC: the credential has not expired yet
-    rome = datetime.timezone(datetime.timedelta(hours=1))
-    now = datetime.datetime(2026, 11, 11, 0, 30, tzinfo=rome)
+    rome = dt.timezone(dt.timedelta(hours=1))
+    now = dt.datetime(2026, 11, 11, 0, 30, tzinfo=rome)
     assert get_credential_state(EXPIRES_ON, now) == CredentialState.EXPIRING
 
 
@@ -76,4 +76,4 @@ def test_defaults_to_the_current_instant():
 
 def test_utc_today():
     with freeze_time('2026-11-10 23:59:59'):
-        assert utc_today() == datetime.date(2026, 11, 10)
+        assert utc_today() == dt.date(2026, 11, 10)

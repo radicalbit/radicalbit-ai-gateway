@@ -1,4 +1,4 @@
-import datetime
+import datetime as dt
 from enum import Enum
 
 from radicalbit_ai_gateway.limiter.window_config import parse_window
@@ -9,8 +9,8 @@ from radicalbit_ai_gateway.models.credential_expiry import (
     get_expiry_instant,
 )
 
-GRACE_ENDING_WINDOW = datetime.timedelta(hours=24)
-MIN_GRACE_PERIOD = datetime.timedelta(hours=1)
+GRACE_ENDING_WINDOW = dt.timedelta(hours=24)
+MIN_GRACE_PERIOD = dt.timedelta(hours=1)
 
 # Compared in seconds, so an absurd N is refused before any date arithmetic
 _MIN_GRACE_PERIOD_SECONDS = int(MIN_GRACE_PERIOD.total_seconds())
@@ -21,21 +21,21 @@ class GracePeriodOutOfBoundsError(ValueError):
     pass
 
 
-def parse_grace_period(text: str) -> datetime.timedelta:
+def parse_grace_period(text: str) -> dt.timedelta:
     """Parse a grace period in the same "N unit" format as limit windows."""
     seconds = parse_window(text)
     if seconds < _MIN_GRACE_PERIOD_SECONDS:
         raise ValueError('The grace period must be at least 1 hour')
     if seconds > _MAX_GRACE_PERIOD_SECONDS:
         raise ValueError('The grace period must be at most 1 year (365 days)')
-    return datetime.timedelta(seconds=seconds)
+    return dt.timedelta(seconds=seconds)
 
 
 def get_grace_end(
-    grace_period: datetime.timedelta | None,
-    expires_on: datetime.date | None,
-    now: datetime.datetime,
-) -> datetime.datetime | None:
+    grace_period: dt.timedelta | None,
+    expires_on: dt.date | None,
+    now: dt.datetime,
+) -> dt.datetime | None:
     """When a grace period starting now ends, or None for no grace period.
     It must not end after the expiry, and is refused outright within 1 hour of it.
     """
@@ -64,14 +64,14 @@ class RotationState(str, Enum):
 
 
 def previous_value_authenticates(
-    expires_on: datetime.date | None,
-    grace_ends_at: datetime.datetime | None,
-    now: datetime.datetime | None = None,
+    expires_on: dt.date | None,
+    grace_ends_at: dt.datetime | None,
+    now: dt.datetime | None = None,
 ) -> bool:
     """Tell whether the previous value still authenticates: only before the grace
     end, and only while the credential has not expired.
     """
-    now = now or datetime.datetime.now(tz=UTC)
+    now = now or dt.datetime.now(tz=UTC)
     return (
         grace_ends_at is not None
         and now < grace_ends_at
@@ -80,14 +80,14 @@ def previous_value_authenticates(
 
 
 def get_rotation_state(
-    expires_on: datetime.date | None,
-    grace_ends_at: datetime.datetime | None,
-    last_rotated_at: datetime.datetime | None,
-    now: datetime.datetime | None = None,
+    expires_on: dt.date | None,
+    grace_ends_at: dt.datetime | None,
+    last_rotated_at: dt.datetime | None,
+    now: dt.datetime | None = None,
 ) -> RotationState:
     if last_rotated_at is None:
         return RotationState.NONE
-    now = now or datetime.datetime.now(tz=UTC)
+    now = now or dt.datetime.now(tz=UTC)
     if grace_ends_at is None or not previous_value_authenticates(
         expires_on, grace_ends_at, now
     ):

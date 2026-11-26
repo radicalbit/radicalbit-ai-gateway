@@ -1,4 +1,4 @@
-import datetime
+import datetime as dt
 from typing import Any
 import uuid
 
@@ -14,7 +14,7 @@ from radicalbit_ai_gateway.models.config_slot import Slot
 from radicalbit_ai_gateway.models.config_status import ConfigStatus
 from radicalbit_ai_gateway.models.project_dto import ProjectFilter
 
-UTC = getattr(datetime, 'UTC', datetime.timezone.utc)
+UTC = getattr(dt, 'UTC', dt.timezone.utc)
 
 
 def _names(projects) -> list[str]:
@@ -78,9 +78,7 @@ class ProjectDAOTest(AsyncDatabaseIntegration):
 
         await self._insert_served_project('served')
         dev = await self._insert_project('dev')
-        await self._insert_project(
-            'was-served', first_served_at=datetime.datetime.now(UTC)
-        )
+        await self._insert_project('was-served', first_served_at=dt.datetime.now(UTC))
         deleted_served = await self._insert_served_project('deleted-served')
         deleted = await self._insert_project('deleted')
         assert await self.project_dao.soft_delete(deleted_served.uuid) == 1
@@ -129,7 +127,7 @@ class ProjectDAOTest(AsyncDatabaseIntegration):
         # A soft-deleted slot never matches.
         await self._insert_project_with_config(
             'deleted-slot',
-            (Slot.A, ConfigStatus.SERVED, {'deleted_at': datetime.datetime.now(UTC)}),
+            (Slot.A, ConfigStatus.SERVED, {'deleted_at': dt.datetime.now(UTC)}),
         )
         deleted = await self._insert_project_with_config(
             'deleted', (Slot.A, ConfigStatus.SERVED, {})

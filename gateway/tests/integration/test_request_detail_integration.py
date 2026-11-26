@@ -4,7 +4,7 @@ One request by its UUID: its `request_event` row (the Outcome), its trace ID
 if it left one, and every event it emitted in time order.
 """
 
-import datetime
+import datetime as dt
 import uuid
 
 import pytest
@@ -27,7 +27,7 @@ from radicalbit_ai_gateway.utils.exceptions import GatewayNotFoundError
 
 PROJECT = TEST_PROJECT_UUID
 REQUEST_UUID_ATTR = 'traceloop.association.properties.request_uuid'
-T0 = datetime.datetime(2026, 3, 10, 12, 0, 0, tzinfo=datetime.timezone.utc)
+T0 = dt.datetime(2026, 3, 10, 12, 0, 0, tzinfo=dt.timezone.utc)
 
 
 def _request(request_uuid, timestamp=T0, **kwargs):
@@ -141,7 +141,7 @@ class TestRequestDetailIntegration(DatabaseIntegrationClickhouse):
 
     def test_events_come_in_time_order_with_their_columns(self):
         request_uuid = uuid.uuid4()
-        at = lambda ms: T0 - datetime.timedelta(milliseconds=ms)  # noqa: E731
+        at = lambda ms: T0 - dt.timedelta(milliseconds=ms)  # noqa: E731
         self.insert([_request(request_uuid)])
         # Inserted out of order on purpose.
         self.insert(
@@ -242,7 +242,7 @@ class TestRequestDetailIntegration(DatabaseIntegrationClickhouse):
                 _event(
                     request_uuid,
                     event_type,
-                    timestamp=T0 - datetime.timedelta(seconds=len(cases) - i),
+                    timestamp=T0 - dt.timedelta(seconds=len(cases) - i),
                     behavior=behavior,
                 )
                 for i, (event_type, behavior, _) in enumerate(cases)
@@ -290,8 +290,8 @@ class TestRequestDetailIntegration(DatabaseIntegrationClickhouse):
 
     def test_events_of_a_request_that_crossed_midnight_are_listed(self):
         # request_event is written when the request ends, its events before.
-        just_after = datetime.datetime(2026, 3, 10, 0, 0, 5, tzinfo=datetime.UTC)
-        just_before = datetime.datetime(2026, 3, 9, 23, 59, 58, tzinfo=datetime.UTC)
+        just_after = dt.datetime(2026, 3, 10, 0, 0, 5, tzinfo=dt.UTC)
+        just_before = dt.datetime(2026, 3, 9, 23, 59, 58, tzinfo=dt.UTC)
         request_uuid = uuid.uuid4()
         self.insert([_request(request_uuid, timestamp=just_after)])
         self.insert(
@@ -329,12 +329,12 @@ class TestRequestDetailIntegration(DatabaseIntegrationClickhouse):
                 _event(
                     request_uuid,
                     'FALLBACK',
-                    timestamp=T0 - datetime.timedelta(days=2),
+                    timestamp=T0 - dt.timedelta(days=2),
                 ),
                 _event(
                     request_uuid,
                     'CACHE_HIT',
-                    timestamp=T0 + datetime.timedelta(days=1),
+                    timestamp=T0 + dt.timedelta(days=1),
                 ),
             ]
         )

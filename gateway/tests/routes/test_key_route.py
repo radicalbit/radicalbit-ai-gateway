@@ -1,5 +1,5 @@
 import asyncio
-import datetime
+import datetime as dt
 import unittest
 from unittest.mock import AsyncMock, MagicMock, patch
 import uuid
@@ -512,7 +512,7 @@ class TestKeyRouteExpiry(unittest.TestCase):
 
     @freeze_time('2026-11-01 12:00:00')
     def test_create_with_expires_on(self) -> None:
-        self._created(expires_on=datetime.date(2026, 11, 10))
+        self._created(expires_on=dt.date(2026, 11, 10))
         res = self.client.post(
             f'{self.prefix}/keys', json={'name': 'expiry', 'expiresOn': '2026-11-10'}
         )
@@ -520,12 +520,12 @@ class TestKeyRouteExpiry(unittest.TestCase):
         assert res.json()['expiresOn'] == '2026-11-10'
         assert res.json()['state'] == 'active'
         self.key_service.create_key.assert_called_once_with(
-            KeyCreateIn(name='expiry', expires_on=datetime.date(2026, 11, 10))
+            KeyCreateIn(name='expiry', expires_on=dt.date(2026, 11, 10))
         )
 
     @freeze_time('2026-11-01 23:59:59')
     def test_create_with_today_is_accepted(self) -> None:
-        self._created(expires_on=datetime.date(2026, 11, 1))
+        self._created(expires_on=dt.date(2026, 11, 1))
         res = self.client.post(
             f'{self.prefix}/keys', json={'name': 'today', 'expiresOn': '2026-11-01'}
         )
@@ -544,7 +544,7 @@ class TestKeyRouteExpiry(unittest.TestCase):
     @freeze_time('2026-11-11 00:00:00')
     def test_reads_carry_expires_on_and_state(self) -> None:
         expired = KeyFullOut.from_key_obscured(
-            db_mock.get_sample_key(expires_on=datetime.date(2026, 11, 10))
+            db_mock.get_sample_key(expires_on=dt.date(2026, 11, 10))
         )
         self.key_service.get_key_by_uuid = AsyncMock(return_value=expired)
         self.key_service.get_all = AsyncMock(return_value=[expired])
@@ -568,7 +568,7 @@ class TestKeyRouteExpiry(unittest.TestCase):
         self.key_service.update_key_name.assert_not_called()
 
 
-EXPIRES_ON = datetime.date(2026, 11, 10)
+EXPIRES_ON = dt.date(2026, 11, 10)
 EXPIRED_AT = '2026-11-11 00:00:00'
 EXPIRING_AT = '2026-11-10 23:59:59'
 LIMITS_BODY = {'limits': [{'category': 'budget', 'windowSize': '1 day', 'value': 10}]}
@@ -685,8 +685,8 @@ class TestKeyRouteExpiredIsDeleteOrUnassignOnly(unittest.TestCase):
         )
 
 
-NOW = datetime.datetime(2026, 11, 3, 12, tzinfo=datetime.timezone.utc)
-ROTATION_EXPIRES_ON = datetime.date(2026, 11, 10)
+NOW = dt.datetime(2026, 11, 3, 12, tzinfo=dt.timezone.utc)
+ROTATION_EXPIRES_ON = dt.date(2026, 11, 10)
 
 
 class TestKeyRouteRotation(unittest.TestCase):
@@ -799,8 +799,8 @@ class TestKeyRouteRotation(unittest.TestCase):
 
     def _in_grace(self, hours=24):
         self.stored_key.previous_hashed_key = 'previous'
-        self.stored_key.grace_ends_at = NOW + datetime.timedelta(hours=hours)
-        self.stored_key.last_rotated_at = NOW - datetime.timedelta(hours=1)
+        self.stored_key.grace_ends_at = NOW + dt.timedelta(hours=hours)
+        self.stored_key.last_rotated_at = NOW - dt.timedelta(hours=1)
 
     def test_rotate_returns_the_new_value_once_and_keeps_the_credential(self):
         old_hash = self.stored_key.hashed_key

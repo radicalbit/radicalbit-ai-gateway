@@ -1,4 +1,4 @@
-import datetime
+import datetime as dt
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 from uuid import UUID
@@ -23,11 +23,11 @@ PROJECT_UUID = UUID('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa')
 KEY_UUID = UUID('660e8400-e29b-41d4-a716-446655440003')
 GROUP_UUID = UUID('550e8400-e29b-41d4-a716-446655440003')
 
-LAST_CALL = datetime.datetime(2025, 1, 8, 10, 0, 0, tzinfo=datetime.timezone.utc)
+LAST_CALL = dt.datetime(2025, 1, 8, 10, 0, 0, tzinfo=dt.timezone.utc)
 
-BUCKET_0 = datetime.datetime(2025, 1, 8, 10, 0, 0, tzinfo=datetime.timezone.utc)
-BUCKET_1 = BUCKET_0 + datetime.timedelta(hours=1)
-BUCKET_2 = BUCKET_0 + datetime.timedelta(hours=2)
+BUCKET_0 = dt.datetime(2025, 1, 8, 10, 0, 0, tzinfo=dt.timezone.utc)
+BUCKET_1 = BUCKET_0 + dt.timedelta(hours=1)
+BUCKET_2 = BUCKET_0 + dt.timedelta(hours=2)
 AXIS = [int(b.timestamp()) for b in (BUCKET_0, BUCKET_1, BUCKET_2)]
 
 # The two chart endpoints share the bucket-to-series build: every chart test
@@ -110,7 +110,7 @@ def test_key_usage_rows_become_dtos_in_the_dao_page_envelope():
 def test_key_usage_passes_every_filter_to_the_dao():
     service = _service()
     params = Params(page=3, size=10)
-    _to = LAST_CALL + datetime.timedelta(hours=1)
+    _to = LAST_CALL + dt.timedelta(hours=1)
     service.event_dao.get_mcp_key_usage_paginated = MagicMock(
         return_value=Page.create([], params, total=0)
     )
@@ -164,7 +164,7 @@ def test_a_quiet_window_is_an_empty_chart_and_the_dao_gets_every_filter(
 ):
     """A ten-day range reads by days, and the DAO is asked for that bucket."""
     service = _service()
-    _from = BUCKET_0 - datetime.timedelta(days=10)
+    _from = BUCKET_0 - dt.timedelta(days=10)
     extra = {'entity_value': entity_value} if entity_value else {}
 
     res = chart(

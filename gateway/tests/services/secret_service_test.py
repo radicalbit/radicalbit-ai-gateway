@@ -1,4 +1,4 @@
-import datetime
+import datetime as dt
 from unittest.mock import MagicMock
 import uuid
 
@@ -20,7 +20,7 @@ from radicalbit_ai_gateway.models.secret_dto import ProjectRef, SecretOut, Secre
 from radicalbit_ai_gateway.services.secret_service import SecretService
 from radicalbit_ai_gateway.utils.exceptions import SecretsBackendError
 
-_UTC = getattr(datetime, 'UTC', datetime.timezone.utc)
+_UTC = getattr(dt, 'UTC', dt.timezone.utc)
 
 _MCP_CONFIG_WITH_SECRET = (
     'chat_models:\n'
@@ -283,7 +283,7 @@ class SecretServiceUsedInTest(AsyncDatabaseIntegration):
             await session.execute(
                 update(Project)
                 .where(Project.uuid == deleted_project.uuid)
-                .values(deleted_at=datetime.datetime.now(tz=_UTC))
+                .values(deleted_at=dt.datetime.now(tz=_UTC))
             )
         deleted_config = await self._project('deleted-config')
         await self._config(deleted_config, _OPENAI_CONFIG)

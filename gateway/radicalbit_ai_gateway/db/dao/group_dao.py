@@ -1,5 +1,5 @@
 from collections.abc import Sequence
-import datetime
+import datetime as dt
 from uuid import UUID
 
 from sqlalchemy import delete, select, update
@@ -47,8 +47,8 @@ class GroupDAO:
             return group_to_delete
 
     async def update_group_name(self, group_uuid: UUID, name: str) -> int:
-        UTC = getattr(datetime, 'UTC', datetime.timezone.utc)
-        now = datetime.datetime.now(tz=UTC)
+        UTC = getattr(dt, 'UTC', dt.timezone.utc)
+        now = dt.datetime.now(tz=UTC)
         async with self.db.begin_session() as session:
             query = (
                 update(Group)

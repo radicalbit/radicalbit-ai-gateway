@@ -1,7 +1,7 @@
-import datetime
+import datetime as dt
 from enum import Enum
 
-UTC = getattr(datetime, 'UTC', datetime.timezone.utc)
+UTC = getattr(dt, 'UTC', dt.timezone.utc)
 
 
 class CredentialState(str, Enum):
@@ -10,17 +10,17 @@ class CredentialState(str, Enum):
     EXPIRED = 'expired'
 
 
-def utc_today() -> datetime.date:
-    return datetime.datetime.now(tz=UTC).date()
+def utc_today() -> dt.date:
+    return dt.datetime.now(tz=UTC).date()
 
 
-def get_expiry_instant(expires_on: datetime.date) -> datetime.datetime:
+def get_expiry_instant(expires_on: dt.date) -> dt.datetime:
     """Return the last instant a credential expiring on that date still works."""
-    return datetime.datetime.combine(expires_on, datetime.time(23, 59, 59), tzinfo=UTC)
+    return dt.datetime.combine(expires_on, dt.time(23, 59, 59), tzinfo=UTC)
 
 
 def get_credential_state(
-    expires_on: datetime.date | None, now: datetime.datetime | None = None
+    expires_on: dt.date | None, now: dt.datetime | None = None
 ) -> CredentialState:
     """State of a credential at an instant, comparing the instant's UTC
     calendar date with the expiry date. A credential expiring on D is valid
@@ -28,9 +28,9 @@ def get_credential_state(
     """
     if expires_on is None:
         return CredentialState.ACTIVE
-    today = (now or datetime.datetime.now(tz=UTC)).astimezone(UTC).date()
+    today = (now or dt.datetime.now(tz=UTC)).astimezone(UTC).date()
     if today > expires_on:
         return CredentialState.EXPIRED
-    if today >= expires_on - datetime.timedelta(days=1):
+    if today >= expires_on - dt.timedelta(days=1):
         return CredentialState.EXPIRING
     return CredentialState.ACTIVE

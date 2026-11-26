@@ -7,7 +7,7 @@ one or more tags, and listing the tags available in a project.
 The tests only read, so the data set is seeded once for the class.
 """
 
-import datetime
+import datetime as dt
 import uuid
 
 from sqlalchemy import func, select
@@ -25,7 +25,7 @@ PROJECT_B = uuid.UUID('22222222-2222-2222-2222-222222222222')
 # mistaken for 'env=prod' or for a value of key 'env'.
 PROJECT_C = uuid.UUID('33333333-3333-3333-3333-333333333333')
 PROJECT_EMPTY = uuid.UUID('44444444-4444-4444-4444-444444444444')
-TIMESTAMP = datetime.datetime(2025, 1, 8, 10, 0, 0, tzinfo=datetime.timezone.utc)
+TIMESTAMP = dt.datetime(2025, 1, 8, 10, 0, 0, tzinfo=dt.timezone.utc)
 
 SEED = [
     (PROJECT_A, ['app=my-app', 'cost_center=retail', 'env=prod']),

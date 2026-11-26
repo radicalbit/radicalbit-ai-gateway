@@ -1,4 +1,4 @@
-import datetime
+import datetime as dt
 from typing import Literal
 import unittest
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -212,8 +212,8 @@ class EventServiceTest(unittest.TestCase):
             route_name='route-A',
             target='gpt-4.1',
             fallback='llama3.1',
-            timestamp=datetime.datetime(
-                2025, 10, 14, 12, 58, 36, 931873, tzinfo=datetime.timezone.utc
+            timestamp=dt.datetime(
+                2025, 10, 14, 12, 58, 36, 931873, tzinfo=dt.timezone.utc
             ),
             api_key_uuid=self.dev_key_uuid,
             api_key_name='dev',
@@ -224,8 +224,8 @@ class EventServiceTest(unittest.TestCase):
             where='INPUT',
             type='READACT',
             behavior='BLOCK',
-            timestamp=datetime.datetime(
-                2025, 10, 14, 12, 58, 36, 931873, tzinfo=datetime.timezone.utc
+            timestamp=dt.datetime(
+                2025, 10, 14, 12, 58, 36, 931873, tzinfo=dt.timezone.utc
             ),
             api_key_uuid=self.data_key_uuid,
             api_key_name='data',
@@ -422,15 +422,15 @@ class EventServiceTest(unittest.TestCase):
     def test_get_latest_n_per_event_type(self):
         mocked_events = [
             db_mock.get_event_detail(
-                timestamp=datetime.datetime(
-                    2025, 10, 13, 12, 58, 36, 931873, tzinfo=datetime.timezone.utc
+                timestamp=dt.datetime(
+                    2025, 10, 13, 12, 58, 36, 931873, tzinfo=dt.timezone.utc
                 ),
                 route_name='route-A',
                 event_type='CACHE_HIT',
             ),
             db_mock.get_event_detail(
-                timestamp=datetime.datetime(
-                    2025, 10, 14, 12, 58, 36, 931873, tzinfo=datetime.timezone.utc
+                timestamp=dt.datetime(
+                    2025, 10, 14, 12, 58, 36, 931873, tzinfo=dt.timezone.utc
                 ),
                 route_name='route-A',
                 event_type='FALLBACK',
@@ -438,15 +438,15 @@ class EventServiceTest(unittest.TestCase):
                 fallback='llama3.1',
             ),
             db_mock.get_event_detail(
-                timestamp=datetime.datetime(
-                    2025, 10, 13, 12, 58, 36, 931873, tzinfo=datetime.timezone.utc
+                timestamp=dt.datetime(
+                    2025, 10, 13, 12, 58, 36, 931873, tzinfo=dt.timezone.utc
                 ),
                 route_name='route-A',
                 event_type='FALLBACK',
             ),
             db_mock.get_event_detail(
-                timestamp=datetime.datetime(
-                    2025, 10, 14, 12, 58, 36, 931873, tzinfo=datetime.timezone.utc
+                timestamp=dt.datetime(
+                    2025, 10, 14, 12, 58, 36, 931873, tzinfo=dt.timezone.utc
                 ),
                 route_name='route-A',
                 event_type='GUARDRAIL',
@@ -457,8 +457,8 @@ class EventServiceTest(unittest.TestCase):
                 behavior='BLOCK',
             ),
             db_mock.get_event_detail(
-                timestamp=datetime.datetime(
-                    2025, 10, 13, 12, 58, 36, 931873, tzinfo=datetime.timezone.utc
+                timestamp=dt.datetime(
+                    2025, 10, 13, 12, 58, 36, 931873, tzinfo=dt.timezone.utc
                 ),
                 route_name='route-A',
                 event_type='RATE_LIMIT',
@@ -486,8 +486,8 @@ class EventServiceTest(unittest.TestCase):
         expected = LastNEvents(
             fallbacks=[
                 FallbackEventDetailDTO(
-                    timestamp=datetime.datetime(
-                        2025, 10, 14, 12, 58, 36, 931873, tzinfo=datetime.timezone.utc
+                    timestamp=dt.datetime(
+                        2025, 10, 14, 12, 58, 36, 931873, tzinfo=dt.timezone.utc
                     ),
                     api_key_uuid=api_key_uuid,
                     route_name='route-A',
@@ -497,8 +497,8 @@ class EventServiceTest(unittest.TestCase):
                     fallback='llama3.1',
                 ),
                 FallbackEventDetailDTO(
-                    timestamp=datetime.datetime(
-                        2025, 10, 13, 12, 58, 36, 931873, tzinfo=datetime.timezone.utc
+                    timestamp=dt.datetime(
+                        2025, 10, 13, 12, 58, 36, 931873, tzinfo=dt.timezone.utc
                     ),
                     api_key_uuid=api_key_uuid,
                     route_name='route-A',
@@ -510,8 +510,8 @@ class EventServiceTest(unittest.TestCase):
             ],
             guardrails=[
                 GuardrailEventDetailDTO(
-                    timestamp=datetime.datetime(
-                        2025, 10, 14, 12, 58, 36, 931873, tzinfo=datetime.timezone.utc
+                    timestamp=dt.datetime(
+                        2025, 10, 14, 12, 58, 36, 931873, tzinfo=dt.timezone.utc
                     ),
                     api_key_uuid=api_key_uuid,
                     route_name='route-A',
@@ -526,8 +526,8 @@ class EventServiceTest(unittest.TestCase):
             ],
             rate_limit=[
                 RateLimitEventDetailDTO(
-                    timestamp=datetime.datetime(
-                        2025, 10, 13, 12, 58, 36, 931873, tzinfo=datetime.timezone.utc
+                    timestamp=dt.datetime(
+                        2025, 10, 13, 12, 58, 36, 931873, tzinfo=dt.timezone.utc
                     ),
                     api_key_uuid=api_key_uuid,
                     route_name='route-A',
@@ -540,8 +540,8 @@ class EventServiceTest(unittest.TestCase):
             duration_limit=None,
             cache_triggered=[
                 CacheHitEventDetailDTO(
-                    timestamp=datetime.datetime(
-                        2025, 10, 13, 12, 58, 36, 931873, tzinfo=datetime.timezone.utc
+                    timestamp=dt.datetime(
+                        2025, 10, 13, 12, 58, 36, 931873, tzinfo=dt.timezone.utc
                     ),
                     api_key_uuid=api_key_uuid,
                     route_name='route-A',
@@ -552,8 +552,8 @@ class EventServiceTest(unittest.TestCase):
             ],
             limits=[
                 LimitEventDetailDTO(
-                    timestamp=datetime.datetime(
-                        2025, 10, 13, 12, 58, 36, 931873, tzinfo=datetime.timezone.utc
+                    timestamp=dt.datetime(
+                        2025, 10, 13, 12, 58, 36, 931873, tzinfo=dt.timezone.utc
                     ),
                     api_key_uuid=api_key_uuid,
                     route_name='route-A',
@@ -573,8 +573,8 @@ class EventServiceTest(unittest.TestCase):
         """
         key = uuid.UUID(int=7)
 
-        def at(hour: int) -> datetime.datetime:
-            return datetime.datetime(2025, 10, 13, hour, tzinfo=datetime.timezone.utc)
+        def at(hour: int) -> dt.datetime:
+            return dt.datetime(2025, 10, 13, hour, tzinfo=dt.timezone.utc)
 
         def row(event_type: str, hour: int, **limit) -> EventDetails:
             return EventDetails(
@@ -691,8 +691,8 @@ class EventServiceTest(unittest.TestCase):
         api_key_uuid = uuid.UUID('00000000-0000-0000-0000-000000000000')
         mocked_events = [
             db_mock.get_event_detail(
-                timestamp=datetime.datetime(
-                    2025, 10, 13, 12, 58, 36, 931873, tzinfo=datetime.timezone.utc
+                timestamp=dt.datetime(
+                    2025, 10, 13, 12, 58, 36, 931873, tzinfo=dt.timezone.utc
                 ),
                 route_name='route-duration',
                 event_type='AUDIO_DURATION_LIMIT',
@@ -716,8 +716,8 @@ class EventServiceTest(unittest.TestCase):
 
         assert res.duration_limit == [
             DurationLimitEventDetailDTO(
-                timestamp=datetime.datetime(
-                    2025, 10, 13, 12, 58, 36, 931873, tzinfo=datetime.timezone.utc
+                timestamp=dt.datetime(
+                    2025, 10, 13, 12, 58, 36, 931873, tzinfo=dt.timezone.utc
                 ),
                 api_key_uuid=api_key_uuid,
                 route_name='route-duration',
@@ -727,9 +727,7 @@ class EventServiceTest(unittest.TestCase):
         ]
 
     def test_get_chart_data_multiple_groups(self):
-        base_time = datetime.datetime(
-            2025, 1, 8, 10, 0, 0, tzinfo=datetime.timezone.utc
-        )
+        base_time = dt.datetime(2025, 1, 8, 10, 0, 0, tzinfo=dt.timezone.utc)
 
         uuid_1 = '550e8400-e29b-41d4-a716-446655440001'
         uuid_2 = '550e8400-e29b-41d4-a716-446655440002'
@@ -739,7 +737,7 @@ class EventServiceTest(unittest.TestCase):
                 bucket=base_time, group_by_value=uuid_1, total_cost=100.0
             ),
             CostChartDataPoint(
-                bucket=base_time + datetime.timedelta(hours=1),
+                bucket=base_time + dt.timedelta(hours=1),
                 group_by_value=uuid_1,
                 total_cost=150.0,
             ),
@@ -747,7 +745,7 @@ class EventServiceTest(unittest.TestCase):
                 bucket=base_time, group_by_value=uuid_2, total_cost=200.0
             ),
             CostChartDataPoint(
-                bucket=base_time + datetime.timedelta(hours=1),
+                bucket=base_time + dt.timedelta(hours=1),
                 group_by_value=uuid_2,
                 total_cost=250.0,
             ),
@@ -763,15 +761,15 @@ class EventServiceTest(unittest.TestCase):
 
         res = in_worker(self.event_service.get_costs_chart_data)(
             route_names=['rb-gateway'],
-            _from=base_time - datetime.timedelta(hours=1),
-            _to=base_time + datetime.timedelta(hours=11),
+            _from=base_time - dt.timedelta(hours=1),
+            _to=base_time + dt.timedelta(hours=11),
             group_by='groups',
             project_uuid=self.TEST_PROJECT_UUID,
         )
         expected = CostChartDataDTO(
             granularity='hours',
             timestamp=[
-                int((base_time + datetime.timedelta(hours=i)).timestamp())
+                int((base_time + dt.timedelta(hours=i)).timestamp())
                 for i in range(-1, 12)
             ],
             data=[
@@ -819,9 +817,7 @@ class EventServiceTest(unittest.TestCase):
         assert res == expected
 
     def test_get_chart_data_missing_timestamps(self):
-        base_time = datetime.datetime(
-            2025, 1, 8, 10, 0, 0, tzinfo=datetime.timezone.utc
-        )
+        base_time = dt.datetime(2025, 1, 8, 10, 0, 0, tzinfo=dt.timezone.utc)
 
         uuid_1 = '660e8400-e29b-41d4-a716-446655440001'
         uuid_2 = '660e8400-e29b-41d4-a716-446655440002'
@@ -831,12 +827,12 @@ class EventServiceTest(unittest.TestCase):
                 bucket=base_time, group_by_value=uuid_1, total_cost=100.0
             ),
             CostChartDataPoint(
-                bucket=base_time + datetime.timedelta(hours=2),
+                bucket=base_time + dt.timedelta(hours=2),
                 group_by_value=uuid_1,
                 total_cost=150.0,
             ),
             CostChartDataPoint(
-                bucket=base_time + datetime.timedelta(hours=1),
+                bucket=base_time + dt.timedelta(hours=1),
                 group_by_value=uuid_2,
                 total_cost=200.0,
             ),
@@ -853,7 +849,7 @@ class EventServiceTest(unittest.TestCase):
         res = in_worker(self.event_service.get_costs_chart_data)(
             route_names=['rb-gateway'],
             _from=base_time,
-            _to=base_time + datetime.timedelta(hours=3),
+            _to=base_time + dt.timedelta(hours=3),
             group_by='keys',
             project_uuid=self.TEST_PROJECT_UUID,
         )
@@ -861,8 +857,7 @@ class EventServiceTest(unittest.TestCase):
         expected = CostChartDataDTO(
             granularity='hours',
             timestamp=[
-                int((base_time + datetime.timedelta(hours=i)).timestamp())
-                for i in range(4)
+                int((base_time + dt.timedelta(hours=i)).timestamp()) for i in range(4)
             ],
             data=[
                 CostChartDataSeriesDTO(
@@ -877,7 +872,7 @@ class EventServiceTest(unittest.TestCase):
         assert res == expected
 
     def test_get_chart_data_single_group(self):
-        base_time = datetime.datetime(2025, 1, 8, 0, 0, 0, tzinfo=datetime.timezone.utc)
+        base_time = dt.datetime(2025, 1, 8, 0, 0, 0, tzinfo=dt.timezone.utc)
 
         uuid_1 = '770e8400-e29b-41d4-a716-446655440001'
 
@@ -886,7 +881,7 @@ class EventServiceTest(unittest.TestCase):
                 bucket=base_time, group_by_value=uuid_1, total_cost=50.0
             ),
             CostChartDataPoint(
-                bucket=base_time + datetime.timedelta(days=1),
+                bucket=base_time + dt.timedelta(days=1),
                 group_by_value=uuid_1,
                 total_cost=75.0,
             ),
@@ -902,15 +897,14 @@ class EventServiceTest(unittest.TestCase):
         res = in_worker(self.event_service.get_costs_chart_data)(
             route_names=['rb-gateway'],
             _from=base_time,
-            _to=base_time + datetime.timedelta(days=3),
+            _to=base_time + dt.timedelta(days=3),
             group_by='keys',
             project_uuid=self.TEST_PROJECT_UUID,
         )
         expected = CostChartDataDTO(
             granularity='days',
             timestamp=[
-                int((base_time + datetime.timedelta(days=i)).timestamp())
-                for i in range(4)
+                int((base_time + dt.timedelta(days=i)).timestamp()) for i in range(4)
             ],
             data=[
                 CostChartDataSeriesDTO(
@@ -922,14 +916,14 @@ class EventServiceTest(unittest.TestCase):
         assert res == expected
 
     def test_get_chart_data_empty(self):
-        base_time = datetime.datetime(2025, 1, 8, 0, 0, 0, tzinfo=datetime.timezone.utc)
+        base_time = dt.datetime(2025, 1, 8, 0, 0, 0, tzinfo=dt.timezone.utc)
 
         self.event_dao.get_costs_chart_data = MagicMock(return_value=[])
 
         res = in_worker(self.event_service.get_costs_chart_data)(
             route_names=['rb-gateway'],
             _from=base_time,
-            _to=base_time + datetime.timedelta(days=7),
+            _to=base_time + dt.timedelta(days=7),
             group_by='groups',
             project_uuid=self.TEST_PROJECT_UUID,
         )
@@ -941,14 +935,14 @@ class EventServiceTest(unittest.TestCase):
 
     def test_get_chart_data_empty_no_from(self):
         """Test that empty chart data with _from=None returns early without error."""
-        base_time = datetime.datetime(2025, 1, 8, 0, 0, 0, tzinfo=datetime.timezone.utc)
+        base_time = dt.datetime(2025, 1, 8, 0, 0, 0, tzinfo=dt.timezone.utc)
 
         self.event_dao.get_costs_chart_data = MagicMock(return_value=[])
 
         res = in_worker(self.event_service.get_costs_chart_data)(
             route_names=['rb-gateway'],
             _from=None,
-            _to=base_time + datetime.timedelta(days=7),
+            _to=base_time + dt.timedelta(days=7),
             group_by='keys',
             project_uuid=self.TEST_PROJECT_UUID,
         )
@@ -959,7 +953,7 @@ class EventServiceTest(unittest.TestCase):
         assert res == expected
 
     def test_get_chart_data_no_from(self):
-        base_time = datetime.datetime(2025, 1, 6, 0, 0, 0, tzinfo=datetime.timezone.utc)
+        base_time = dt.datetime(2025, 1, 6, 0, 0, 0, tzinfo=dt.timezone.utc)
 
         uuid_1 = '880e8400-e29b-41d4-a716-446655440001'
         uuid_2 = '880e8400-e29b-41d4-a716-446655440002'
@@ -969,12 +963,12 @@ class EventServiceTest(unittest.TestCase):
                 bucket=base_time, group_by_value=uuid_1, total_cost=50.0
             ),
             CostChartDataPoint(
-                bucket=base_time + datetime.timedelta(days=7),
+                bucket=base_time + dt.timedelta(days=7),
                 group_by_value=uuid_2,
                 total_cost=45.0,
             ),
             CostChartDataPoint(
-                bucket=base_time + datetime.timedelta(days=7),
+                bucket=base_time + dt.timedelta(days=7),
                 group_by_value=uuid_1,
                 total_cost=75.0,
             ),
@@ -990,7 +984,7 @@ class EventServiceTest(unittest.TestCase):
         res = in_worker(self.event_service.get_costs_chart_data)(
             route_names=['rb-gateway'],
             _from=None,
-            _to=base_time + datetime.timedelta(days=7),
+            _to=base_time + dt.timedelta(days=7),
             group_by='keys',
             project_uuid=self.TEST_PROJECT_UUID,
         )
@@ -998,7 +992,7 @@ class EventServiceTest(unittest.TestCase):
             granularity='weeks',
             timestamp=[
                 int(base_time.timestamp()),
-                int((base_time + datetime.timedelta(days=7)).timestamp()),
+                int((base_time + dt.timedelta(days=7)).timestamp()),
             ],
             data=[
                 CostChartDataSeriesDTO(
@@ -1013,9 +1007,7 @@ class EventServiceTest(unittest.TestCase):
         assert res == expected
 
     def test_get_costs_chart_data_by_route_api_key(self):
-        base_time = datetime.datetime(
-            2025, 1, 8, 10, 0, 0, tzinfo=datetime.timezone.utc
-        )
+        base_time = dt.datetime(2025, 1, 8, 10, 0, 0, tzinfo=dt.timezone.utc)
         key_uuid = '550e8400-e29b-41d4-a716-446655440001'
 
         mocked_chart_data = [
@@ -1023,7 +1015,7 @@ class EventServiceTest(unittest.TestCase):
                 bucket=base_time, group_by_value='route-A', total_cost=100.0
             ),
             CostChartDataPoint(
-                bucket=base_time + datetime.timedelta(hours=1),
+                bucket=base_time + dt.timedelta(hours=1),
                 group_by_value='route-A',
                 total_cost=50.0,
             ),
@@ -1039,8 +1031,8 @@ class EventServiceTest(unittest.TestCase):
             entity_column='API_KEY_UUID',
             entity_value=key_uuid,
             route_names=['route-A', 'route-B'],
-            _from=base_time - datetime.timedelta(hours=1),
-            _to=base_time + datetime.timedelta(hours=2),
+            _from=base_time - dt.timedelta(hours=1),
+            _to=base_time + dt.timedelta(hours=2),
             project_uuid=self.TEST_PROJECT_UUID,
         )
 
@@ -1049,8 +1041,8 @@ class EventServiceTest(unittest.TestCase):
             entity_column='API_KEY_UUID',
             entity_value=key_uuid,
             route_names=['route-A', 'route-B'],
-            _from=base_time - datetime.timedelta(hours=1),
-            _to=base_time + datetime.timedelta(hours=2),
+            _from=base_time - dt.timedelta(hours=1),
+            _to=base_time + dt.timedelta(hours=2),
             granularity='hours',
             timezone_offset_seconds=0,
             tags=None,
@@ -1083,16 +1075,14 @@ class EventServiceTest(unittest.TestCase):
         )
 
     def test_get_chart_data_multiple_models(self):
-        base_time = datetime.datetime(
-            2025, 1, 8, 10, 0, 0, tzinfo=datetime.timezone.utc
-        )
+        base_time = dt.datetime(2025, 1, 8, 10, 0, 0, tzinfo=dt.timezone.utc)
 
         mocked_chart_data = [
             CostChartDataPoint(
                 bucket=base_time, group_by_value='gpt-4', total_cost=100.0
             ),
             CostChartDataPoint(
-                bucket=base_time + datetime.timedelta(hours=1),
+                bucket=base_time + dt.timedelta(hours=1),
                 group_by_value='gpt-4',
                 total_cost=150.0,
             ),
@@ -1100,7 +1090,7 @@ class EventServiceTest(unittest.TestCase):
                 bucket=base_time, group_by_value='gpt-3.5-turbo', total_cost=200.0
             ),
             CostChartDataPoint(
-                bucket=base_time + datetime.timedelta(hours=1),
+                bucket=base_time + dt.timedelta(hours=1),
                 group_by_value='gpt-3.5-turbo',
                 total_cost=250.0,
             ),
@@ -1110,15 +1100,15 @@ class EventServiceTest(unittest.TestCase):
 
         res = in_worker(self.event_service.get_costs_chart_data)(
             route_names=['rb-gateway'],
-            _from=base_time - datetime.timedelta(hours=1),
-            _to=base_time + datetime.timedelta(hours=11),
+            _from=base_time - dt.timedelta(hours=1),
+            _to=base_time + dt.timedelta(hours=11),
             group_by='models',
             project_uuid=self.TEST_PROJECT_UUID,
         )
         expected = CostChartDataDTO(
             granularity='hours',
             timestamp=[
-                int((base_time + datetime.timedelta(hours=i)).timestamp())
+                int((base_time + dt.timedelta(hours=i)).timestamp())
                 for i in range(-1, 12)
             ],
             data=[
@@ -1164,16 +1154,14 @@ class EventServiceTest(unittest.TestCase):
         assert res == expected
 
     def test_get_token_chart_data(self):
-        base_time = datetime.datetime(
-            2025, 1, 8, 10, 0, 0, tzinfo=datetime.timezone.utc
-        )
+        base_time = dt.datetime(2025, 1, 8, 10, 0, 0, tzinfo=dt.timezone.utc)
 
         mocked_token_chart_data = [
             TokenChartDataPoint(
                 bucket=base_time, event_type='INPUT_TOKEN_PROCESSED', total_tokens=100
             ),
             TokenChartDataPoint(
-                bucket=base_time + datetime.timedelta(hours=1),
+                bucket=base_time + dt.timedelta(hours=1),
                 event_type='INPUT_TOKEN_PROCESSED',
                 total_tokens=150,
             ),
@@ -1181,7 +1169,7 @@ class EventServiceTest(unittest.TestCase):
                 bucket=base_time, event_type='OUTPUT_TOKEN_PROCESSED', total_tokens=50
             ),
             TokenChartDataPoint(
-                bucket=base_time + datetime.timedelta(hours=1),
+                bucket=base_time + dt.timedelta(hours=1),
                 event_type='OUTPUT_TOKEN_PROCESSED',
                 total_tokens=75,
             ),
@@ -1191,7 +1179,7 @@ class EventServiceTest(unittest.TestCase):
         )
 
         _from = base_time
-        _to = base_time + datetime.timedelta(hours=2)
+        _to = base_time + dt.timedelta(hours=2)
 
         res = self.event_service.get_token_chart_data(
             self.TEST_PROJECT_UUID, ['rb-gateway'], _from, _to, 'hours'
@@ -1201,8 +1189,7 @@ class EventServiceTest(unittest.TestCase):
             total=375,
             granularity='hours',
             timestamp=[
-                int((base_time + datetime.timedelta(hours=i)).timestamp())
-                for i in range(3)
+                int((base_time + dt.timedelta(hours=i)).timestamp()) for i in range(3)
             ],
             data=[
                 TokenChartDataSeriesDTO(name='INPUT', data=[100, 150, 0]),
@@ -1212,13 +1199,11 @@ class EventServiceTest(unittest.TestCase):
         assert res == expected
 
     def test_get_token_chart_data_empty(self):
-        base_time = datetime.datetime(
-            2025, 1, 8, 10, 0, 0, tzinfo=datetime.timezone.utc
-        )
+        base_time = dt.datetime(2025, 1, 8, 10, 0, 0, tzinfo=dt.timezone.utc)
         self.event_dao.get_token_chart_data = MagicMock(return_value=[])
 
         _from = base_time
-        _to = base_time + datetime.timedelta(hours=2)
+        _to = base_time + dt.timedelta(hours=2)
 
         res = self.event_service.get_token_chart_data(
             self.TEST_PROJECT_UUID, ['rb-gateway'], _from, _to, 'hours'
@@ -1867,14 +1852,12 @@ class EventServiceTest(unittest.TestCase):
         assert res == expected
 
     def test_get_invocation_chart_data_with_models(self):
-        base_time = datetime.datetime(
-            2025, 1, 8, 10, 0, 0, tzinfo=datetime.timezone.utc
-        )
+        base_time = dt.datetime(2025, 1, 8, 10, 0, 0, tzinfo=dt.timezone.utc)
 
         mocked_invocation_data = [
             InvocationChartDataPoint(bucket=base_time, group_by_value='gpt-4', value=3),
             InvocationChartDataPoint(
-                bucket=base_time + datetime.timedelta(hours=1),
+                bucket=base_time + dt.timedelta(hours=1),
                 group_by_value='gpt-4',
                 value=5,
             ),
@@ -1882,7 +1865,7 @@ class EventServiceTest(unittest.TestCase):
                 bucket=base_time, group_by_value='gpt-3.5-turbo', value=2
             ),
             InvocationChartDataPoint(
-                bucket=base_time + datetime.timedelta(hours=1),
+                bucket=base_time + dt.timedelta(hours=1),
                 group_by_value='gpt-3.5-turbo',
                 value=4,
             ),
@@ -1894,8 +1877,8 @@ class EventServiceTest(unittest.TestCase):
 
         res = self.event_service.get_invocation_chart_data(
             route_names=['route-A'],
-            _from=base_time - datetime.timedelta(hours=1),
-            _to=base_time + datetime.timedelta(hours=11),
+            _from=base_time - dt.timedelta(hours=1),
+            _to=base_time + dt.timedelta(hours=11),
             granularity='hours',
             include_models=True,
             project_uuid=self.TEST_PROJECT_UUID,
@@ -1903,7 +1886,7 @@ class EventServiceTest(unittest.TestCase):
         expected = InvocationChartDataDTO(
             granularity='hours',
             timestamp=[
-                int((base_time + datetime.timedelta(hours=i)).timestamp())
+                int((base_time + dt.timedelta(hours=i)).timestamp())
                 for i in range(-1, 12)
             ],
             data=[
@@ -1921,14 +1904,12 @@ class EventServiceTest(unittest.TestCase):
         assert res == expected
 
     def test_get_invocation_chart_data_without_models(self):
-        base_time = datetime.datetime(
-            2025, 1, 8, 10, 0, 0, tzinfo=datetime.timezone.utc
-        )
+        base_time = dt.datetime(2025, 1, 8, 10, 0, 0, tzinfo=dt.timezone.utc)
 
         mocked_invocation_data = [
             InvocationChartDataPoint(bucket=base_time, group_by_value='all', value=5),
             InvocationChartDataPoint(
-                bucket=base_time + datetime.timedelta(hours=1),
+                bucket=base_time + dt.timedelta(hours=1),
                 group_by_value='all',
                 value=9,
             ),
@@ -1941,7 +1922,7 @@ class EventServiceTest(unittest.TestCase):
         res = self.event_service.get_invocation_chart_data(
             route_names=['route-A'],
             _from=base_time,
-            _to=base_time + datetime.timedelta(hours=2),
+            _to=base_time + dt.timedelta(hours=2),
             granularity='hours',
             include_models=False,
             project_uuid=self.TEST_PROJECT_UUID,
@@ -1949,8 +1930,7 @@ class EventServiceTest(unittest.TestCase):
         expected = InvocationChartDataDTO(
             granularity='hours',
             timestamp=[
-                int((base_time + datetime.timedelta(hours=i)).timestamp())
-                for i in range(3)
+                int((base_time + dt.timedelta(hours=i)).timestamp()) for i in range(3)
             ],
             data=[5.0, 9.0, 0.0],
             total=14,
@@ -1960,13 +1940,11 @@ class EventServiceTest(unittest.TestCase):
     def test_get_invocation_chart_data_empty(self):
         self.event_dao.get_invocation_chart_data = MagicMock(return_value=[])
 
-        base_time = datetime.datetime(
-            2025, 1, 8, 10, 0, 0, tzinfo=datetime.timezone.utc
-        )
+        base_time = dt.datetime(2025, 1, 8, 10, 0, 0, tzinfo=dt.timezone.utc)
         res = self.event_service.get_invocation_chart_data(
             route_names=['route-A'],
             _from=base_time,
-            _to=base_time + datetime.timedelta(hours=2),
+            _to=base_time + dt.timedelta(hours=2),
             granularity='hours',
             include_models=True,
             project_uuid=self.TEST_PROJECT_UUID,
@@ -1977,14 +1955,12 @@ class EventServiceTest(unittest.TestCase):
         assert res == expected
 
     def test_get_invocation_chart_data_no_from(self):
-        base_time = datetime.datetime(
-            2025, 1, 8, 10, 0, 0, tzinfo=datetime.timezone.utc
-        )
+        base_time = dt.datetime(2025, 1, 8, 10, 0, 0, tzinfo=dt.timezone.utc)
 
         mocked_invocation_data = [
             InvocationChartDataPoint(bucket=base_time, group_by_value='gpt-4', value=3),
             InvocationChartDataPoint(
-                bucket=base_time + datetime.timedelta(hours=1),
+                bucket=base_time + dt.timedelta(hours=1),
                 group_by_value='gpt-4',
                 value=7,
             ),
@@ -1997,7 +1973,7 @@ class EventServiceTest(unittest.TestCase):
         res = self.event_service.get_invocation_chart_data(
             route_names=['route-A'],
             _from=None,
-            _to=base_time + datetime.timedelta(hours=1),
+            _to=base_time + dt.timedelta(hours=1),
             granularity='hours',
             include_models=True,
             project_uuid=self.TEST_PROJECT_UUID,
@@ -2006,7 +1982,7 @@ class EventServiceTest(unittest.TestCase):
             granularity='hours',
             timestamp=[
                 int(base_time.timestamp()),
-                int((base_time + datetime.timedelta(hours=1)).timestamp()),
+                int((base_time + dt.timedelta(hours=1)).timestamp()),
             ],
             data=[
                 ChartDataSeriesDTO(name='gpt-4', data=[3, 7]),
@@ -2112,8 +2088,8 @@ class EventServiceTest(unittest.TestCase):
         self.event_dao.get_most_expensive_route = MagicMock(return_value=None)
 
         res = self.event_service.get_most_expensive_route(
-            _from=datetime.datetime(2025, 1, 1, tzinfo=datetime.timezone.utc),
-            _to=datetime.datetime(2025, 1, 2, tzinfo=datetime.timezone.utc),
+            _from=dt.datetime(2025, 1, 1, tzinfo=dt.timezone.utc),
+            _to=dt.datetime(2025, 1, 2, tzinfo=dt.timezone.utc),
             project_uuid=self.TEST_PROJECT_UUID,
             config=self.gateway_config,
         )
@@ -2126,8 +2102,8 @@ class EventServiceTest(unittest.TestCase):
         )
         self.event_dao.get_cost_chart_data = MagicMock(return_value=[])
 
-        _from = datetime.datetime(2025, 1, 1, tzinfo=datetime.timezone.utc)
-        _to = datetime.datetime(2025, 1, 2, tzinfo=datetime.timezone.utc)
+        _from = dt.datetime(2025, 1, 1, tzinfo=dt.timezone.utc)
+        _to = dt.datetime(2025, 1, 2, tzinfo=dt.timezone.utc)
 
         res = self.event_service.get_most_expensive_route(
             _from=_from,
@@ -2148,9 +2124,9 @@ class EventServiceTest(unittest.TestCase):
             return_value=MostExpensiveRoute(route_name='route-A', total_cost=600.0)
         )
 
-        _from = datetime.datetime(2025, 1, 1, 0, 0, 0, tzinfo=datetime.timezone.utc)
-        _to = datetime.datetime(2025, 1, 1, 3, 0, 0, tzinfo=datetime.timezone.utc)
-        buckets = [_from + datetime.timedelta(hours=h) for h in range(4)]
+        _from = dt.datetime(2025, 1, 1, 0, 0, 0, tzinfo=dt.timezone.utc)
+        _to = dt.datetime(2025, 1, 1, 3, 0, 0, tzinfo=dt.timezone.utc)
+        buckets = [_from + dt.timedelta(hours=h) for h in range(4)]
 
         # 3-hour range -> granularity='hours', 4 buckets; bucket 1 has no data.
         # increment = ((300 - 200) / 200) * 100 = 50.0 over the last two buckets
@@ -2182,7 +2158,7 @@ class EventServiceTest(unittest.TestCase):
             return_value=MostExpensiveRoute(route_name='route-A', total_cost=50.0)
         )
 
-        bucket = datetime.datetime(2025, 1, 1, 0, 0, 0, tzinfo=datetime.timezone.utc)
+        bucket = dt.datetime(2025, 1, 1, 0, 0, 0, tzinfo=dt.timezone.utc)
         chart_points = [
             MostExpensiveChartData(bucket=bucket, cost=50),
         ]

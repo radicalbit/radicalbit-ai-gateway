@@ -1,4 +1,4 @@
-import datetime
+import datetime as dt
 import unittest
 from unittest.mock import MagicMock
 import uuid
@@ -140,8 +140,8 @@ class TestRequestsRoute(unittest.TestCase):
 
     def test_parses_filters_and_pagination(self):
         self.requests_service.get_requests.return_value = _empty_page(3, 10)
-        _from = datetime.datetime(2026, 3, 10, 10, tzinfo=datetime.timezone.utc)
-        _to = _from + datetime.timedelta(hours=2)
+        _from = dt.datetime(2026, 3, 10, 10, tzinfo=dt.timezone.utc)
+        _to = _from + dt.timedelta(hours=2)
         group, key = uuid.uuid4(), uuid.uuid4()
 
         response = self.client.get(

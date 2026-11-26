@@ -1,4 +1,4 @@
-import datetime
+import datetime as dt
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 import uuid
@@ -22,7 +22,7 @@ from radicalbit_ai_gateway.utils.exceptions import (
     KeyNotFoundError,
 )
 
-_UTC = getattr(datetime, 'UTC', datetime.timezone.utc)
+_UTC = getattr(dt, 'UTC', dt.timezone.utc)
 
 
 # ---------------------------------------------------------------------------
@@ -36,7 +36,7 @@ def _make_validator():
 
 
 def _gw_group(name: str = 'team-a') -> Group:
-    now = datetime.datetime.now(tz=_UTC)
+    now = dt.datetime.now(tz=_UTC)
     return Group(
         uuid=uuid.uuid4(),
         name=name,
@@ -49,7 +49,7 @@ def _gw_group(name: str = 'team-a') -> Group:
 
 
 def _gw_key(name: str, group: Group) -> Key:
-    now = datetime.datetime.now(tz=_UTC)
+    now = dt.datetime.now(tz=_UTC)
     return Key(
         uuid=uuid.uuid4(),
         name=name,
@@ -138,7 +138,7 @@ async def test_validate_token_raises_invalid_api_key_when_not_found():
 
 async def test_validate_token_raises_invalid_api_key_when_key_has_no_group():
     validator, key_service = _make_validator()
-    now = datetime.datetime.now(tz=_UTC)
+    now = dt.datetime.now(tz=_UTC)
     key_without_group = Key(
         uuid=uuid.uuid4(),
         name='orphan',
@@ -168,7 +168,7 @@ async def test_validate_token_raises_invalid_api_key_when_key_has_no_group():
 # ---------------------------------------------------------------------------
 
 
-def _key_expiring_on(expires_on: datetime.date | None) -> Key:
+def _key_expiring_on(expires_on: dt.date | None) -> Key:
     key = _gw_key('alice', _gw_group('team-a'))
     key.expires_on = expires_on
     return key
@@ -178,7 +178,7 @@ def _key_expiring_on(expires_on: datetime.date | None) -> Key:
 async def test_validate_token_rejects_an_expired_key():
     validator, key_service = _make_validator()
     key_service.get_key_by_hashed_key = AsyncMock(
-        return_value=_key_expiring_on(datetime.date(2026, 11, 10))
+        return_value=_key_expiring_on(dt.date(2026, 11, 10))
     )
 
     with pytest.raises(ExpiredApiKey) as exc_info:
@@ -193,7 +193,7 @@ async def test_validate_token_rejects_an_expired_key():
 @freeze_time('2026-11-10 23:59:59')
 async def test_validate_token_authenticates_an_expiring_key():
     validator, key_service = _make_validator()
-    key = _key_expiring_on(datetime.date(2026, 11, 10))
+    key = _key_expiring_on(dt.date(2026, 11, 10))
     key_service.get_key_by_hashed_key = AsyncMock(return_value=key)
 
     result = await validator.validate_token('sk-rb-alice')
@@ -217,7 +217,7 @@ async def test_validate_token_authenticates_a_key_without_expiry_date():
 
 PREVIOUS = 'sk-rb-previous'
 CURRENT = 'sk-rb-current'
-GRACE_ENDS_AT = datetime.datetime(2026, 11, 5, 12, tzinfo=_UTC)
+GRACE_ENDS_AT = dt.datetime(2026, 11, 5, 12, tzinfo=_UTC)
 
 
 def _rotated_key(grace_ends_at=GRACE_ENDS_AT, expires_on=None) -> SimpleNamespace:
@@ -284,7 +284,7 @@ async def test_the_previous_value_is_a_wrong_credential_once_the_grace_period_is
 async def test_after_expiry_a_stale_previous_value_still_looks_wrong_not_expired():
     # The grace period ended before the expiry and its hash was never cleared:
     # "expired" would confirm the old value was once real
-    key = _rotated_key(expires_on=datetime.date(2026, 11, 6))
+    key = _rotated_key(expires_on=dt.date(2026, 11, 6))
     validator = _validator_over(key)
 
     with pytest.raises(InvalidApiKey) as previous:

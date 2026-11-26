@@ -1,4 +1,4 @@
-import datetime
+import datetime as dt
 import unittest
 from unittest.mock import AsyncMock, MagicMock
 import uuid
@@ -76,9 +76,7 @@ class TestTracingRoute(unittest.TestCase):
         cls.project_path = f'{cls.prefix}/projects/{PROJECT_UUID}'
 
     def test_get_traces_chart_data(self):
-        base_time = datetime.datetime(
-            2025, 1, 8, 10, 0, 0, tzinfo=datetime.timezone.utc
-        )
+        base_time = dt.datetime(2025, 1, 8, 10, 0, 0, tzinfo=dt.timezone.utc)
         mock_chart = TracesChartDataDTO(
             granularity='hours',
             timestamp=[int(base_time.timestamp())],
@@ -95,7 +93,7 @@ class TestTracingRoute(unittest.TestCase):
             f'{self.project_path}/traces/chart',
             params={
                 '_from': int(base_time.timestamp()),
-                '_to': int((base_time + datetime.timedelta(hours=2)).timestamp()),
+                '_to': int((base_time + dt.timedelta(hours=2)).timestamp()),
                 'routes': ['route-a', 'route-b'],
             },
         )
@@ -136,14 +134,12 @@ class TestTracingRoute(unittest.TestCase):
         mock_latencies = LatenciesDTO(p50=120.0, p90=250.0, p95=310.0, p99=500.0)
         self.tracing_service.get_latencies = MagicMock(return_value=mock_latencies)
 
-        base_time = datetime.datetime(
-            2025, 1, 8, 10, 0, 0, tzinfo=datetime.timezone.utc
-        )
+        base_time = dt.datetime(2025, 1, 8, 10, 0, 0, tzinfo=dt.timezone.utc)
         response = self.client.get(
             f'{self.project_path}/traces/latencies',
             params={
                 '_from': int(base_time.timestamp()),
-                '_to': int((base_time + datetime.timedelta(hours=2)).timestamp()),
+                '_to': int((base_time + dt.timedelta(hours=2)).timestamp()),
                 'routes': ['route-a', 'route-b'],
             },
         )
@@ -172,9 +168,7 @@ class TestTracingRoute(unittest.TestCase):
         assert call_kwargs['_to'] is None
 
     def test_get_span_latencies(self):
-        base_time = datetime.datetime(
-            2025, 1, 8, 10, 0, 0, tzinfo=datetime.timezone.utc
-        )
+        base_time = dt.datetime(2025, 1, 8, 10, 0, 0, tzinfo=dt.timezone.utc)
         mock_span_latencies = SpanLatenciesDTO(
             data=[
                 SpanLatencyDTO(
@@ -197,7 +191,7 @@ class TestTracingRoute(unittest.TestCase):
             f'{self.project_path}/traces/spans/latencies',
             params={
                 '_from': int(base_time.timestamp()),
-                '_to': int((base_time + datetime.timedelta(hours=2)).timestamp()),
+                '_to': int((base_time + dt.timedelta(hours=2)).timestamp()),
                 'routes': ['route-a', 'route-b'],
             },
         )
@@ -288,9 +282,7 @@ class TestTracingRoute(unittest.TestCase):
     # --- get_trace_by_id tests (no project_uuid in path) ---
 
     def test_get_trace_by_id_success(self):
-        base_time = datetime.datetime(
-            2025, 1, 8, 10, 0, 0, tzinfo=datetime.timezone.utc
-        )
+        base_time = dt.datetime(2025, 1, 8, 10, 0, 0, tzinfo=dt.timezone.utc)
         mock_trace = TraceDTO(
             trace_id='trace-123',
             request_uuid=uuid.UUID('12345678-1234-5678-1234-567812345678'),
@@ -373,9 +365,7 @@ class TestTracingRoute(unittest.TestCase):
         assert call_kwargs['trace_id'] == 'trace-123'
 
     def test_get_trace_by_id_without_request_uuid(self):
-        base_time = datetime.datetime(
-            2025, 1, 8, 10, 0, 0, tzinfo=datetime.timezone.utc
-        )
+        base_time = dt.datetime(2025, 1, 8, 10, 0, 0, tzinfo=dt.timezone.utc)
         mock_trace = TraceDTO(
             trace_id='trace-no-uuid',
             request_uuid=None,
@@ -428,9 +418,7 @@ class TestTracingRoute(unittest.TestCase):
         assert 'not found' in body['error']['message']
 
     def test_get_trace_by_id_hierarchical_tree(self):
-        base_time = datetime.datetime(
-            2025, 1, 8, 10, 0, 0, tzinfo=datetime.timezone.utc
-        )
+        base_time = dt.datetime(2025, 1, 8, 10, 0, 0, tzinfo=dt.timezone.utc)
         mock_trace = TraceDTO(
             trace_id='trace-tree',
             request_uuid=uuid.UUID('12345678-1234-5678-1234-567812345678'),
@@ -505,9 +493,7 @@ class TestTracingRoute(unittest.TestCase):
 
     def test_get_trace_by_id_tree_nodes_expose_category_and_kind(self):
         created_at = int(
-            datetime.datetime(
-                2025, 1, 8, 10, 0, 0, tzinfo=datetime.timezone.utc
-            ).timestamp()
+            dt.datetime(2025, 1, 8, 10, 0, 0, tzinfo=dt.timezone.utc).timestamp()
         )
 
         def node(span_id, children=(), **fields):
@@ -557,9 +543,7 @@ class TestTracingRoute(unittest.TestCase):
         assert 'spanKind' not in bare
 
     def test_get_trace_by_id_with_attributes(self):
-        base_time = datetime.datetime(
-            2025, 1, 8, 10, 0, 0, tzinfo=datetime.timezone.utc
-        )
+        base_time = dt.datetime(2025, 1, 8, 10, 0, 0, tzinfo=dt.timezone.utc)
         mock_trace = TraceDTO(
             trace_id='trace-attrs',
             request_uuid=uuid.UUID('12345678-1234-5678-1234-567812345678'),
@@ -603,9 +587,7 @@ class TestTracingRoute(unittest.TestCase):
         assert body['groupName'] == 'production-group'
 
     def test_get_trace_by_id_with_errors(self):
-        base_time = datetime.datetime(
-            2025, 1, 8, 10, 0, 0, tzinfo=datetime.timezone.utc
-        )
+        base_time = dt.datetime(2025, 1, 8, 10, 0, 0, tzinfo=dt.timezone.utc)
         mock_trace = TraceDTO(
             trace_id='trace-error',
             request_uuid=uuid.UUID('12345678-1234-5678-1234-567812345678'),
@@ -661,9 +643,7 @@ class TestTracingRoute(unittest.TestCase):
     # --- get_traces (list) tests ---
 
     def test_get_traces(self):
-        base_time = datetime.datetime(
-            2025, 1, 8, 10, 0, 0, tzinfo=datetime.timezone.utc
-        )
+        base_time = dt.datetime(2025, 1, 8, 10, 0, 0, tzinfo=dt.timezone.utc)
         req_uuid = str(uuid.uuid4())
         group_uuid = uuid.uuid4()
         key_uuid = uuid.uuid4()
@@ -685,7 +665,7 @@ class TestTracingRoute(unittest.TestCase):
                     total_tokens=500,
                     created_at=int(base_time.timestamp()),
                     latest_span_ts=int(
-                        (base_time + datetime.timedelta(seconds=1)).timestamp()
+                        (base_time + dt.timedelta(seconds=1)).timestamp()
                     ),
                 )
             ],
@@ -698,7 +678,7 @@ class TestTracingRoute(unittest.TestCase):
             f'{self.project_path}/traces',
             params={
                 '_from': int(base_time.timestamp()),
-                '_to': int((base_time + datetime.timedelta(hours=1)).timestamp()),
+                '_to': int((base_time + dt.timedelta(hours=1)).timestamp()),
                 'routes': ['my-route'],
                 'page': 1,
                 'size': 50,
@@ -745,9 +725,7 @@ class TestTracingRoute(unittest.TestCase):
         assert call_kwargs['_to'] is None
 
     def test_get_traces_with_request_types_filter(self):
-        base_time = datetime.datetime(
-            2025, 1, 8, 10, 0, 0, tzinfo=datetime.timezone.utc
-        )
+        base_time = dt.datetime(2025, 1, 8, 10, 0, 0, tzinfo=dt.timezone.utc)
         mock_result = Page.create(
             items=[
                 TraceDTO(
@@ -789,9 +767,7 @@ class TestTracingRoute(unittest.TestCase):
         self.tracing_service.get_traces.assert_not_called()
 
     def test_get_span_by_id_success(self):
-        base_time = datetime.datetime(
-            2025, 1, 8, 10, 0, 0, tzinfo=datetime.timezone.utc
-        )
+        base_time = dt.datetime(2025, 1, 8, 10, 0, 0, tzinfo=dt.timezone.utc)
         mock_span = SpanDTO(
             trace_id='trace-123',
             span_id='span-456',
@@ -847,9 +823,7 @@ class TestTracingRoute(unittest.TestCase):
         assert 'not found' in body['error']['message']
 
     def test_get_span_by_id_with_error_events(self):
-        base_time = datetime.datetime(
-            2025, 1, 8, 10, 0, 0, tzinfo=datetime.timezone.utc
-        )
+        base_time = dt.datetime(2025, 1, 8, 10, 0, 0, tzinfo=dt.timezone.utc)
         mock_span = SpanDTO(
             trace_id='trace-error',
             span_id='span-error',
@@ -893,9 +867,7 @@ class TestTracingRoute(unittest.TestCase):
         assert body['errorEvents'][0]['name'] == 'exception'
 
     def test_get_span_by_id_with_none_uuids(self):
-        base_time = datetime.datetime(
-            2025, 1, 8, 10, 0, 0, tzinfo=datetime.timezone.utc
-        )
+        base_time = dt.datetime(2025, 1, 8, 10, 0, 0, tzinfo=dt.timezone.utc)
         mock_span = SpanDTO(
             trace_id='trace-no-uuid',
             span_id='span-no-uuid',
@@ -934,8 +906,8 @@ class TestTracingRoute(unittest.TestCase):
 
 FROM_TS = 1736330400  # 2025-01-08 10:00 UTC
 TO_TS = FROM_TS + 7200
-FROM_DT = datetime.datetime.fromtimestamp(FROM_TS, datetime.timezone.utc)
-TO_DT = datetime.datetime.fromtimestamp(TO_TS, datetime.timezone.utc)
+FROM_DT = dt.datetime.fromtimestamp(FROM_TS, dt.timezone.utc)
+TO_DT = dt.datetime.fromtimestamp(TO_TS, dt.timezone.utc)
 GROUP = UUID('550e8400-e29b-41d4-a716-446655440001')
 KEY = UUID('660e8400-e29b-41d4-a716-446655440001')
 COMMON = {'_from': FROM_TS, '_to': TO_TS, 'routes': ['route-a', 'route-b']}

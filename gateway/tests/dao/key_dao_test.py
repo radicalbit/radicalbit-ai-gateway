@@ -1,4 +1,4 @@
-import datetime
+import datetime as dt
 import uuid
 
 import pytest
@@ -138,10 +138,10 @@ class KeyDAOTest(AsyncDatabaseIntegration):
 
     async def test_expires_on_round_trips_as_a_date(self):
         key = db_mock.get_sample_key(
-            uuid=uuid.uuid4(), name='expiring', expires_on=datetime.date(2026, 11, 10)
+            uuid=uuid.uuid4(), name='expiring', expires_on=dt.date(2026, 11, 10)
         )
         await self.key_dao.insert(key)
-        assert (await self._by_uuid(key.uuid)).expires_on == datetime.date(2026, 11, 10)
+        assert (await self._by_uuid(key.uuid)).expires_on == dt.date(2026, 11, 10)
 
     async def test_a_key_without_expiry_date_reads_back_as_none(self):
         key = db_mock.get_sample_key(uuid=uuid.uuid4(), name='never')
@@ -152,9 +152,9 @@ class KeyDAOTest(AsyncDatabaseIntegration):
 
     # --- rotation (AG-1042, AG-1043) ---
 
-    _UTC = getattr(datetime, 'UTC', datetime.timezone.utc)
-    NOW = datetime.datetime(2026, 11, 1, 12, tzinfo=_UTC)
-    GRACE_END = datetime.datetime(2026, 11, 2, 12, tzinfo=_UTC)
+    _UTC = getattr(dt, 'UTC', dt.timezone.utc)
+    NOW = dt.datetime(2026, 11, 1, 12, tzinfo=_UTC)
+    GRACE_END = dt.datetime(2026, 11, 2, 12, tzinfo=_UTC)
 
     async def _insert_rotatable(self, name: str):
         key = db_mock.get_sample_key(
@@ -196,7 +196,7 @@ class KeyDAOTest(AsyncDatabaseIntegration):
     async def test_rotate_is_refused_while_a_grace_period_is_running(self):
         key = await self._insert_rotatable('rot-twice')
         await self._rotate(key)
-        before_end = self.GRACE_END - datetime.timedelta(seconds=1)
+        before_end = self.GRACE_END - dt.timedelta(seconds=1)
         assert await self._rotate(key, expected='v2', new='v3', now=before_end) is None
         assert await self.key_dao.get_key_by_hashed_key('rot-twice-v3') is None
         assert (await self._by_hashed_key('rot-twice-v1')).uuid == key.uuid

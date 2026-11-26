@@ -1,4 +1,4 @@
-import datetime
+import datetime as dt
 from decimal import Decimal
 import unittest
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -284,7 +284,7 @@ class KeyServiceTest(unittest.IsolatedAsyncioTestCase):
 
     @freeze_time('2026-11-11 00:00:00')
     async def test_get_associable_groups_expired_key_returns_empty(self):
-        key = db_mock.get_sample_key(expires_on=datetime.date(2026, 11, 10))
+        key = db_mock.get_sample_key(expires_on=dt.date(2026, 11, 10))
         get_all_by_owner_mock = MagicMock()
         self.key_dao.get_by_uuid = AsyncMock(return_value=key)
         self.group_dao.get_all_by_owner = get_all_by_owner_mock
@@ -296,10 +296,10 @@ class KeyServiceTest(unittest.IsolatedAsyncioTestCase):
     async def test_get_associable_keys_leaves_out_expired_keys(self):
         group = db_mock.get_sample_group_plain(uuid=uuid.uuid4(), name='g1')
         expired = db_mock.get_sample_key(
-            uuid=uuid.uuid4(), name='expired', expires_on=datetime.date(2026, 11, 10)
+            uuid=uuid.uuid4(), name='expired', expires_on=dt.date(2026, 11, 10)
         )
         expiring = db_mock.get_sample_key(
-            uuid=uuid.uuid4(), name='expiring', expires_on=datetime.date(2026, 11, 11)
+            uuid=uuid.uuid4(), name='expiring', expires_on=dt.date(2026, 11, 11)
         )
         never = db_mock.get_sample_key(uuid=uuid.uuid4(), name='never')
         self.group_dao.get_by_uuid = AsyncMock(return_value=group)
@@ -618,7 +618,7 @@ class TestUpdateLimitValue:
     async def test_expired_key_is_refused(self):
         service, key_dao, key_limit_dao = self._make_service()
         key = db_mock.get_sample_key(
-            uuid=uuid.uuid4(), expires_on=datetime.date(2026, 11, 10)
+            uuid=uuid.uuid4(), expires_on=dt.date(2026, 11, 10)
         )
         limit = db_mock.get_sample_key_limit(uuid=uuid.uuid4(), key_uuid=key.uuid)
         self._stub(key_dao, key_limit_dao, key=key, limit=limit)
@@ -829,7 +829,7 @@ class TestApplyLimitsToKeys:
     async def test_expired_members_are_written_and_marked_expired(self):
         service, _, key_limit_dao = _make_limits_service()
         key = db_mock.get_sample_key(uuid=uuid.uuid4())
-        key.expires_on = datetime.date(2020, 1, 1)
+        key.expires_on = dt.date(2020, 1, 1)
         key_limit_dao.get_all_by_key_uuids = AsyncMock(return_value=[])
 
         [member] = await service.apply_limits_to_keys([key], _group_limits_in())

@@ -1,4 +1,4 @@
-import datetime
+import datetime as dt
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from freezegun import freeze_time
@@ -118,7 +118,7 @@ async def test_exact_cache_hit_with_different_history(
         cost_service=cost_service,
     )
 
-    initial_datetime = datetime.datetime(
+    initial_datetime = dt.datetime(
         year=2025, month=7, day=30, hour=10, minute=0, second=0
     )
     with freeze_time(initial_datetime):

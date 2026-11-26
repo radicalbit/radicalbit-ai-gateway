@@ -5,7 +5,7 @@ what order, with what count and what last call. Nothing here looks at how the
 SQL is put together.
 """
 
-import datetime
+import datetime as dt
 from typing import TypedDict
 import uuid
 
@@ -26,9 +26,9 @@ KEY_3 = uuid.UUID(int=3)
 GROUP_1 = uuid.UUID(int=101)
 GROUP_2 = uuid.UUID(int=102)
 
-BASE_TIME = datetime.datetime(2025, 1, 8, 10, 0, 0, tzinfo=datetime.timezone.utc)
+BASE_TIME = dt.datetime(2025, 1, 8, 10, 0, 0, tzinfo=dt.timezone.utc)
 
-UsageRow = tuple[uuid.UUID, str, uuid.UUID, str, int, datetime.datetime]
+UsageRow = tuple[uuid.UUID, str, uuid.UUID, str, int, dt.datetime]
 
 
 class _Caller(TypedDict, total=False):
@@ -40,8 +40,8 @@ class _Caller(TypedDict, total=False):
 
 class _Filters(TypedDict, total=False):
     route_names: list[str] | None
-    _from: datetime.datetime | None
-    _to: datetime.datetime | None
+    _from: dt.datetime | None
+    _to: dt.datetime | None
     tags: list[str] | None
 
 
@@ -52,7 +52,7 @@ def mcp_event(
     group_uuid: uuid.UUID = GROUP_1,
     group_name: str = 'group-one',
     route_name: str = 'route-a',
-    timestamp: datetime.datetime = BASE_TIME,
+    timestamp: dt.datetime = BASE_TIME,
     tags: list[str] | None = None,
     event_type: str = 'MCP_INVOCATION',
     mcp_method: str = 'tools/call',
@@ -83,8 +83,8 @@ class EventDAOMcpKeyUsageTest(DatabaseIntegrationClickhouse):
     def usage(
         self,
         route_names: list[str] | None = None,
-        _from: datetime.datetime | None = None,
-        _to: datetime.datetime | None = None,
+        _from: dt.datetime | None = None,
+        _to: dt.datetime | None = None,
         tags: list[str] | None = None,
         page: int = 1,
         size: int = 50,
@@ -103,10 +103,10 @@ class EventDAOMcpKeyUsageTest(DatabaseIntegrationClickhouse):
         key are ORed, different tag keys are ANDed, the window is inclusive,
         and other event types and other projects never count.
         """
-        end = BASE_TIME + datetime.timedelta(hours=1)
-        half = BASE_TIME + datetime.timedelta(minutes=30)
-        before = BASE_TIME - datetime.timedelta(minutes=1)
-        after = end + datetime.timedelta(minutes=1)
+        end = BASE_TIME + dt.timedelta(hours=1)
+        half = BASE_TIME + dt.timedelta(minutes=30)
+        before = BASE_TIME - dt.timedelta(minutes=1)
+        after = end + dt.timedelta(minutes=1)
         prod_retail = ['env=prod', 'cost_center=retail']
         key_2: _Caller = {
             'api_key_uuid': KEY_2,
@@ -163,7 +163,7 @@ class EventDAOMcpKeyUsageTest(DatabaseIntegrationClickhouse):
                 assert res.total == len(expected)
 
     def test_all_four_filters_compose(self):
-        in_window = BASE_TIME + datetime.timedelta(minutes=30)
+        in_window = BASE_TIME + dt.timedelta(minutes=30)
         self.insert(
             [
                 # The only row that survives every filter.
@@ -176,7 +176,7 @@ class EventDAOMcpKeyUsageTest(DatabaseIntegrationClickhouse):
                 mcp_event(
                     api_key_uuid=KEY_2,
                     route_name='agents',
-                    timestamp=BASE_TIME - datetime.timedelta(days=1),
+                    timestamp=BASE_TIME - dt.timedelta(days=1),
                     tags=['env=prod'],
                 ),
                 # Right window and tag, wrong route.
@@ -207,7 +207,7 @@ class EventDAOMcpKeyUsageTest(DatabaseIntegrationClickhouse):
         res = self.usage(
             route_names=['agents'],
             _from=BASE_TIME,
-            _to=BASE_TIME + datetime.timedelta(hours=1),
+            _to=BASE_TIME + dt.timedelta(hours=1),
             tags=['env=prod'],
         )
 
@@ -220,7 +220,7 @@ class EventDAOMcpKeyUsageTest(DatabaseIntegrationClickhouse):
         """Two keys sharing a name stay two rows, and a full tie on count and
         last call ranks by key, so no key shows up on two pages.
         """
-        later = BASE_TIME + datetime.timedelta(hours=1)
+        later = BASE_TIME + dt.timedelta(hours=1)
         key_4 = uuid.UUID(int=4)
         self.insert(
             [

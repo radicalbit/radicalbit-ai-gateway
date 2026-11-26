@@ -1,4 +1,4 @@
-import datetime
+import datetime as dt
 from enum import Enum, StrEnum
 import json
 import re
@@ -96,7 +96,7 @@ class AlertRuleIn(BaseModel):
         return _validate_recipients(v) or []
 
     def to_alert_rule(self) -> AlertRule:
-        now = datetime.datetime.now(tz=datetime.UTC)
+        now = dt.datetime.now(tz=dt.UTC)
         return AlertRule(
             name=self.name,
             description=self.description,
@@ -264,7 +264,7 @@ class AlertHistoryBucketOut(BaseModel):
 
     rule_uuid: UUID
     rule_name: str
-    bucket_start: datetime.datetime
+    bucket_start: dt.datetime
     sent: int
     failed: int
 

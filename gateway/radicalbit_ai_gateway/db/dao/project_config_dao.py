@@ -1,5 +1,5 @@
 from collections.abc import Sequence
-import datetime
+import datetime as dt
 from typing import NamedTuple
 from uuid import UUID
 
@@ -11,7 +11,7 @@ from radicalbit_ai_gateway.db.tables.project_config_table import ProjectConfig
 from radicalbit_ai_gateway.db.tables.project_table import Project
 from radicalbit_ai_gateway.models.config_status import ConfigStatus
 
-_UTC = getattr(datetime, 'UTC', datetime.timezone.utc)
+_UTC = getattr(dt, 'UTC', dt.timezone.utc)
 
 
 class ServedConfigWithProject(NamedTuple):
@@ -57,7 +57,7 @@ class ProjectConfigDAO:
 
     async def update_config_file(self, config_uuid: UUID, config_file: str) -> int:
         """Update the YAML content of a config and reset it to DRAFT."""
-        now = datetime.datetime.now(tz=_UTC)
+        now = dt.datetime.now(tz=_UTC)
         async with self.db.begin_session() as session:
             query = (
                 update(ProjectConfig)
@@ -90,7 +90,7 @@ class ProjectConfigDAO:
         same project back to DRAFT, promote this one to SERVED, and update the
         project's served reference and first_served_at.
         """
-        now = datetime.datetime.now(tz=_UTC)
+        now = dt.datetime.now(tz=_UTC)
         async with self.db.begin_session() as session:
             config = await session.scalar(
                 select(ProjectConfig).where(
@@ -135,7 +135,7 @@ class ProjectConfigDAO:
         """Unserve a config (back to DRAFT) and clear the project's served
         reference when it points to this config.
         """
-        now = datetime.datetime.now(tz=_UTC)
+        now = dt.datetime.now(tz=_UTC)
         async with self.db.begin_session() as session:
             config = await session.scalar(
                 select(ProjectConfig).where(
@@ -182,7 +182,7 @@ class ProjectConfigDAO:
             ]
 
     async def soft_delete_by_project(self, project_uuid: UUID) -> int:
-        now = datetime.datetime.now(tz=_UTC)
+        now = dt.datetime.now(tz=_UTC)
         async with self.db.begin_session() as session:
             query = (
                 update(ProjectConfig)
