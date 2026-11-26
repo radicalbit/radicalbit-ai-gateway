@@ -82,6 +82,8 @@ dev = [
 ]
 migrations = [
     "alembic>=1.18.1",
+    # db/database.py imports anyio (run_from_worker), and alembic/env.py imports it.
+    "anyio>=4.15.1",
     "sqlalchemy[asyncio]>=2.1.9",
     "psycopg[binary]>=3.2.0",
     "pydantic-settings>=2.12.0",
