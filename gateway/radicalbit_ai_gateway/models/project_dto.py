@@ -1,4 +1,4 @@
-import datetime
+import datetime as dt
 from enum import Enum
 from uuid import UUID
 
@@ -67,8 +67,8 @@ class ProjectIn(BaseModel, validate_assignment=True):
     )
 
     def to_project(self) -> Project:
-        UTC = getattr(datetime, 'UTC', datetime.timezone.utc)
-        now = datetime.datetime.now(tz=UTC)
+        UTC = getattr(dt, 'UTC', dt.timezone.utc)
+        now = dt.datetime.now(tz=UTC)
 
         return Project(
             name=self.name,

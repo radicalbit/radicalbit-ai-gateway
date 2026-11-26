@@ -1,6 +1,6 @@
 """Dispatch finds the enabled rules watching an event's target, scope by scope."""
 
-import datetime
+import datetime as dt
 import json
 import uuid
 
@@ -23,7 +23,7 @@ class AlertRuleDAOTest(AsyncDatabaseIntegration):
         cls.dao = AlertRuleDAO(cls.db)
 
     async def rule(self, scope: str, **columns) -> AlertRule:
-        now = datetime.datetime.now(tz=datetime.UTC)
+        now = dt.datetime.now(tz=dt.UTC)
         return await self.insert(
             AlertRule(
                 **{
@@ -97,8 +97,8 @@ class AlertRuleDAOTest(AsyncDatabaseIntegration):
         assert await self.dao.soft_delete_by_uuid(rule.uuid) is None
 
     async def test_all_rules_are_listed_newest_first_without_deleted_ones(self):
-        old = datetime.datetime(2026, 1, 1, tzinfo=datetime.UTC)
-        new = datetime.datetime(2026, 1, 2, tzinfo=datetime.UTC)
+        old = dt.datetime(2026, 1, 1, tzinfo=dt.UTC)
+        new = dt.datetime(2026, 1, 2, tzinfo=dt.UTC)
         await self.rule('project', project=PROJECT, name='old', created_at=old)
         await self.rule('project', project=PROJECT, name='new', created_at=new)
         await self.rule('project', project=PROJECT, name='gone', deleted=True)
@@ -106,7 +106,7 @@ class AlertRuleDAOTest(AsyncDatabaseIntegration):
         assert [r.name for r in await self.dao.get_all()] == ['new', 'old']
 
     async def test_a_rule_is_inserted_toggled_and_updated(self):
-        now = datetime.datetime.now(tz=datetime.UTC)
+        now = dt.datetime.now(tz=dt.UTC)
         inserted = await self.dao.insert(
             AlertRule(
                 name='new rule',

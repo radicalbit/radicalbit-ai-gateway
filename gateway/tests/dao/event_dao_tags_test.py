@@ -5,7 +5,7 @@ exercises `EventDAO._add_tags_filter`'s Google-style facet semantics: OR
 between multiple values of the same tag key, AND between different keys.
 """
 
-import datetime
+import datetime as dt
 import uuid
 
 from sqlalchemy import func, select
@@ -18,7 +18,7 @@ from radicalbit_ai_gateway.db.dao.event_dao import EventDAO
 from radicalbit_ai_gateway.db.tables.event_table import Event
 
 PROJECT_A = uuid.UUID('11111111-1111-1111-1111-111111111111')
-TIMESTAMP = datetime.datetime(2025, 1, 8, 10, 0, 0, tzinfo=datetime.timezone.utc)
+TIMESTAMP = dt.datetime(2025, 1, 8, 10, 0, 0, tzinfo=dt.timezone.utc)
 
 
 class EventDAOTagsTest(DatabaseIntegrationClickhouse):

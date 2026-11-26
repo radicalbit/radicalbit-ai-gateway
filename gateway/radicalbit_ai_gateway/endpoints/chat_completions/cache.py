@@ -5,7 +5,7 @@ as stored.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-import datetime
+import datetime as dt
 import json
 import logging
 from typing import Any
@@ -109,9 +109,7 @@ class ChatEntry:
         return Hit(value.model, value.usage)
 
     def refresh(self, value: ChatCompletion) -> ChatCompletion:
-        return value.model_copy(
-            update={'created': int(datetime.datetime.now().timestamp())}
-        )
+        return value.model_copy(update={'created': int(dt.datetime.now().timestamp())})
 
     def store_spans(self, value) -> tuple[str, ...]:
         if isinstance(value, StreamedReply):

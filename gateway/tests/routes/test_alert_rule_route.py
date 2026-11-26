@@ -1,4 +1,4 @@
-import datetime
+import datetime as dt
 import json
 from types import SimpleNamespace
 from typing import Any, TypeVar
@@ -292,7 +292,7 @@ class TestAlertRuleRoute(SchemaIntegration):
 
     def insert_rule(self, event: str, **columns: object) -> AlertRule:
         """Store a rule bypassing validation, as an older release could have."""
-        now = datetime.datetime.now(tz=datetime.UTC)
+        now = dt.datetime.now(tz=dt.UTC)
         return self.insert(
             AlertRule(
                 **{
@@ -314,7 +314,7 @@ class TestAlertRuleRoute(SchemaIntegration):
         )
 
     def insert_credential(self, name: str) -> Key:
-        now = datetime.datetime.now(tz=datetime.UTC)
+        now = dt.datetime.now(tz=dt.UTC)
         return self.insert(
             Key(
                 name=name,

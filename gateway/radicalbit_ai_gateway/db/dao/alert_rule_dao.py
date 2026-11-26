@@ -1,5 +1,5 @@
 from collections.abc import Sequence
-import datetime
+import datetime as dt
 from typing import Any
 from uuid import UUID
 
@@ -72,8 +72,8 @@ class AlertRuleDAO:
             return (await session.scalars(stmt)).all()
 
     async def soft_delete_by_uuid(self, alert_rule_uuid: UUID) -> AlertRule | None:
-        UTC = getattr(datetime, 'UTC', datetime.timezone.utc)
-        now = datetime.datetime.now(tz=UTC)
+        UTC = getattr(dt, 'UTC', dt.timezone.utc)
+        now = dt.datetime.now(tz=UTC)
         async with self.db.begin_session() as session:
             rule = await session.scalar(
                 select(AlertRule).where(
@@ -91,8 +91,8 @@ class AlertRuleDAO:
     async def toggle_enabled(
         self, alert_rule_uuid: UUID, enabled: bool
     ) -> AlertRule | None:
-        UTC = getattr(datetime, 'UTC', datetime.timezone.utc)
-        now = datetime.datetime.now(tz=UTC)
+        UTC = getattr(dt, 'UTC', dt.timezone.utc)
+        now = dt.datetime.now(tz=UTC)
         async with self.db.begin_session() as session:
             rule = await session.scalar(
                 select(AlertRule).where(
@@ -110,8 +110,8 @@ class AlertRuleDAO:
     async def update_rule(
         self, alert_rule_uuid: UUID, update_fields: dict[str, Any]
     ) -> AlertRule | None:
-        UTC = getattr(datetime, 'UTC', datetime.timezone.utc)
-        now = datetime.datetime.now(tz=UTC)
+        UTC = getattr(dt, 'UTC', dt.timezone.utc)
+        now = dt.datetime.now(tz=UTC)
         async with self.db.begin_session() as session:
             rule = await session.scalar(
                 select(AlertRule).where(

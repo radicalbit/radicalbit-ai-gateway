@@ -7,7 +7,7 @@ global OpenTelemetry state is touched.
 
 from collections.abc import AsyncGenerator, AsyncIterator
 import dataclasses
-import datetime
+import datetime as dt
 import json
 from typing import Any, TypeVar
 
@@ -685,7 +685,7 @@ async def test_unknown_block_values_are_serialized(spans):
         'point': _Point(1),
         'shape': _Shape(sides=3),
         'serializable': _Serializable(),
-        'at': datetime.datetime(2026, 1, 2, 3, 4, 5),
+        'at': dt.datetime(2026, 1, 2, 3, 4, 5),
         'opaque': _Opaque(),
         'unprintable': _Unprintable(),
     }

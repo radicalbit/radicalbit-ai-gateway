@@ -1,4 +1,4 @@
-import datetime
+import datetime as dt
 import unittest
 from unittest.mock import AsyncMock, MagicMock, call
 import uuid
@@ -111,7 +111,7 @@ class GroupServiceTest(unittest.IsolatedAsyncioTestCase):
         assert len(res) == 3
 
     async def test_get_all_include_routes_excludes_deleted_project_routes(self):
-        UTC = getattr(datetime, 'UTC', datetime.timezone.utc)
+        UTC = getattr(dt, 'UTC', dt.timezone.utc)
         group_uuid = uuid.uuid4()
         live_route = db_mock.get_sample_group_route(
             group_uuid=group_uuid, route_name='live-route'
@@ -119,7 +119,7 @@ class GroupServiceTest(unittest.IsolatedAsyncioTestCase):
         deleted_route = db_mock.get_sample_group_route(
             group_uuid=group_uuid, route_name='deleted-route'
         )
-        deleted_route.project.deleted_at = datetime.datetime.now(tz=UTC)
+        deleted_route.project.deleted_at = dt.datetime.now(tz=UTC)
         group = db_mock.get_sample_group(
             uuid=group_uuid, group_routes=[live_route, deleted_route]
         )

@@ -380,6 +380,10 @@ app = GatewayApp(
     version=_gateway_version(),
     lifespan=lifespan,
     generate_unique_id_function=_operation_id,
+    # FastAPI's native OpenTelemetry, on by default, would add an HTTP root
+    # span, HTTP metrics and logs on the global providers, above the gateway's
+    # own telemetry.
+    telemetry={'tracing': False, 'metrics': False, 'logs': False},
 )
 
 # Register the default token validator before plugins load.

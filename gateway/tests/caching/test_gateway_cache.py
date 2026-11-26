@@ -1,4 +1,4 @@
-import datetime
+import datetime as dt
 import json
 
 from freezegun import freeze_time
@@ -138,7 +138,7 @@ async def test_a_response_is_cached_until_its_ttl_and_without_one_for_good(
     gateway_cache,
 ):
     forever, expiring = _chat_key('forever'), _chat_key()
-    with freeze_time(datetime.datetime(2025, 7, 29, 15)) as frozen_datetime:
+    with freeze_time(dt.datetime(2025, 7, 29, 15)) as frozen_datetime:
         assert await gateway_cache.get(forever) is None
         assert await gateway_cache.get(expiring) is None
 

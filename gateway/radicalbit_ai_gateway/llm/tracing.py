@@ -26,7 +26,7 @@ the providers use may be switched on, or each call would be traced twice.
 from collections.abc import Callable, Sequence
 import contextlib
 import dataclasses
-import datetime
+import datetime as dt
 import functools
 import json
 import logging
@@ -149,7 +149,7 @@ class _JSONEncoder(json.JSONEncoder):
             return o.to_json()
         if isinstance(o, BaseModel):
             return o.model_dump()
-        if isinstance(o, datetime.datetime):
+        if isinstance(o, dt.datetime):
             return o.isoformat()
         try:
             return str(o)

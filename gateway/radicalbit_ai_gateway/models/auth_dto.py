@@ -1,4 +1,4 @@
-import datetime
+import datetime as dt
 import json
 from typing import Any
 from uuid import UUID
@@ -49,7 +49,7 @@ class KeyCreateIn(BaseModel):
     """
 
     name: str
-    expires_on: datetime.date | None = None
+    expires_on: dt.date | None = None
 
     model_config = ConfigDict(
         populate_by_name=True, alias_generator=to_camel, protected_namespaces=()
@@ -57,13 +57,13 @@ class KeyCreateIn(BaseModel):
 
     @field_validator('expires_on')
     @classmethod
-    def _not_in_the_past(cls, value: datetime.date | None) -> datetime.date | None:
+    def _not_in_the_past(cls, value: dt.date | None) -> dt.date | None:
         if value is not None and value < utc_today():
             raise ValueError('expiresOn cannot be earlier than today (UTC)')
         return value
 
     def to_key(self, hashed_key: str, obscured_key: str) -> Key:
-        now = datetime.datetime.now(tz=UTC)
+        now = dt.datetime.now(tz=UTC)
         return Key(
             name=self.name,
             owner='gateway',
@@ -94,7 +94,7 @@ class KeyRotationIn(BaseModel):
             parse_grace_period(value)
         return value
 
-    def to_timedelta(self) -> datetime.timedelta | None:
+    def to_timedelta(self) -> dt.timedelta | None:
         return (
             None if self.grace_period is None else parse_grace_period(self.grace_period)
         )
@@ -124,11 +124,11 @@ class KeyOut(BaseModel):
     api_key: str
     created_at: str
     updated_at: str
-    expires_on: datetime.date | None = None
+    expires_on: dt.date | None = None
     state: CredentialState = CredentialState.ACTIVE
-    grace_ends_at: datetime.datetime | None = None
+    grace_ends_at: dt.datetime | None = None
     rotation_state: RotationState = RotationState.NONE
-    last_rotated_at: datetime.datetime | None = None
+    last_rotated_at: dt.datetime | None = None
 
     model_config = ConfigDict(
         populate_by_name=True, alias_generator=to_camel, protected_namespaces=()
@@ -240,8 +240,8 @@ class GroupIn(BaseModel, validate_assignment=True):
     )
 
     def to_group(self) -> Group:
-        UTC = getattr(datetime, 'UTC', datetime.timezone.utc)
-        now = datetime.datetime.now(tz=UTC)
+        UTC = getattr(dt, 'UTC', dt.timezone.utc)
+        now = dt.datetime.now(tz=UTC)
         return Group(
             name=self.name,
             owner='gateway',

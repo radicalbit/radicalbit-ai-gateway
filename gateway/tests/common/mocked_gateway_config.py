@@ -1,4 +1,4 @@
-import datetime
+import datetime as dt
 from decimal import Decimal
 
 from radicalbit_ai_gateway.models.caching import CacheConfig, Caching, SemanticCaching
@@ -120,13 +120,13 @@ def get_chat_models(
             credentials=Credentials(
                 api_key=None,
                 api_base='https://openai-gpt-4-test-v-1.openai.azure.com/',
-                api_version=datetime.datetime(
+                api_version=dt.datetime(
                     2023,
                     5,
                     15,
                     0,
                     0,
-                    tzinfo=datetime.timezone(datetime.timedelta(0), 'Z'),
+                    tzinfo=dt.timezone(dt.timedelta(0), 'Z'),
                 ),
                 azure_ad_token='sk-123',
                 project_id=None,

@@ -8,7 +8,7 @@ see, and what the request counts and records.
 """
 
 import asyncio
-import datetime
+import datetime as dt
 import json
 from typing import Any, TypedDict
 from unittest.mock import patch
@@ -274,7 +274,7 @@ def test_a_refused_credential_is_an_authentication_error(
 
 def test_an_expired_credential_is_told_it_expired():
     expired = db_mock.get_sample_key_with_group(group_uuid=db_mock.GROUP_UUID)
-    expired.expires_on = datetime.date(2020, 1, 1)
+    expired.expires_on = dt.date(2020, 1, 1)
 
     with open_gateway(
         messages_routes(CLAUDE), api_key=expired, use_pook=True

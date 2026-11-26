@@ -1,5 +1,5 @@
 from collections.abc import Sequence
-import datetime
+import datetime as dt
 from uuid import UUID
 
 from sqlalchemy import select, update
@@ -12,7 +12,7 @@ from radicalbit_ai_gateway.models.config_slot import Slot
 from radicalbit_ai_gateway.models.config_status import ConfigStatus
 from radicalbit_ai_gateway.models.project_dto import ProjectFilter
 
-_UTC = getattr(datetime, 'UTC', datetime.timezone.utc)
+_UTC = getattr(dt, 'UTC', dt.timezone.utc)
 
 
 class ProjectDAO:
@@ -34,7 +34,7 @@ class ProjectDAO:
         transaction, so a project is never left with a partial set of slots
         (the "always 2 slots" invariant holds even on a mid-creation crash).
         """
-        now = datetime.datetime.now(tz=_UTC)
+        now = dt.datetime.now(tz=_UTC)
         async with self.db.begin_session() as session:
             session.add(project)
             await session.flush()  # assign project.uuid before linking the configs
@@ -115,7 +115,7 @@ class ProjectDAO:
             return (await session.scalars(stmt)).all()
 
     async def soft_delete(self, project_uuid: UUID) -> int:
-        now = datetime.datetime.now(tz=_UTC)
+        now = dt.datetime.now(tz=_UTC)
         async with self.db.begin_session() as session:
             query = (
                 update(Project)

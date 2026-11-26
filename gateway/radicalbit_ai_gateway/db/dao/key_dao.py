@@ -1,5 +1,5 @@
 from collections.abc import Sequence
-import datetime
+import datetime as dt
 from uuid import UUID
 
 from sqlalchemy import Select, asc, delete, or_, select, update
@@ -39,8 +39,8 @@ class KeyDAO:
             return await session.scalar(select(Key).where(Key.uuid == key_uuid))
 
     async def update_key_name(self, key_uuid: UUID, name: str) -> int:
-        UTC = getattr(datetime, 'UTC', datetime.timezone.utc)
-        now = datetime.datetime.now(tz=UTC)
+        UTC = getattr(dt, 'UTC', dt.timezone.utc)
+        now = dt.datetime.now(tz=UTC)
         async with self.db.begin_session() as session:
             query = (
                 update(Key)
@@ -74,8 +74,8 @@ class KeyDAO:
         expected_hashed_key: str,
         hashed_key: str,
         obscured_key: str,
-        grace_ends_at: datetime.datetime | None,
-        now: datetime.datetime,
+        grace_ends_at: dt.datetime | None,
+        now: dt.datetime,
     ) -> Key | None:
         """Replace the value in a single conditional update, so it applies only if
         the value is still the one the caller read and no grace period is running.
@@ -101,9 +101,7 @@ class KeyDAO:
             )
             return (await session.scalars(query)).one_or_none()
 
-    async def end_grace_period(
-        self, key_uuid: UUID, now: datetime.datetime
-    ) -> Key | None:
+    async def end_grace_period(self, key_uuid: UUID, now: dt.datetime) -> Key | None:
         """Forget the previous value now. Returns None when no grace period is running."""
         async with self.db.begin_session() as session:
             query = (
@@ -115,8 +113,8 @@ class KeyDAO:
             return (await session.scalars(query)).one_or_none()
 
     async def assign_group(self, key_uuid: UUID, group_uuid: UUID) -> Key | None:
-        UTC = getattr(datetime, 'UTC', datetime.timezone.utc)
-        now = datetime.datetime.now(tz=UTC)
+        UTC = getattr(dt, 'UTC', dt.timezone.utc)
+        now = dt.datetime.now(tz=UTC)
 
         async with self.db.begin_session() as session:
             query = (
@@ -129,8 +127,8 @@ class KeyDAO:
 
     async def remove_group(self, key_uuid: UUID, group_uuid: UUID) -> int:
         """Take the key out of ``group_uuid``; nothing changes if it is not in it."""
-        UTC = getattr(datetime, 'UTC', datetime.timezone.utc)
-        now = datetime.datetime.now(tz=UTC)
+        UTC = getattr(dt, 'UTC', dt.timezone.utc)
+        now = dt.datetime.now(tz=UTC)
 
         async with self.db.begin_session() as session:
             query = (

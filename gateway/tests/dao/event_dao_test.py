@@ -1,4 +1,4 @@
-import datetime
+import datetime as dt
 from typing import Literal
 import uuid
 
@@ -22,21 +22,21 @@ from radicalbit_ai_gateway.db.models.event import (
     TokensCounter,
 )
 
-UTC = datetime.timezone.utc
-H = datetime.timedelta(hours=1)
-D = datetime.timedelta(days=1)
+UTC = dt.timezone.utc
+H = dt.timedelta(hours=1)
+D = dt.timedelta(days=1)
 Granularity = Literal['hours', 'days', 'weeks', 'months']
 CostGroupBy = Literal['keys', 'groups', 'models']
 PROJECT = db_mock.TEST_PROJECT_UUID
 KEY_0 = uuid.UUID(int=0)
 KEY_1 = uuid.UUID(int=1)
 # Base-data timestamps: the 14th is also get_sample_event's default timestamp.
-OCT_14 = datetime.datetime(2025, 10, 14, 12, 58, 36, 931873, tzinfo=UTC)
+OCT_14 = dt.datetime(2025, 10, 14, 12, 58, 36, 931873, tzinfo=UTC)
 OCT_13 = OCT_14 - D
 OCT_12 = OCT_14 - 2 * D
 # Most cost scenarios happen at noon on 2025-01-10.
-NOON = datetime.datetime(2025, 1, 10, 12, 0, 0, tzinfo=UTC)
-FUTURE = datetime.datetime.now(UTC) + 200 * D
+NOON = dt.datetime(2025, 1, 10, 12, 0, 0, tzinfo=UTC)
+FUTURE = dt.datetime.now(UTC) + 200 * D
 INPUT = 'INPUT_TOKEN_PROCESSED'
 OUTPUT = 'OUTPUT_TOKEN_PROCESSED'
 CACHE_IN = 'CACHE_INPUT_TOKENS'
@@ -304,7 +304,7 @@ class EventDAOTest(DatabaseIntegrationClickhouse):
         route = 'route-limits'
 
         def at(hour):
-            return datetime.datetime(2025, 10, 13, hour, tzinfo=UTC)
+            return dt.datetime(2025, 10, 13, hour, tzinfo=UTC)
 
         def limit(scope, category):
             return {
@@ -406,7 +406,7 @@ class EventDAOTest(DatabaseIntegrationClickhouse):
                 db_mock.get_sample_event(
                     project_uuid=PROJECT,
                     event_type=f'{kind}_TOKEN_PROCESSED',
-                    timestamp=datetime.datetime(*ts, tzinfo=UTC),
+                    timestamp=dt.datetime(*ts, tzinfo=UTC),
                     api_key_uuid=key,
                     group_uuid=group,
                     model_id=model,
@@ -415,8 +415,8 @@ class EventDAOTest(DatabaseIntegrationClickhouse):
                 for ts, kind, key, group, model, cost in events
             ]
         )
-        _from = datetime.datetime(2025, 1, 6, tzinfo=UTC)
-        _to = datetime.datetime(2025, 3, 1, tzinfo=UTC)
+        _from = dt.datetime(2025, 1, 6, tzinfo=UTC)
+        _to = dt.datetime(2025, 3, 1, tzinfo=UTC)
 
         cases: dict[
             tuple[Granularity, CostGroupBy], list[tuple[tuple[int, ...], str, float]]
@@ -485,13 +485,13 @@ class EventDAOTest(DatabaseIntegrationClickhouse):
                 # Week and month buckets come back as naive dates.
                 tz = None if granularity in ('weeks', 'months') else UTC
                 assert [(r.bucket, r.group_by_value, r.total_cost) for r in res] == [
-                    (datetime.datetime(*bucket, tzinfo=tz), value, cost)
+                    (dt.datetime(*bucket, tzinfo=tz), value, cost)
                     for bucket, value, cost in expected
                 ]
 
     def test_get_costs_chart_data_filters(self):
         k1 = str(KEY_1)
-        feb_2 = datetime.datetime(2025, 2, 2, 10, 0, 0, tzinfo=UTC)
+        feb_2 = dt.datetime(2025, 2, 2, 10, 0, 0, tzinfo=UTC)
         jan_20 = NOON + 10 * D
         key = {'api_key_uuid': KEY_1}
         self.insert(
@@ -624,7 +624,7 @@ class EventDAOTest(DatabaseIntegrationClickhouse):
                 # sem-tokens: saved tokens.
                 _ev(HIT, 'sem-tokens', NOON + H, **sem),
                 _ev(HIT, 'sem-tokens', NOON + 2 * H, **sem),
-                _ev(HIT, 'sem-tokens', NOON + datetime.timedelta(minutes=2), **sem),
+                _ev(HIT, 'sem-tokens', NOON + dt.timedelta(minutes=2), **sem),
                 _ev(HIT, 'sem-tokens', NOON, **sem),
                 _ev(INPUT, 'sem-tokens', NOON, 0.10, value=40, **sem),
                 _ev(CACHE_IN, 'sem-tokens', NOON, 0.10, value=40, **sem),
@@ -947,7 +947,7 @@ class EventDAOTest(DatabaseIntegrationClickhouse):
         assert all_routes(FUTURE, FUTURE + H) == []
 
     def test_get_token_chart_data(self):
-        t0 = datetime.datetime(2025, 1, 8, 10, 0, 0, tzinfo=UTC)
+        t0 = dt.datetime(2025, 1, 8, 10, 0, 0, tzinfo=UTC)
         self.insert(
             [
                 _ev(INPUT, at=t0, value=100, model_id='gpt-4'),
@@ -972,9 +972,9 @@ class EventDAOTest(DatabaseIntegrationClickhouse):
         assert chart(t0 - D, t0 - D + 2 * H) == []
 
     def test_get_invocation_chart_data(self):
-        t0 = datetime.datetime(2025, 1, 8, 10, 0, 0, tzinfo=UTC)
-        day = datetime.datetime(2025, 1, 8, tzinfo=UTC)
-        m = datetime.timedelta(minutes=1)
+        t0 = dt.datetime(2025, 1, 8, 10, 0, 0, tzinfo=UTC)
+        day = dt.datetime(2025, 1, 8, tzinfo=UTC)
+        m = dt.timedelta(minutes=1)
 
         def inv(route, at, model='gpt-4', event_type=INVOCATION, value=1):
             return _ev(event_type, route, at, value=value, model_id=model)
@@ -1066,11 +1066,11 @@ class EventDAOTest(DatabaseIntegrationClickhouse):
         }
 
     def test_get_cost_chart_data(self):
-        feb_1 = datetime.datetime(2025, 2, 1, 10, 0, 0, tzinfo=UTC)
+        feb_1 = dt.datetime(2025, 2, 1, 10, 0, 0, tzinfo=UTC)
         self.insert(
             [
                 _ev(INPUT, 'chart-cost', feb_1, 1.0),
-                _ev(OUTPUT, 'chart-cost', feb_1 + datetime.timedelta(minutes=30), 2.0),
+                _ev(OUTPUT, 'chart-cost', feb_1 + dt.timedelta(minutes=30), 2.0),
                 _ev(INPUT, 'chart-cost', feb_1 + H, 3.0),
                 _ev(INPUT, 'chart-r1', feb_1, 5.0),
                 _ev(INPUT, 'chart-r2', feb_1, 10.0),

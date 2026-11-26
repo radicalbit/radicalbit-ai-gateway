@@ -1,4 +1,4 @@
-import datetime
+import datetime as dt
 import unittest
 from unittest.mock import MagicMock
 import uuid
@@ -59,7 +59,7 @@ class TestRequestDetailRoute(unittest.TestCase):
             events=[
                 EventDTO(
                     event_type='RATE_LIMIT',
-                    timestamp=datetime.datetime(2026, 3, 10, tzinfo=datetime.UTC),
+                    timestamp=dt.datetime(2026, 3, 10, tzinfo=dt.UTC),
                     value=1,
                     cost=0,
                     blocking=True,

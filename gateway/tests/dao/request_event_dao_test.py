@@ -1,4 +1,4 @@
-import datetime
+import datetime as dt
 
 import pytest
 from typing_extensions import override
@@ -10,10 +10,10 @@ from radicalbit_ai_gateway.db.dao.request_event_dao import RequestEventDAO
 from radicalbit_ai_gateway.db.models.event import RequestStats
 from radicalbit_ai_gateway.models.request_event_type import RequestStatus, RequestType
 
-T0 = datetime.datetime(2025, 1, 8, 10, 0, 0, tzinfo=datetime.timezone.utc)
-H = datetime.timedelta(hours=1)
-M = datetime.timedelta(minutes=1)
-D = datetime.timedelta(days=1)
+T0 = dt.datetime(2025, 1, 8, 10, 0, 0, tzinfo=dt.timezone.utc)
+H = dt.timedelta(hours=1)
+M = dt.timedelta(minutes=1)
+D = dt.timedelta(days=1)
 PROJECT = db_mock.TEST_PROJECT_UUID
 S = RequestStatus.SUCCESS
 HE = RequestStatus.HANDLED_ERROR

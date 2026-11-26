@@ -1,5 +1,5 @@
 from collections.abc import Sequence
-import datetime
+import datetime as dt
 from uuid import UUID
 
 from sqlalchemy import delete, select, update
@@ -68,7 +68,7 @@ class ProjectBudgetLimitDAO:
                 .where(ProjectBudgetLimit.uuid == limit_uuid)
                 .values(
                     max_value=max_value,
-                    updated_at=datetime.datetime.now(tz=datetime.timezone.utc),
+                    updated_at=dt.datetime.now(tz=dt.timezone.utc),
                 )
             )
 

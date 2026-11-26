@@ -1,4 +1,4 @@
-import datetime
+import datetime as dt
 import unittest
 from unittest.mock import MagicMock
 import uuid
@@ -37,14 +37,12 @@ class RequestEventServiceTest(unittest.TestCase):
         )
 
     def test_get_request_chart_data(self):
-        base_time = datetime.datetime(
-            2025, 1, 8, 10, 0, 0, tzinfo=datetime.timezone.utc
-        )
+        base_time = dt.datetime(2025, 1, 8, 10, 0, 0, tzinfo=dt.timezone.utc)
 
         mocked_request_chart_data = [
             RequestChartDataPoint(bucket=base_time, total_requests=2),
             RequestChartDataPoint(
-                bucket=base_time + datetime.timedelta(hours=1), total_requests=3
+                bucket=base_time + dt.timedelta(hours=1), total_requests=3
             ),
         ]
         self.request_event_dao.get_request_chart_data = MagicMock(
@@ -52,7 +50,7 @@ class RequestEventServiceTest(unittest.TestCase):
         )
 
         _from = base_time
-        _to = base_time + datetime.timedelta(hours=2)
+        _to = base_time + dt.timedelta(hours=2)
 
         res = self.request_event_service.get_request_chart_data(
             self.TEST_PROJECT_UUID, 'rb-gateway', _from, _to, 'hours'
@@ -62,21 +60,18 @@ class RequestEventServiceTest(unittest.TestCase):
             total=5,
             granularity='hours',
             timestamp=[
-                int((base_time + datetime.timedelta(hours=i)).timestamp())
-                for i in range(3)
+                int((base_time + dt.timedelta(hours=i)).timestamp()) for i in range(3)
             ],
             data=[2, 3, 0],
         )
         assert res == expected
 
     def test_get_request_chart_data_empty(self):
-        base_time = datetime.datetime(
-            2025, 1, 8, 10, 0, 0, tzinfo=datetime.timezone.utc
-        )
+        base_time = dt.datetime(2025, 1, 8, 10, 0, 0, tzinfo=dt.timezone.utc)
         self.request_event_dao.get_request_chart_data = MagicMock(return_value=[])
 
         _from = base_time
-        _to = base_time + datetime.timedelta(hours=2)
+        _to = base_time + dt.timedelta(hours=2)
 
         res = self.request_event_service.get_request_chart_data(
             self.TEST_PROJECT_UUID, 'rb-gateway', _from, _to, 'hours'
@@ -102,16 +97,14 @@ class RequestEventServiceTest(unittest.TestCase):
         )
 
     def test_get_request_grouped_chart_data(self):
-        base_time = datetime.datetime(
-            2025, 1, 8, 10, 0, 0, tzinfo=datetime.timezone.utc
-        )
+        base_time = dt.datetime(2025, 1, 8, 10, 0, 0, tzinfo=dt.timezone.utc)
 
         mocked_data = [
             RequestGroupedChartDataPoint(
                 bucket=base_time, success_count=2, error_count=1
             ),
             RequestGroupedChartDataPoint(
-                bucket=base_time + datetime.timedelta(hours=1),
+                bucket=base_time + dt.timedelta(hours=1),
                 success_count=3,
                 error_count=0,
             ),
@@ -121,14 +114,14 @@ class RequestEventServiceTest(unittest.TestCase):
         )
 
         _from = base_time
-        _to = base_time + datetime.timedelta(hours=2)
+        _to = base_time + dt.timedelta(hours=2)
 
         res = self.request_event_service.get_request_grouped_chart_data(
             self.TEST_PROJECT_UUID, 'rb-gateway', _from, _to, 'hours'
         )
 
         all_timestamps = [
-            int((base_time + datetime.timedelta(hours=i)).timestamp()) for i in range(3)
+            int((base_time + dt.timedelta(hours=i)).timestamp()) for i in range(3)
         ]
         expected = RequestGroupedChartDataDTO(
             total=6,
@@ -142,9 +135,7 @@ class RequestEventServiceTest(unittest.TestCase):
         assert res == expected
 
     def test_get_request_grouped_chart_data_empty(self):
-        base_time = datetime.datetime(
-            2025, 1, 8, 10, 0, 0, tzinfo=datetime.timezone.utc
-        )
+        base_time = dt.datetime(2025, 1, 8, 10, 0, 0, tzinfo=dt.timezone.utc)
         self.request_event_dao.get_request_chart_data_grouped = MagicMock(
             return_value=[]
         )
@@ -153,7 +144,7 @@ class RequestEventServiceTest(unittest.TestCase):
             self.TEST_PROJECT_UUID,
             'rb-gateway',
             base_time,
-            base_time + datetime.timedelta(hours=2),
+            base_time + dt.timedelta(hours=2),
             'hours',
         )
 
@@ -166,9 +157,7 @@ class RequestEventServiceTest(unittest.TestCase):
         assert res == expected
 
     def test_get_most_requested_route(self):
-        base_time = datetime.datetime(
-            2025, 1, 8, 10, 0, 0, tzinfo=datetime.timezone.utc
-        )
+        base_time = dt.datetime(2025, 1, 8, 10, 0, 0, tzinfo=dt.timezone.utc)
 
         self.request_event_dao.get_most_requested_route = MagicMock(
             return_value='route-a'
@@ -179,7 +168,7 @@ class RequestEventServiceTest(unittest.TestCase):
             return_value=[
                 RequestChartDataPoint(bucket=base_time, total_requests=5),
                 RequestChartDataPoint(
-                    bucket=base_time + datetime.timedelta(hours=1), total_requests=10
+                    bucket=base_time + dt.timedelta(hours=1), total_requests=10
                 ),
             ]
         )
@@ -188,7 +177,7 @@ class RequestEventServiceTest(unittest.TestCase):
             self.TEST_PROJECT_UUID,
             self.gateway_config,
             base_time,
-            base_time + datetime.timedelta(hours=2),
+            base_time + dt.timedelta(hours=2),
         )
 
         assert res is not None
@@ -197,9 +186,7 @@ class RequestEventServiceTest(unittest.TestCase):
         assert res.increment_percentage == -100.0
 
     def test_get_most_requested_route_none(self):
-        base_time = datetime.datetime(
-            2025, 1, 8, 10, 0, 0, tzinfo=datetime.timezone.utc
-        )
+        base_time = dt.datetime(2025, 1, 8, 10, 0, 0, tzinfo=dt.timezone.utc)
 
         self.request_event_dao.get_most_requested_route = MagicMock(return_value=None)
 
@@ -207,15 +194,13 @@ class RequestEventServiceTest(unittest.TestCase):
             self.TEST_PROJECT_UUID,
             self.gateway_config,
             base_time,
-            base_time + datetime.timedelta(hours=2),
+            base_time + dt.timedelta(hours=2),
         )
 
         assert res is None
 
     def test_get_most_requested_error_route_none(self):
-        base_time = datetime.datetime(
-            2025, 1, 8, 10, 0, 0, tzinfo=datetime.timezone.utc
-        )
+        base_time = dt.datetime(2025, 1, 8, 10, 0, 0, tzinfo=dt.timezone.utc)
 
         self.request_event_dao.get_most_route_with_error = MagicMock(return_value=None)
 
@@ -223,15 +208,13 @@ class RequestEventServiceTest(unittest.TestCase):
             self.TEST_PROJECT_UUID,
             self.gateway_config,
             base_time,
-            base_time + datetime.timedelta(hours=2),
+            base_time + dt.timedelta(hours=2),
         )
 
         assert res is None
 
     def test_get_most_requested_error_route(self):
-        base_time = datetime.datetime(
-            2025, 1, 8, 10, 0, 0, tzinfo=datetime.timezone.utc
-        )
+        base_time = dt.datetime(2025, 1, 8, 10, 0, 0, tzinfo=dt.timezone.utc)
 
         self.request_event_dao.get_most_route_with_error = MagicMock(
             return_value=ErrorRoute(route_name='route-a', error_perc=0.6)
@@ -240,13 +223,13 @@ class RequestEventServiceTest(unittest.TestCase):
             return_value=[
                 ErrorRequestChartDataPoint(bucket=base_time, total_requests=3),
                 ErrorRequestChartDataPoint(
-                    bucket=base_time + datetime.timedelta(hours=1), total_requests=2
+                    bucket=base_time + dt.timedelta(hours=1), total_requests=2
                 ),
             ]
         )
 
         _from = base_time
-        _to = base_time + datetime.timedelta(hours=2)
+        _to = base_time + dt.timedelta(hours=2)
 
         res = self.request_event_service.get_most_requested_error_route(
             self.TEST_PROJECT_UUID, self.gateway_config, _from, _to
@@ -260,9 +243,7 @@ class RequestEventServiceTest(unittest.TestCase):
         assert res.increment_percentage == -100.0
 
     def test_get_most_requested_error_route_empty_chart(self):
-        base_time = datetime.datetime(
-            2025, 1, 8, 10, 0, 0, tzinfo=datetime.timezone.utc
-        )
+        base_time = dt.datetime(2025, 1, 8, 10, 0, 0, tzinfo=dt.timezone.utc)
 
         self.request_event_dao.get_most_route_with_error = MagicMock(
             return_value=ErrorRoute(route_name='route-a', error_perc=0.1)
@@ -273,7 +254,7 @@ class RequestEventServiceTest(unittest.TestCase):
             self.TEST_PROJECT_UUID,
             self.gateway_config,
             base_time,
-            base_time + datetime.timedelta(hours=2),
+            base_time + dt.timedelta(hours=2),
         )
 
         assert res is not None

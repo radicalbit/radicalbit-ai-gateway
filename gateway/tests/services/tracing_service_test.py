@@ -1,4 +1,4 @@
-import datetime
+import datetime as dt
 import unittest
 from unittest.mock import MagicMock
 from uuid import UUID
@@ -60,9 +60,7 @@ class TracingServiceTest(unittest.TestCase):
         }
 
     def test_get_traces_chart_data(self):
-        base_time = datetime.datetime(
-            2025, 1, 8, 10, 0, 0, tzinfo=datetime.timezone.utc
-        )
+        base_time = dt.datetime(2025, 1, 8, 10, 0, 0, tzinfo=dt.timezone.utc)
         self.otel_traces_dao.get_traces_chart_data = MagicMock(
             return_value=[
                 TracesChartDataPoint(
@@ -75,7 +73,7 @@ class TracingServiceTest(unittest.TestCase):
         )
 
         _from = base_time
-        _to = base_time + datetime.timedelta(hours=1)
+        _to = base_time + dt.timedelta(hours=1)
 
         res = self.tracing_service.get_traces_chart_data(
             project_uuid=PROJECT_UUID,
@@ -95,16 +93,14 @@ class TracingServiceTest(unittest.TestCase):
         assert series['error'][0] == 1.0
 
     def test_get_traces_chart_data_empty(self):
-        base_time = datetime.datetime(
-            2025, 1, 8, 10, 0, 0, tzinfo=datetime.timezone.utc
-        )
+        base_time = dt.datetime(2025, 1, 8, 10, 0, 0, tzinfo=dt.timezone.utc)
         self.otel_traces_dao.get_traces_chart_data = MagicMock(return_value=[])
 
         res = self.tracing_service.get_traces_chart_data(
             project_uuid=PROJECT_UUID,
             route_names=None,
             _from=base_time,
-            _to=base_time + datetime.timedelta(hours=2),
+            _to=base_time + dt.timedelta(hours=2),
             granularity='hours',
         )
 
@@ -113,9 +109,7 @@ class TracingServiceTest(unittest.TestCase):
         )
 
     def test_get_traces_chart_data_merges_error_statuses(self):
-        base_time = datetime.datetime(
-            2025, 1, 8, 10, 0, 0, tzinfo=datetime.timezone.utc
-        )
+        base_time = dt.datetime(2025, 1, 8, 10, 0, 0, tzinfo=dt.timezone.utc)
         self.otel_traces_dao.get_traces_chart_data = MagicMock(
             return_value=[
                 TracesChartDataPoint(
@@ -131,7 +125,7 @@ class TracingServiceTest(unittest.TestCase):
         )
 
         _from = base_time
-        _to = base_time + datetime.timedelta(hours=0)
+        _to = base_time + dt.timedelta(hours=0)
 
         res = self.tracing_service.get_traces_chart_data(
             project_uuid=PROJECT_UUID,
@@ -148,9 +142,7 @@ class TracingServiceTest(unittest.TestCase):
         assert series['error'][0] == 2.0
 
     def test_get_latencies(self):
-        base_time = datetime.datetime(
-            2025, 1, 8, 10, 0, 0, tzinfo=datetime.timezone.utc
-        )
+        base_time = dt.datetime(2025, 1, 8, 10, 0, 0, tzinfo=dt.timezone.utc)
         self.otel_traces_dao.get_latencies = MagicMock(
             return_value=TraceLatencies(p50=100.0, p90=200.0, p95=250.0, p99=400.0)
         )
@@ -159,7 +151,7 @@ class TracingServiceTest(unittest.TestCase):
             project_uuid=PROJECT_UUID,
             route_names=['route-a'],
             _from=base_time,
-            _to=base_time + datetime.timedelta(hours=1),
+            _to=base_time + dt.timedelta(hours=1),
         )
 
         assert isinstance(res, LatenciesDTO)
@@ -169,9 +161,7 @@ class TracingServiceTest(unittest.TestCase):
         assert res.p99 == 400.0
 
     def test_get_span_latencies(self):
-        base_time = datetime.datetime(
-            2025, 1, 8, 10, 0, 0, tzinfo=datetime.timezone.utc
-        )
+        base_time = dt.datetime(2025, 1, 8, 10, 0, 0, tzinfo=dt.timezone.utc)
         self.otel_traces_dao.get_span_latencies = MagicMock(
             return_value=[
                 SpanLatencies(
@@ -191,7 +181,7 @@ class TracingServiceTest(unittest.TestCase):
             project_uuid=PROJECT_UUID,
             route_names=['route-a'],
             _from=base_time,
-            _to=base_time + datetime.timedelta(hours=1),
+            _to=base_time + dt.timedelta(hours=1),
         )
 
         assert isinstance(res, SpanLatenciesDTO)
@@ -205,9 +195,7 @@ class TracingServiceTest(unittest.TestCase):
     # --- get_grouped_span_latencies tests ---
 
     def test_get_grouped_span_latencies(self):
-        base_time = datetime.datetime(
-            2025, 1, 8, 10, 0, 0, tzinfo=datetime.timezone.utc
-        )
+        base_time = dt.datetime(2025, 1, 8, 10, 0, 0, tzinfo=dt.timezone.utc)
         self.otel_traces_dao.get_category_latencies = MagicMock(
             return_value=[
                 CategoryLatencies(
@@ -255,7 +243,7 @@ class TracingServiceTest(unittest.TestCase):
             project_uuid=PROJECT_UUID,
             route_names=['route-a'],
             _from=base_time,
-            _to=base_time + datetime.timedelta(hours=1),
+            _to=base_time + dt.timedelta(hours=1),
         )
 
         assert isinstance(res, GroupedSpanLatenciesDTO)
@@ -316,9 +304,7 @@ class TracingServiceTest(unittest.TestCase):
 
     def test_get_trace_by_id_single_span(self):
         """Test retrieving a trace with a single span."""
-        base_time = datetime.datetime(
-            2025, 1, 8, 10, 0, 0, tzinfo=datetime.timezone.utc
-        )
+        base_time = dt.datetime(2025, 1, 8, 10, 0, 0, tzinfo=dt.timezone.utc)
         request_uuid = '12345678-1234-5678-1234-567812345678'
         self.otel_traces_dao.get_spans_by_trace_id = MagicMock(
             return_value=[
@@ -353,9 +339,7 @@ class TracingServiceTest(unittest.TestCase):
 
     def test_get_trace_by_id_includes_tags(self):
         """TraceDTO.tags comes straight from the root span's parsed tags."""
-        base_time = datetime.datetime(
-            2025, 1, 8, 10, 0, 0, tzinfo=datetime.timezone.utc
-        )
+        base_time = dt.datetime(2025, 1, 8, 10, 0, 0, tzinfo=dt.timezone.utc)
         self.otel_traces_dao.get_spans_by_trace_id = MagicMock(
             return_value=[
                 SpanRecord(
@@ -386,9 +370,7 @@ class TracingServiceTest(unittest.TestCase):
 
     def test_get_trace_by_id_includes_request_type(self):
         """TraceDTO.request_type comes from the root span name."""
-        base_time = datetime.datetime(
-            2025, 1, 8, 10, 0, 0, tzinfo=datetime.timezone.utc
-        )
+        base_time = dt.datetime(2025, 1, 8, 10, 0, 0, tzinfo=dt.timezone.utc)
         self.otel_traces_dao.get_spans_by_trace_id = MagicMock(
             return_value=[
                 SpanRecord(
@@ -418,9 +400,7 @@ class TracingServiceTest(unittest.TestCase):
 
     def test_get_trace_by_id_single_span_no_request_uuid(self):
         """Test retrieving a trace without request_uuid."""
-        base_time = datetime.datetime(
-            2025, 1, 8, 10, 0, 0, tzinfo=datetime.timezone.utc
-        )
+        base_time = dt.datetime(2025, 1, 8, 10, 0, 0, tzinfo=dt.timezone.utc)
         self.otel_traces_dao.get_spans_by_trace_id = MagicMock(
             return_value=[
                 SpanRecord(
@@ -465,9 +445,7 @@ class TracingServiceTest(unittest.TestCase):
 
     def test_get_trace_by_id_with_hierarchy(self):
         """Test building hierarchical tree from multiple spans."""
-        base_time = datetime.datetime(
-            2025, 1, 8, 10, 0, 0, tzinfo=datetime.timezone.utc
-        )
+        base_time = dt.datetime(2025, 1, 8, 10, 0, 0, tzinfo=dt.timezone.utc)
         request_uuid = '12345678-1234-5678-1234-567812345678'
         self.otel_traces_dao.get_spans_by_trace_id = MagicMock(
             return_value=[
@@ -488,7 +466,7 @@ class TracingServiceTest(unittest.TestCase):
                     group_name='test-group',
                 ),
                 SpanRecord(
-                    timestamp=base_time + datetime.timedelta(milliseconds=10),
+                    timestamp=base_time + dt.timedelta(milliseconds=10),
                     trace_id='trace-hierarchy',
                     request_uuid=request_uuid,
                     span_id='span-child',
@@ -504,7 +482,7 @@ class TracingServiceTest(unittest.TestCase):
                     group_name='test-group',
                 ),
                 SpanRecord(
-                    timestamp=base_time + datetime.timedelta(milliseconds=20),
+                    timestamp=base_time + dt.timedelta(milliseconds=20),
                     trace_id='trace-hierarchy',
                     request_uuid=request_uuid,
                     span_id='span-grandchild',
@@ -541,9 +519,7 @@ class TracingServiceTest(unittest.TestCase):
         assert grandchild.children == []
 
     def test_tree_nodes_carry_their_category_and_kind(self):
-        base_time = datetime.datetime(
-            2025, 1, 8, 10, 0, 0, tzinfo=datetime.timezone.utc
-        )
+        base_time = dt.datetime(2025, 1, 8, 10, 0, 0, tzinfo=dt.timezone.utc)
 
         def span(span_id, parent, category='', kind=''):
             return SpanRecord(
@@ -609,9 +585,7 @@ class TracingServiceTest(unittest.TestCase):
         fallback_triggered: bool = False,
     ) -> SpanRecord:
         return SpanRecord(
-            timestamp=datetime.datetime(
-                2025, 1, 8, 10, 0, 0, tzinfo=datetime.timezone.utc
-            ),
+            timestamp=dt.datetime(2025, 1, 8, 10, 0, 0, tzinfo=dt.timezone.utc),
             trace_id='trace-123',
             request_uuid='12345678-1234-5678-1234-567812345678',
             span_id=span_id,
@@ -836,13 +810,11 @@ class TracingServiceTest(unittest.TestCase):
         ] == ('warning')
 
     def test_tree_nodes_carry_their_start_offset_from_the_root(self):
-        base_time = datetime.datetime(
-            2025, 1, 8, 10, 0, 0, tzinfo=datetime.timezone.utc
-        )
+        base_time = dt.datetime(2025, 1, 8, 10, 0, 0, tzinfo=dt.timezone.utc)
 
         def span(span_id, parent, offset_ms, duration_ms):
             return SpanRecord(
-                timestamp=base_time + datetime.timedelta(milliseconds=offset_ms),
+                timestamp=base_time + dt.timedelta(milliseconds=offset_ms),
                 trace_id='trace-123',
                 request_uuid='12345678-1234-5678-1234-567812345678',
                 span_id=span_id,
@@ -885,9 +857,7 @@ class TracingServiceTest(unittest.TestCase):
 
     def test_get_trace_by_id_with_errors(self):
         """Test error count is calculated correctly — root span error gives ERROR."""
-        base_time = datetime.datetime(
-            2025, 1, 8, 10, 0, 0, tzinfo=datetime.timezone.utc
-        )
+        base_time = dt.datetime(2025, 1, 8, 10, 0, 0, tzinfo=dt.timezone.utc)
         request_uuid = '12345678-1234-5678-1234-567812345678'
         self.otel_traces_dao.get_spans_by_trace_id = MagicMock(
             return_value=[
@@ -908,7 +878,7 @@ class TracingServiceTest(unittest.TestCase):
                     group_name='test-group',
                 ),
                 SpanRecord(
-                    timestamp=base_time + datetime.timedelta(milliseconds=10),
+                    timestamp=base_time + dt.timedelta(milliseconds=10),
                     trace_id='trace-error',
                     request_uuid=request_uuid,
                     span_id='span-2',
@@ -924,7 +894,7 @@ class TracingServiceTest(unittest.TestCase):
                     group_name='test-group',
                 ),
                 SpanRecord(
-                    timestamp=base_time + datetime.timedelta(milliseconds=20),
+                    timestamp=base_time + dt.timedelta(milliseconds=20),
                     trace_id='trace-error',
                     request_uuid=request_uuid,
                     span_id='span-3',
@@ -951,9 +921,7 @@ class TracingServiceTest(unittest.TestCase):
 
     def test_get_trace_by_id_duration_calculation(self):
         """Test that duration is calculated from max span duration."""
-        base_time = datetime.datetime(
-            2025, 1, 8, 10, 0, 0, tzinfo=datetime.timezone.utc
-        )
+        base_time = dt.datetime(2025, 1, 8, 10, 0, 0, tzinfo=dt.timezone.utc)
         request_uuid = '12345678-1234-5678-1234-567812345678'
         self.otel_traces_dao.get_spans_by_trace_id = MagicMock(
             return_value=[
@@ -974,7 +942,7 @@ class TracingServiceTest(unittest.TestCase):
                     group_name='test-group',
                 ),
                 SpanRecord(
-                    timestamp=base_time + datetime.timedelta(milliseconds=10),
+                    timestamp=base_time + dt.timedelta(milliseconds=10),
                     trace_id='trace-duration',
                     request_uuid=request_uuid,
                     span_id='span-2',
@@ -1002,9 +970,7 @@ class TracingServiceTest(unittest.TestCase):
 
     def test_get_trace_by_id_warning_child_error(self):
         """Test WARNING: root span OK but child span has error."""
-        base_time = datetime.datetime(
-            2025, 1, 8, 10, 0, 0, tzinfo=datetime.timezone.utc
-        )
+        base_time = dt.datetime(2025, 1, 8, 10, 0, 0, tzinfo=dt.timezone.utc)
         request_uuid = '12345678-1234-5678-1234-567812345678'
         self.otel_traces_dao.get_spans_by_trace_id = MagicMock(
             return_value=[
@@ -1025,7 +991,7 @@ class TracingServiceTest(unittest.TestCase):
                     group_name='test-group',
                 ),
                 SpanRecord(
-                    timestamp=base_time + datetime.timedelta(milliseconds=10),
+                    timestamp=base_time + dt.timedelta(milliseconds=10),
                     trace_id='trace-warn',
                     request_uuid=request_uuid,
                     span_id='span-child',
@@ -1054,8 +1020,8 @@ class TracingServiceTest(unittest.TestCase):
 
     def test_get_traces_bounds_the_span_lookups_to_the_page_dates(self):
         # Two traces whose root spans are three days apart.
-        first = datetime.datetime(2025, 1, 5, 23, 0, tzinfo=datetime.timezone.utc)
-        last = datetime.datetime(2025, 1, 8, 10, 0, tzinfo=datetime.timezone.utc)
+        first = dt.datetime(2025, 1, 5, 23, 0, tzinfo=dt.timezone.utc)
+        last = dt.datetime(2025, 1, 8, 10, 0, tzinfo=dt.timezone.utc)
         rows = []
         for trace_id, created_at in [('trace-old', first), ('trace-new', last)]:
             row = MagicMock()
@@ -1093,7 +1059,7 @@ class TracingServiceTest(unittest.TestCase):
         )
 
         # One day of margin each side, for a trace that crossed midnight.
-        window = (datetime.date(2025, 1, 4), datetime.date(2025, 1, 9))
+        window = (dt.date(2025, 1, 4), dt.date(2025, 1, 9))
         trace_ids = ['trace-old', 'trace-new']
         self.otel_traces_dao.get_spans_stats_by_trace_ids.assert_called_once_with(
             trace_ids, *window
@@ -1103,9 +1069,7 @@ class TracingServiceTest(unittest.TestCase):
         )
 
     def test_get_traces(self):
-        base_time = datetime.datetime(
-            2025, 1, 8, 10, 0, 0, tzinfo=datetime.timezone.utc
-        )
+        base_time = dt.datetime(2025, 1, 8, 10, 0, 0, tzinfo=dt.timezone.utc)
         trace_id = 'trace-123'
         request_uuid = '12345678-1234-5678-1234-567812345678'
 
@@ -1135,7 +1099,7 @@ class TracingServiceTest(unittest.TestCase):
                     error_count=1,
                     input_tokens=200,
                     output_tokens=300,
-                    last_span=base_time + datetime.timedelta(seconds=1),
+                    last_span=base_time + dt.timedelta(seconds=1),
                 )
             }
         )
@@ -1149,7 +1113,7 @@ class TracingServiceTest(unittest.TestCase):
             group_uuids=None,
             key_uuids=None,
             _from=base_time,
-            _to=base_time + datetime.timedelta(hours=1),
+            _to=base_time + dt.timedelta(hours=1),
             params=Params(page=1, size=50),
         )
 
@@ -1176,14 +1140,12 @@ class TracingServiceTest(unittest.TestCase):
         assert item.total_tokens == 500
         assert item.created_at == int(base_time.timestamp())
         assert item.latest_span_ts == int(
-            (base_time + datetime.timedelta(seconds=1)).timestamp()
+            (base_time + dt.timedelta(seconds=1)).timestamp()
         )
 
     def test_get_traces_includes_tags(self):
         """TraceDTO.tags comes straight from the paginated row, no extra DAO call."""
-        base_time = datetime.datetime(
-            2025, 1, 8, 10, 0, 0, tzinfo=datetime.timezone.utc
-        )
+        base_time = dt.datetime(2025, 1, 8, 10, 0, 0, tzinfo=dt.timezone.utc)
         trace_id = 'trace-tags'
 
         mock_row = MagicMock()
@@ -1216,7 +1178,7 @@ class TracingServiceTest(unittest.TestCase):
             group_uuids=None,
             key_uuids=None,
             _from=base_time,
-            _to=base_time + datetime.timedelta(hours=1),
+            _to=base_time + dt.timedelta(hours=1),
             params=Params(page=1, size=50),
             tags=['env=prod'],
         )
@@ -1227,9 +1189,7 @@ class TracingServiceTest(unittest.TestCase):
 
     def test_get_traces_includes_request_type(self):
         """TraceDTO.request_type comes from the row; unknown or empty is None."""
-        base_time = datetime.datetime(
-            2025, 1, 8, 10, 0, 0, tzinfo=datetime.timezone.utc
-        )
+        base_time = dt.datetime(2025, 1, 8, 10, 0, 0, tzinfo=dt.timezone.utc)
 
         def make_row(trace_id: str, request_type: str) -> MagicMock:
             row = MagicMock()
@@ -1277,9 +1237,7 @@ class TracingServiceTest(unittest.TestCase):
 
     def test_get_traces_no_span_data(self):
         """Test that get_traces uses defaults when no span stats available."""
-        base_time = datetime.datetime(
-            2025, 1, 8, 10, 0, 0, tzinfo=datetime.timezone.utc
-        )
+        base_time = dt.datetime(2025, 1, 8, 10, 0, 0, tzinfo=dt.timezone.utc)
         trace_id = 'trace-456'
 
         # Create a mock row object that has attributes
@@ -1327,9 +1285,7 @@ class TracingServiceTest(unittest.TestCase):
 
     def test_get_traces_trace_status(self):
         """SUCCESS: no errors; WARNING: root OK + child errors; ERROR: root error."""
-        base_time = datetime.datetime(
-            2025, 1, 8, 10, 0, 0, tzinfo=datetime.timezone.utc
-        )
+        base_time = dt.datetime(2025, 1, 8, 10, 0, 0, tzinfo=dt.timezone.utc)
         trace_id = 'trace-1'
         mock_row = MagicMock()
         mock_row.trace_id = trace_id
@@ -1385,9 +1341,7 @@ class TracingServiceTest(unittest.TestCase):
 
     def test_get_traces_with_combined_filters(self):
         """Test that all filters are passed correctly to DAO when combined."""
-        base_time = datetime.datetime(
-            2025, 1, 8, 10, 0, 0, tzinfo=datetime.timezone.utc
-        )
+        base_time = dt.datetime(2025, 1, 8, 10, 0, 0, tzinfo=dt.timezone.utc)
 
         mock_page = MagicMock(spec=Page)
         mock_page.items = []
@@ -1406,7 +1360,7 @@ class TracingServiceTest(unittest.TestCase):
                 UUID('660e8400-e29b-41d4-a716-446655440002'),
             ],
             _from=base_time,
-            _to=base_time + datetime.timedelta(hours=1),
+            _to=base_time + dt.timedelta(hours=1),
             params=Params(page=2, size=25),
         )
 
@@ -1438,9 +1392,7 @@ class TracingServiceTest(unittest.TestCase):
 
     def test_get_span_by_id_success(self):
         """Test retrieving a span with all fields."""
-        base_time = datetime.datetime(
-            2025, 1, 8, 10, 0, 0, tzinfo=datetime.timezone.utc
-        )
+        base_time = dt.datetime(2025, 1, 8, 10, 0, 0, tzinfo=dt.timezone.utc)
         self.otel_traces_dao.get_span_by_trace_and_span_id = MagicMock(
             return_value=SpanRecord(
                 timestamp=base_time,
@@ -1498,9 +1450,7 @@ class TracingServiceTest(unittest.TestCase):
 
     def test_get_span_by_id_with_error_events(self):
         """Test that error events are converted from events list."""
-        base_time = datetime.datetime(
-            2025, 1, 8, 10, 0, 0, tzinfo=datetime.timezone.utc
-        )
+        base_time = dt.datetime(2025, 1, 8, 10, 0, 0, tzinfo=dt.timezone.utc)
         self.otel_traces_dao.get_span_by_trace_and_span_id = MagicMock(
             return_value=SpanRecord(
                 timestamp=base_time,
@@ -1553,9 +1503,7 @@ class TracingServiceTest(unittest.TestCase):
 
     def test_get_span_by_id_without_events(self):
         """Test that empty error_events list is returned when no events."""
-        base_time = datetime.datetime(
-            2025, 1, 8, 10, 0, 0, tzinfo=datetime.timezone.utc
-        )
+        base_time = dt.datetime(2025, 1, 8, 10, 0, 0, tzinfo=dt.timezone.utc)
         self.otel_traces_dao.get_span_by_trace_and_span_id = MagicMock(
             return_value=SpanRecord(
                 timestamp=base_time,
@@ -1593,9 +1541,7 @@ class TracingServiceTest(unittest.TestCase):
 
     def test_get_span_by_id_with_empty_uuids(self):
         """Test that empty UUIDs are handled correctly and converted to None."""
-        base_time = datetime.datetime(
-            2025, 1, 8, 10, 0, 0, tzinfo=datetime.timezone.utc
-        )
+        base_time = dt.datetime(2025, 1, 8, 10, 0, 0, tzinfo=dt.timezone.utc)
         self.otel_traces_dao.get_span_by_trace_and_span_id = MagicMock(
             return_value=SpanRecord(
                 timestamp=base_time,

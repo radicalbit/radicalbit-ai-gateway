@@ -10,7 +10,7 @@ list of raw blocks.
 
 from collections.abc import AsyncIterator, Mapping, Sequence
 import copy
-import datetime
+import datetime as dt
 from functools import cache, lru_cache
 import hashlib
 import inspect
@@ -1384,7 +1384,7 @@ def _format_output(data: Any) -> AIMessage:
         k: v for k, v in data_dict.items() if k not in ('content', 'role', 'type')
     }
     if isinstance(container := llm_output.get('container'), dict) and isinstance(
-        expires_at := container.get('expires_at'), datetime.datetime
+        expires_at := container.get('expires_at'), dt.datetime
     ):
         container['expires_at'] = expires_at.isoformat()
     if 'model' in llm_output and 'model_name' not in llm_output:

@@ -480,10 +480,7 @@ def _tokens(
 
 def _err(status: int) -> str:
     """Return how an OpenAI SDK error reads for ``_openai_error(status)``."""
-    return (
-        f"Error code: {status} - {{'error': {{'message': 'upstream says no', "
-        f"'type': 'invalid_request_error', 'param': None, 'code': 'code_{status}'}}}}"
-    )
+    return f'Error code: {status} - upstream says no'
 
 
 CHAT_BODY = {
@@ -930,7 +927,7 @@ GOLDEN = [
             'upstream': ['https://api.openai.com/v1/chat/completions', 'https://api.openai.com/v1/chat/completions', 'https://api.openai.com/v1/chat/completions'],
             'events': [_fallback('j1', 'j2', judge=True), _tokens('INPUT', 'j2', 'chat-model', 30.0, '0.00003', judge=True), _tokens('OUTPUT', 'j2', 'chat-model', 4.0, '0.000008', judge=True), _invocation('a', 'chat-model'), _tokens('INPUT', 'a', 'chat-model', 11.0, '0.000011'), _tokens('OUTPUT', 'a', 'chat-model', 5.0, '0.00001')],
             'metrics': [('fallbacks_triggered_counter', 1, {'route_name': 'judged', 'target': 'j1', 'fallback': 'j2'}), ('invocations_latency_histogram', None, {'route_name': 'judged', 'model_name': 'j2'}), ('total_tokens_counter_input', 30, {'route_name': 'judged', 'model_name': 'j2'}), ('total_tokens_counter_output', 4, {'route_name': 'judged', 'model_name': 'j2'}), ('model_invocations_counter', 1, {'route_name': 'judged', 'model_name': 'a'}), ('invocations_latency_histogram', None, {'route_name': 'judged', 'model_name': 'a'}), ('total_tokens_counter_input', 11, {'route_name': 'judged', 'model_name': 'a'}), ('total_tokens_counter_output', 5, {'route_name': 'judged', 'model_name': 'a'})],
-            'logs': [('WARNING', "Primary model failed with unexpected error: 1 validation error for JudgeResult\ntriggered\n  Field required [type=missing, input_value={'nonsense': True}, input_type=dict]\n    For further information visit https://errors.pydantic.dev/2.13/v/missing"), ('INFO', 'Attempting fallback model j2 after primary model j1 failed')],
+            'logs': [('WARNING', "Primary model failed with unexpected error: 1 validation error for JudgeResult\ntriggered\n  Field required [type=missing, input_value={'nonsense': True}, input_type=dict]\n    For further information visit https://errors.pydantic.dev/2.14/v/missing"), ('INFO', 'Attempting fallback model j2 after primary model j1 failed')],
         },
         id='judge_bad_answer',
     ),
@@ -959,7 +956,7 @@ GOLDEN = [
             'upstream': ['https://api.openai.com/v1/chat/completions', 'https://api.openai.com/v1/chat/completions'],
             'events': [_invocation('j2', 'chat-model', judge=True), _fallback('j1', 'j2', judge=True)],
             'metrics': [('model_invocations_counter', 1, {'route_name': 'judged', 'model_name': 'j2'}), ('invocations_latency_histogram', None, {'route_name': 'judged', 'model_name': 'j2'}), ('fallbacks_triggered_counter', 1, {'route_name': 'judged', 'target': 'j1', 'fallback': 'j2'})],
-            'logs': [('WARNING', f'Primary model failed with unexpected error: {_err(500)}'), ('INFO', 'Attempting fallback model j2 after primary model j1 failed'), ('ERROR', f"Both primary and fallback models failed: {_err(500)} | 1 validation error for JudgeResult\ntriggered\n  Field required [type=missing, input_value={{'nonsense': True}}, input_type=dict]\n    For further information visit https://errors.pydantic.dev/2.13/v/missing"), ('ERROR', f"Judge communication error: Both primary and fallback models failed: primary={_err(500)}, fallback=1 validation error for JudgeResult\ntriggered\n  Field required [type=missing, input_value={{'nonsense': True}}, input_type=dict]\n    For further information visit https://errors.pydantic.dev/2.13/v/missing"), ('ERROR', f"Error applying guardrail judge: Both primary and fallback models failed: primary={_err(500)}, fallback=1 validation error for JudgeResult\ntriggered\n  Field required [type=missing, input_value={{'nonsense': True}}, input_type=dict]\n    For further information visit https://errors.pydantic.dev/2.13/v/missing"), ('ERROR', f"Both primary and fallback models failed: primary={_err(500)}, fallback=1 validation error for JudgeResult\ntriggered\n  Field required [type=missing, input_value={{'nonsense': True}}, input_type=dict]\n    For further information visit https://errors.pydantic.dev/2.13/v/missing")],
+            'logs': [('WARNING', f'Primary model failed with unexpected error: {_err(500)}'), ('INFO', 'Attempting fallback model j2 after primary model j1 failed'), ('ERROR', f"Both primary and fallback models failed: {_err(500)} | 1 validation error for JudgeResult\ntriggered\n  Field required [type=missing, input_value={{'nonsense': True}}, input_type=dict]\n    For further information visit https://errors.pydantic.dev/2.14/v/missing"), ('ERROR', f"Judge communication error: Both primary and fallback models failed: primary={_err(500)}, fallback=1 validation error for JudgeResult\ntriggered\n  Field required [type=missing, input_value={{'nonsense': True}}, input_type=dict]\n    For further information visit https://errors.pydantic.dev/2.14/v/missing"), ('ERROR', f"Error applying guardrail judge: Both primary and fallback models failed: primary={_err(500)}, fallback=1 validation error for JudgeResult\ntriggered\n  Field required [type=missing, input_value={{'nonsense': True}}, input_type=dict]\n    For further information visit https://errors.pydantic.dev/2.14/v/missing"), ('ERROR', f"Both primary and fallback models failed: primary={_err(500)}, fallback=1 validation error for JudgeResult\ntriggered\n  Field required [type=missing, input_value={{'nonsense': True}}, input_type=dict]\n    For further information visit https://errors.pydantic.dev/2.14/v/missing")],
         },
         id='judge_exhausted_bad_answer',
     ),

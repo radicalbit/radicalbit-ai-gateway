@@ -4,7 +4,7 @@ Every kind of metric is read once for all the routes of the project, so the
 number of queries does not grow with the number of routes.
 """
 
-import datetime
+import datetime as dt
 from unittest.mock import MagicMock
 import uuid
 
@@ -24,7 +24,7 @@ from radicalbit_ai_gateway.models.request_event_type import RequestStatus
 from radicalbit_ai_gateway.services.event_service import EventService
 
 PROJECT = TEST_PROJECT_UUID
-T0 = datetime.datetime(2026, 3, 10, 12, 0, 0, tzinfo=datetime.timezone.utc)
+T0 = dt.datetime(2026, 3, 10, 12, 0, 0, tzinfo=dt.timezone.utc)
 
 
 def _config(route_names: list[str]) -> GatewayConfig:
@@ -154,7 +154,7 @@ class TestRouteMetricsIntegration(DatabaseIntegrationClickhouse):
         assert queries_for_two == len(counted_db.method_calls) == 6
 
     def test_the_project_last_event_is_the_latest_of_its_type(self):
-        later = T0 + datetime.timedelta(hours=1)
+        later = T0 + dt.timedelta(hours=1)
         self.insert(
             [
                 _event('route-a', 'GUARDRAIL', name='pii', behavior='BLOCK'),
@@ -177,7 +177,7 @@ class TestRouteMetricsIntegration(DatabaseIntegrationClickhouse):
         assert last_events['FALLBACK'].fallback == 'backup'
 
     def test_the_last_event_of_a_route_ignores_the_other_routes(self):
-        later = T0 + datetime.timedelta(hours=1)
+        later = T0 + dt.timedelta(hours=1)
         self.insert(
             [
                 _event('route-a', 'GUARDRAIL', name='pii'),

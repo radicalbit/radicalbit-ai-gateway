@@ -1,4 +1,4 @@
-import datetime
+import datetime as dt
 import uuid
 
 from sqlalchemy import update
@@ -14,7 +14,7 @@ from radicalbit_ai_gateway.db.tables.project_table import Project
 from radicalbit_ai_gateway.models.config_slot import Slot
 from radicalbit_ai_gateway.models.config_status import ConfigStatus
 
-_UTC = getattr(datetime, 'UTC', datetime.timezone.utc)
+_UTC = getattr(dt, 'UTC', dt.timezone.utc)
 
 
 async def _stored_project(session: AsyncSession, project_uuid: uuid.UUID) -> Project:
@@ -42,7 +42,7 @@ class ProjectConfigDAOTest(AsyncDatabaseIntegration):
         return await self.insert(project)
 
     async def _seed_two(self, project_uuid):
-        now = datetime.datetime.now(tz=_UTC)
+        now = dt.datetime.now(tz=_UTC)
         a = await self.insert(
             ProjectConfig(
                 project_uuid=project_uuid,
@@ -189,7 +189,7 @@ class ProjectConfigDAOTest(AsyncDatabaseIntegration):
         p = await self._project()
         a_id, _ = await self._seed_two(p.uuid)
         await self.dao.serve(a_id)
-        now = datetime.datetime.now(tz=_UTC)
+        now = dt.datetime.now(tz=_UTC)
         async with self.db.begin_session() as session:
             await session.execute(
                 update(Project).where(Project.uuid == p.uuid).values(deleted_at=now)
