@@ -145,7 +145,10 @@ def _build_client(
     client_args = params.get('client_args')
     http_options = types.HttpOptions(
         base_url=_base_url(params.get('base_url', params.get('client_options'))),
-        api_version=params.get('api_version'),
+        # SDK 3.x defaults to v1: keep v1beta. On v1, Gemini 2.5 models reject
+        # system instructions, tools, thinking and JSON mode, and context
+        # caching and *-latest aliases do not exist.
+        api_version=params.get('api_version') or 'v1beta',
         headers=params.get('additional_headers'),
         client_args=client_args,
         async_client_args=client_args,

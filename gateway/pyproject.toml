@@ -11,8 +11,8 @@ dependencies = [
     "it-core-news-md",
     "rich>=14.1.0",
     "openai>=2.15.0",
-    "anthropic>=1.4.0",
-    "google-genai>=2.34.0",
+    "anthropic>=2.14.0",
+    "google-genai>=3.6.1",
     "httpx>=0.28.1",
     "certifi>=2026.10.19",
     "filetype>=1.2.0",
@@ -114,6 +114,9 @@ filterwarnings = [
     "error::PendingDeprecationWarning",
     # Third-party code we cannot change.
     "ignore:The anyio.abc.BlockingPortal alias is deprecated:DeprecationWarning:starlette",
+    # The anthropic SDK warns, on its caller, on every call to a model nearing
+    # end-of-life; the models in the tests are test data.
+    "ignore:The model '.*' is deprecated and will reach end-of-life:DeprecationWarning",
 ]
 
 [tool.coverage.run]

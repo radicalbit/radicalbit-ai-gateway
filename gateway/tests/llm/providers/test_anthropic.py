@@ -141,7 +141,7 @@ async def test_base_url_and_betas():
     chat_model = model(base_url='http://proxy.local:9000', betas=['b-1'])
     _, requests = await invoke(chat_model, [canned.anthropic_message()])
     assert requests[0]['url'] == 'http://proxy.local:9000/v1/messages'
-    assert requests[0]['query'] == [('beta', 'true')]
+    assert requests[0]['query'] == []
     assert requests[0]['headers']['anthropic-beta'] == 'b-1'
 
 
