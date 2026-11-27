@@ -1,10 +1,12 @@
+import HtmlAnchor from '@Components/html-anchor';
 import Lucide from '@Components/lucide';
 import {
-  DUPLICATE_EDIT_LINK, DUPLICATE_LIMIT_ERROR, DUPLICATE_LIMIT_PREFIX, DUPLICATE_SUFFIX, WINDOW_TYPE_HELP,
+  DUPLICATE_EDIT_LINK, DUPLICATE_LIMIT_ERROR, DUPLICATE_LIMIT_PREFIX, DUPLICATE_SUFFIX,
 } from '@Components/limits/constants';
 import { getDuplicateLimit, getNewLimitsErrors } from '@Components/limits/helpers';
 import focusLimitRow from '@Components/limits/focus-limit-row';
 import LimitFields from '@Components/limits/limit-fields';
+import LimitNotes from '@Components/limits/limit-notes';
 import useModals from '@Hooks/use-modals';
 import { useGetKeyQuery } from '@State/keys/api';
 import { useFormbitContext } from '@radicalbit/formbit';
@@ -12,10 +14,6 @@ import { Button, FormField } from '@radicalbit/radicalbit-design-system';
 import { ArrowLeft, Plus, Trash2 } from 'lucide-react';
 import { useCallback, useMemo } from 'react';
 import { ScreenEnum, getInitialValues, newRow } from './schema';
-
-const FLUSH_BUTTON = '!min-w-0 !px-0';
-
-const INLINE_LINK = 'p-0 border-0 bg-transparent text-inherit underline cursor-pointer font-[inherit]';
 
 function AddScreen() {
   const { error, form, initialize, write } = useFormbitContext();
@@ -31,23 +29,24 @@ function AddScreen() {
   };
 
   const backendError = error('silent.backend');
-  const backendErrorField = backendError ? <FormField message={backendError} /> : false;
 
   return (
     <div className="flex flex-col gap-6">
       <div className="flex items-center justify-between">
-        <Button className={FLUSH_BUTTON} icon={<Lucide icon={ArrowLeft} />} onClick={handleOnBack} type="text">Limits</Button>
+        <Button className="!min-w-0 !px-0" icon={<Lucide icon={ArrowLeft} />} onClick={handleOnBack} type="text">Limits</Button>
 
         <Button icon={<Lucide icon={Plus} />} onClick={handleOnAddRow}>Add another limit</Button>
       </div>
 
-      <div className="flex flex-col gap-2">
-        <span className="text-xs opacity-70">{WINDOW_TYPE_HELP}</span>
+      <div className="flex flex-col gap-6">
+        <div className="flex flex-col gap-4">
+          <Rows />
 
-        <Rows />
-
-        {backendErrorField}
+          {backendError && <FormField message={backendError} />}
+        </div>
       </div>
+
+      <LimitNotes />
     </div>
   );
 }
@@ -104,24 +103,26 @@ function Row({
     onRemove(index);
   };
 
-  const rowLabel = `limit ${index + 1}`;
   const isEditableDuplicate = error === DUPLICATE_LIMIT_ERROR && !!duplicateLimit;
-  const message = isEditableDuplicate ? <DuplicateMessage limit={duplicateLimit} /> : error ?? formError(`silent.limits.${index}`);
-  const errorField = message ? <FormField message={message} /> : false;
+  const message = error ?? formError(`silent.limits.${index}`);
 
   return (
     <div className="flex flex-col gap-1">
-      <div className="flex gap-2 items-end">
+      <div className="flex gap-2 items-start">
         <div className="flex-1 min-w-0">
-          <LimitFields limit={row} onChange={handleOnChange} rowLabel={rowLabel} />
+          <LimitFields limit={row} onChange={handleOnChange} path={`limits[${index}]`} rowLabel={`limit ${index + 1}`} />
         </div>
 
-        <Button aria-label={`Remove limit ${index + 1}`} disabled={isOnlyRow} onClick={handleOnRemove} type="text">
-          <Lucide icon={Trash2} />
-        </Button>
+        <div className="flex h-8 items-center mt-4">
+          <Button aria-label={`Remove limit ${index + 1}`} disabled={isOnlyRow} onClick={handleOnRemove} type="text">
+            <Lucide icon={Trash2} />
+          </Button>
+        </div>
       </div>
 
-      {errorField}
+      {(isEditableDuplicate || message) && (
+        <FormField message={isEditableDuplicate ? <DuplicateMessage limit={duplicateLimit} /> : message} />
+      )}
     </div>
   );
 }
@@ -142,7 +143,7 @@ function DuplicateMessage({ limit }) {
     <span>
       {DUPLICATE_LIMIT_PREFIX}
 
-      <button className={INLINE_LINK} onClick={handleOnEdit} type="button">{DUPLICATE_EDIT_LINK}</button>
+      <HtmlAnchor onClick={handleOnEdit}>{DUPLICATE_EDIT_LINK}</HtmlAnchor>
 
       {DUPLICATE_SUFFIX}
     </span>

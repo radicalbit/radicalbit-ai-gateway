@@ -31,6 +31,7 @@ function CancelPublishRequest({ config, projectUuid }) {
     const { error: requestError } = await triggerCancel({
       projectUuid,
       configUuid,
+      silentError: true,
       successMessage: <SuccessMessage prefix="Publish request for" strong={projectName} suffix="cancelled" />,
     });
 

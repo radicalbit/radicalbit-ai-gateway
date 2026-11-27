@@ -31,8 +31,6 @@ function Keys() {
   );
 }
 
-const DISABLED_GROUP_TOOLTIP = 'This group is managed externally and cannot be modified';
-
 function LabelKey() {
   const { showModal } = useModals();
 
@@ -56,23 +54,17 @@ function LabelKey() {
     return false;
   }
 
-  const label = count === 1 ? `${count} Associated credential` : `${count} Associated credentials`;
-
-  const associateButton = isExternallyManaged
-    ? (
-      <Tooltip title={DISABLED_GROUP_TOOLTIP}>
-        <span>
-          <Button disabled icon={<Lucide icon={Plus} />}>Associate credentials</Button>
-        </span>
-      </Tooltip>
-    )
-    : <Button icon={<Lucide icon={Plus} />} onClick={handleOnClick}>Associate credentials</Button>;
-
   return (
     <div className="flex justify-between items-center">
-      <strong>{label}</strong>
+      <strong>{count === 1 ? `${count} Associated credential` : `${count} Associated credentials`}</strong>
 
-      {associateButton}
+      {isExternallyManaged ? (
+        <Tooltip title="This group is managed externally and cannot be modified">
+          <span>
+            <Button disabled icon={<Lucide icon={Plus} />}>Associate credentials</Button>
+          </span>
+        </Tooltip>
+      ) : <Button icon={<Lucide icon={Plus} />} onClick={handleOnClick}>Associate credentials</Button>}
     </div>
   );
 }

@@ -1,6 +1,6 @@
+import HtmlAnchor from '@Components/html-anchor';
 import Lucide from '@Components/lucide';
 import SuccessMessage from '@Components/success-message';
-import TableRowLink from '@Components/table-row-link';
 import {
   CredentialStateEnum, DATE_FORMAT, DATE_FORMAT_SHORT, GATEWAY_OWNER, PathsEnum, ROTATION_FORMAT, RotationStateEnum, SEARCH_PARAMS,
 } from '@Src/constants';
@@ -15,9 +15,7 @@ import {
 import classNames from 'classnames';
 import dayjs from 'dayjs';
 import { Trash } from 'lucide-react';
-import { useParams } from 'react-router-dom';
-
-const EXPIRES_ON_TOOLTIP = 'Expires at end of day (UTC)';
+import { useNavigate, useParams } from 'react-router-dom';
 
 const columns = [
   {
@@ -50,8 +48,6 @@ const columns = [
   },
 ];
 
-const DISABLED_GROUP_TOOLTIP = 'This group is managed externally and cannot be modified';
-
 function Name({ record }) {
   const {
     expiresOn, graceEndsAt, lastRotatedAt, name, owner, rotationState, state,
@@ -70,12 +66,25 @@ function Name({ record }) {
       )}
       title={(
         <Truncate tooltip={{ title: name, placement: 'topLeft' }}>
-          <TableRowLink to={`/${PathsEnum.CREDENTIALS}?${SEARCH_PARAMS.credentials}=${encodeURIComponent(name)}`}>
-            <span className={className}>{name}</span>
-          </TableRowLink>
+          <CredentialLink className={className} name={name} />
         </Truncate>
       )}
     />
+  );
+}
+
+function CredentialLink({ className, name }) {
+  const navigate = useNavigate();
+
+  const handleOnClick = (e) => {
+    e.stopPropagation();
+    navigate(`/${PathsEnum.CREDENTIALS}?${SEARCH_PARAMS.credentials}=${encodeURIComponent(name)}`);
+  };
+
+  return (
+    <HtmlAnchor onClick={handleOnClick}>
+      <span className={className}>{name}</span>
+    </HtmlAnchor>
   );
 }
 
@@ -99,7 +108,7 @@ function ExpiresOn({ expiresOn, owner, state }) {
   });
 
   return (
-    <Tooltip placement="topLeft" title={EXPIRES_ON_TOOLTIP}>
+    <Tooltip placement="topLeft" title="Expires at end of day (UTC)">
       <span className={className}>{label}</span>
     </Tooltip>
   );
@@ -160,7 +169,7 @@ function Actions({ uuid: keyUUID, record: { name } }) {
 
   if (isExternallyManaged) {
     return (
-      <Tooltip title={DISABLED_GROUP_TOOLTIP}>
+      <Tooltip title="This group is managed externally and cannot be modified">
         <div>
           <Button aria-label="Remove" disabled size="small" type="text">
             <Lucide disabled icon={Trash} />

@@ -1,12 +1,13 @@
-from datetime import datetime
-from typing import Literal
+from datetime import date, datetime
+from typing import Any, Literal
 from uuid import UUID
 
 from fastapi_pagination import Page, Params
 from fastapi_pagination.ext.sqlalchemy import paginate
-from sqlalchemy import Row, func as F, literal_column, select, text
+from sqlalchemy import ColumnElement, Label, Row, func as F, select
 
 from radicalbit_ai_gateway.db.clickhouse_database import ClickHouseDatabase
+from radicalbit_ai_gateway.db.clickhouse_functions import quantile
 from radicalbit_ai_gateway.db.dao.tags_filter import add_tags_filter
 from radicalbit_ai_gateway.db.models.trace import (
     CategoryLatencies,
@@ -24,24 +25,46 @@ from radicalbit_ai_gateway.utils.chart_utils import (
     with_timezone_offset,
 )
 
-# SpanAttributes key constants
-_ROUTE_NAME_ATTR = "SpanAttributes['traceloop.association.properties.route_name']"
-_API_KEY_UUID_ATTR = "SpanAttributes['traceloop.association.properties.api_key_uuid']"
-_API_KEY_NAME_ATTR = "SpanAttributes['traceloop.association.properties.api_key_name']"
-_GROUP_UUID_ATTR = "SpanAttributes['traceloop.association.properties.group_uuid']"
-_GROUP_NAME_ATTR = "SpanAttributes['traceloop.association.properties.group_name']"
-_REQUEST_UUID_ATTR = "SpanAttributes['traceloop.association.properties.request_uuid']"
-_PROJECT_UUID_ATTR = "SpanAttributes['traceloop.association.properties.project_uuid']"
-_OUTPUT_TOKENS_ATTR = "SpanAttributes['gen_ai.usage.output_tokens']"
-_INPUT_TOKENS_ATTR = "SpanAttributes['gen_ai.usage.input_tokens']"
-_OPERATION_CATEGORY_ATTR = (
-    "SpanAttributes['traceloop.association.properties.rb.gateway.operation_category']"
+_T = OtelTraces.__table__
+
+
+def _span_attribute(key: str) -> ColumnElement[Any]:
+    """Return the SpanAttributes value at `key`: '' when the span lacks it."""
+    return F.arrayElement(_T.c['SpanAttributes'], key)
+
+
+_PROPERTIES = 'traceloop.association.properties.'
+
+
+def _in_project(project_uuid: UUID) -> ColumnElement[bool]:
+    """Keep the spans of the project."""
+    return _span_attribute(f'{_PROPERTIES}project_uuid') == str(project_uuid)
+
+
+_ROUTE_NAME = _span_attribute(f'{_PROPERTIES}route_name')
+_API_KEY_UUID = _span_attribute(f'{_PROPERTIES}api_key_uuid')
+_API_KEY_NAME = _span_attribute(f'{_PROPERTIES}api_key_name')
+_GROUP_UUID = _span_attribute(f'{_PROPERTIES}group_uuid')
+_GROUP_NAME = _span_attribute(f'{_PROPERTIES}group_name')
+_REQUEST_UUID = _span_attribute(f'{_PROPERTIES}request_uuid')
+_OPERATION_CATEGORY = _span_attribute(f'{_PROPERTIES}rb.gateway.operation_category')
+_OUTPUT_TOKENS = _span_attribute('gen_ai.usage.output_tokens')
+_INPUT_TOKENS = _span_attribute('gen_ai.usage.input_tokens')
+_SPAN_KIND = _span_attribute('traceloop.span.kind')
+_GEN_AI_PROVIDER = _span_attribute('gen_ai.provider.name')
+# Stamped on the decide span. Span attributes are strings, so the boolean is
+# stored as 'true' or 'false'. A span without it reads as false.
+_FALLBACK_TRIGGERED = (
+    F.lower(_span_attribute('decision.response.fallback_triggered')) == 'true'
 )
-_TAGS_ATTR = "SpanAttributes['traceloop.association.properties.tags']"
+_TAGS = _span_attribute(f'{_PROPERTIES}tags')
 # Tags are stamped as one comma-joined "key=value,..." string (see
 # set_trace_attributes) since SpanAttributes values are scalar - splitByChar
 # turns it back into the Array(String) shape `add_tags_filter` expects.
-_TAGS_EXPR = f"if({_TAGS_ATTR} = '', [], splitByChar(',', {_TAGS_ATTR}))"
+_TAGS_ARRAY = F.if_(_TAGS == '', F.array(), F.splitByChar(',', _TAGS))
+# Duration is in nanoseconds. divide() is ClickHouse's `/`: SQLAlchemy's `/`
+# on two integers casts the divisor to NUMERIC, a Decimal in ClickHouse.
+_DURATION_MS = F.divide(_T.c['Duration'], 1_000_000)
 
 # The root span of a trace is the @workflow span of the endpoint that served
 # it, so its SpanName tells the request type. Deriving it here, not from a
@@ -58,16 +81,19 @@ _ROOT_SPAN_NAMES_BY_REQUEST_TYPE: dict[RequestType, list[str]] = {
     RequestType.MCP: ['mcp_request.workflow'],
 }
 # Empty string for an unknown root span name, like the other string columns.
-_REQUEST_TYPE_BRANCHES = ', '.join(
-    f"SpanName = '{name}', '{request_type.value}'"
-    for request_type, names in _ROOT_SPAN_NAMES_BY_REQUEST_TYPE.items()
-    for name in names
+_REQUEST_TYPE = F.multiIf(
+    *(
+        branch
+        for request_type, names in _ROOT_SPAN_NAMES_BY_REQUEST_TYPE.items()
+        for name in names
+        for branch in (_T.c['SpanName'] == name, request_type.value)
+    ),
+    '',
 )
-_REQUEST_TYPE_EXPR = f"multiIf({_REQUEST_TYPE_BRANCHES}, '')"
 
 
 def request_type_of_root_span(span_name: str) -> RequestType | None:
-    """Python twin of _REQUEST_TYPE_EXPR, for spans already loaded."""
+    """Python twin of _REQUEST_TYPE, for spans already loaded."""
     for request_type, names in _ROOT_SPAN_NAMES_BY_REQUEST_TYPE.items():
         if span_name in names:
             return request_type
@@ -93,6 +119,10 @@ _SPAN_FIELD_NAMES = [
     'output_tokens',
     'input_tokens',
     'tags',
+    'operation_category',
+    'span_kind',
+    'fallback_triggered',
+    'gen_ai_provider',
 ]
 _SPAN_DETAIL_FIELD_NAMES = [
     'timestamp',
@@ -119,17 +149,19 @@ _SPAN_DETAIL_FIELD_NAMES = [
 ]
 
 
-def _quantile_columns() -> list:
-    dur = literal_column('Duration / 1000000')
+def _quantile_columns() -> list[Label[float]]:
+    """Span duration in ms at p50, p90, p95 and p99."""
     return [
-        F.quantile(p, dur).label(label)
-        for p, label in [(0.50, 'p50'), (0.90, 'p90'), (0.95, 'p95'), (0.99, 'p99')]
+        quantile(level, _DURATION_MS).label(label)
+        for level, label in [(0.50, 'p50'), (0.90, 'p90'), (0.95, 'p95'), (0.99, 'p99')]
     ]
 
 
 def _convert_events_to_dicts(
-    timestamps: list | None, names: list | None, attributes: list | None
-) -> list[dict]:
+    timestamps: list[datetime] | None,
+    names: list[str] | None,
+    attributes: list[dict[str, str]] | None,
+) -> list[dict[str, object]]:
     """Convert ClickHouse parallel event arrays to dictionaries.
 
     ClickHouse stores events as parallel arrays (columnar format):
@@ -152,10 +184,10 @@ class OtelTracesDAO:
         self.db = database
         self.T = OtelTraces.__table__
 
-    def _add_tags_filter(self, conditions: list, tags: list[str] | None) -> None:
-        add_tags_filter(
-            conditions, F.splitByChar(',', literal_column(_TAGS_ATTR)), tags=tags
-        )
+    def _add_tags_filter(
+        self, conditions: list[ColumnElement[Any]], tags: list[str] | None
+    ) -> None:
+        add_tags_filter(conditions, F.splitByChar(',', _TAGS), tags=tags)
 
     def get_span_latencies(
         self,
@@ -166,28 +198,22 @@ class OtelTracesDAO:
         tags: list[str] | None = None,
     ) -> list[SpanLatencies]:
         T = self.T
-        conditions = [literal_column(_PROJECT_UUID_ATTR) == str(project_uuid)]
+        conditions = [_in_project(project_uuid)]
 
         if _from is not None:
             conditions.append(T.c['Timestamp'] >= _from)
         if _to is not None:
             conditions.append(T.c['Timestamp'] <= _to)
         if route_names:
-            conditions.append(literal_column(_ROUTE_NAME_ATTR).in_(route_names))
+            conditions.append(_ROUTE_NAME.in_(route_names))
         self._add_tags_filter(conditions, tags=tags)
 
         stmt = (
-            select(
-                T.c['SpanName'].label('span_name'),
-                F.quantile(0.50, literal_column('Duration / 1000000')).label('p50'),
-                F.quantile(0.90, literal_column('Duration / 1000000')).label('p90'),
-                F.quantile(0.95, literal_column('Duration / 1000000')).label('p95'),
-                F.quantile(0.99, literal_column('Duration / 1000000')).label('p99'),
-            )
+            select(T.c['SpanName'].label('span_name'), *_quantile_columns())
             .select_from(OtelTraces)
             .where(*conditions)
-            .group_by(text('SpanName'))
-            .order_by(text('SpanName'))
+            .group_by(T.c['SpanName'])
+            .order_by(T.c['SpanName'])
         )
 
         with self.db.begin_session() as session:
@@ -204,26 +230,32 @@ class OtelTracesDAO:
         _from: datetime | None,
         _to: datetime | None,
         tags: list[str] | None = None,
-    ) -> list:
+    ) -> list[ColumnElement[Any]]:
         T = self.T
-        conditions = [literal_column(_PROJECT_UUID_ATTR) == str(project_uuid)]
+        conditions: list[ColumnElement[Any]] = [_in_project(project_uuid)]
         if _from is not None:
             conditions.append(T.c['Timestamp'] >= _from)
         if _to is not None:
             conditions.append(T.c['Timestamp'] <= _to)
         if route_names:
-            conditions.append(literal_column(_ROUTE_NAME_ATTR).in_(route_names))
+            conditions.append(_ROUTE_NAME.in_(route_names))
         self._add_tags_filter(conditions, tags=tags)
         return conditions
 
-    def _build_category_expr(self, include_others: bool, conditions: list) -> tuple:
+    def _build_category_column(
+        self, include_others: bool, conditions: list[ColumnElement[Any]]
+    ) -> Label[Any]:
+        """Return the `category` column.
+
+        Spans without a category count as 'other' with `include_others`, else
+        a condition filters them out.
+        """
         if include_others:
-            expr = f"if({_OPERATION_CATEGORY_ATTR} = '', 'other', {_OPERATION_CATEGORY_ATTR})"
-            col = literal_column(expr).label('category')
-            return col, text(expr), text(expr)
-        conditions.append(literal_column(_OPERATION_CATEGORY_ATTR) != '')
-        col = literal_column(_OPERATION_CATEGORY_ATTR).label('category')
-        return col, text(_OPERATION_CATEGORY_ATTR), text(_OPERATION_CATEGORY_ATTR)
+            category = F.if_(_OPERATION_CATEGORY == '', 'other', _OPERATION_CATEGORY)
+        else:
+            conditions.append(_OPERATION_CATEGORY != '')
+            category = _OPERATION_CATEGORY
+        return category.label('category')
 
     def get_category_latencies(
         self,
@@ -237,17 +269,15 @@ class OtelTracesDAO:
         conditions = self._build_time_route_conditions(
             project_uuid, route_names, _from, _to, tags=tags
         )
-        cat_col, group_expr, order_expr = self._build_category_expr(
-            include_others, conditions
-        )
+        category = self._build_category_column(include_others, conditions)
         field_names = ['category', 'p50', 'p90', 'p95', 'p99']
 
         stmt = (
-            select(cat_col, *_quantile_columns())
+            select(category, *_quantile_columns())
             .select_from(OtelTraces)
             .where(*conditions)
-            .group_by(group_expr)
-            .order_by(order_expr)
+            .group_by(category)
+            .order_by(category)
         )
 
         with self.db.begin_session() as session:
@@ -268,21 +298,16 @@ class OtelTracesDAO:
         conditions = self._build_time_route_conditions(
             project_uuid, route_names, _from, _to, tags=tags
         )
-        cat_col, group_expr, order_expr = self._build_category_expr(
-            include_others, conditions
-        )
+        category = self._build_category_column(include_others, conditions)
         field_names = ['category', 'span_name', 'p50', 'p90', 'p95', 'p99']
+        span_name = self.T.c['SpanName']
 
         stmt = (
-            select(
-                cat_col,
-                self.T.c['SpanName'].label('span_name'),
-                *_quantile_columns(),
-            )
+            select(category, span_name.label('span_name'), *_quantile_columns())
             .select_from(OtelTraces)
             .where(*conditions)
-            .group_by(group_expr, text('SpanName'))
-            .order_by(order_expr, text('SpanName'))
+            .group_by(category, span_name)
+            .order_by(category, span_name)
         )
 
         with self.db.begin_session() as session:
@@ -299,28 +324,29 @@ class OtelTracesDAO:
             select(
                 T.c['Timestamp'].label('timestamp'),
                 T.c['TraceId'].label('trace_id'),
-                literal_column(_REQUEST_UUID_ATTR).label('request_uuid'),
+                _REQUEST_UUID.label('request_uuid'),
                 T.c['SpanId'].label('span_id'),
                 T.c['SpanName'].label('span_name'),
                 T.c['ServiceName'].label('service_name'),
                 T.c['Duration'].label('duration'),
                 T.c['StatusCode'].label('status_code'),
                 T.c['ParentSpanId'].label('parent_span_id'),
-                literal_column(_ROUTE_NAME_ATTR).label('route_name'),
-                literal_column(_API_KEY_UUID_ATTR).label('api_key_uuid'),
-                literal_column(_API_KEY_NAME_ATTR).label('api_key_name'),
-                literal_column(_GROUP_UUID_ATTR).label('group_uuid'),
-                literal_column(_GROUP_NAME_ATTR).label('group_name'),
-                literal_column(_OUTPUT_TOKENS_ATTR).label('output_tokens'),
-                literal_column(_INPUT_TOKENS_ATTR).label('input_tokens'),
-                literal_column(_TAGS_EXPR).label('tags'),
+                _ROUTE_NAME.label('route_name'),
+                _API_KEY_UUID.label('api_key_uuid'),
+                _API_KEY_NAME.label('api_key_name'),
+                _GROUP_UUID.label('group_uuid'),
+                _GROUP_NAME.label('group_name'),
+                _OUTPUT_TOKENS.label('output_tokens'),
+                _INPUT_TOKENS.label('input_tokens'),
+                _TAGS_ARRAY.label('tags'),
+                _OPERATION_CATEGORY.label('operation_category'),
+                _SPAN_KIND.label('span_kind'),
+                _FALLBACK_TRIGGERED.label('fallback_triggered'),
+                _GEN_AI_PROVIDER.label('gen_ai_provider'),
             )
             .select_from(OtelTraces)
-            .where(
-                literal_column(_PROJECT_UUID_ATTR) == str(project_uuid),
-                T.c['TraceId'] == trace_id,
-            )
-            .order_by(text('Timestamp ASC'))
+            .where(_in_project(project_uuid), T.c['TraceId'] == trace_id)
+            .order_by(T.c['Timestamp'].asc())
         )
 
         with self.db.begin_session() as session:
@@ -338,20 +364,20 @@ class OtelTracesDAO:
             select(
                 T.c['Timestamp'].label('timestamp'),
                 T.c['TraceId'].label('trace_id'),
-                literal_column(_REQUEST_UUID_ATTR).label('request_uuid'),
+                _REQUEST_UUID.label('request_uuid'),
                 T.c['SpanId'].label('span_id'),
                 T.c['SpanName'].label('span_name'),
                 T.c['ServiceName'].label('service_name'),
                 T.c['Duration'].label('duration'),
                 T.c['StatusCode'].label('status_code'),
                 T.c['ParentSpanId'].label('parent_span_id'),
-                literal_column(_ROUTE_NAME_ATTR).label('route_name'),
-                literal_column(_API_KEY_UUID_ATTR).label('api_key_uuid'),
-                literal_column(_API_KEY_NAME_ATTR).label('api_key_name'),
-                literal_column(_GROUP_UUID_ATTR).label('group_uuid'),
-                literal_column(_GROUP_NAME_ATTR).label('group_name'),
-                literal_column(_OUTPUT_TOKENS_ATTR).label('output_tokens'),
-                literal_column(_INPUT_TOKENS_ATTR).label('input_tokens'),
+                _ROUTE_NAME.label('route_name'),
+                _API_KEY_UUID.label('api_key_uuid'),
+                _API_KEY_NAME.label('api_key_name'),
+                _GROUP_UUID.label('group_uuid'),
+                _GROUP_NAME.label('group_name'),
+                _OUTPUT_TOKENS.label('output_tokens'),
+                _INPUT_TOKENS.label('input_tokens'),
                 T.c['SpanAttributes'].label('span_attributes'),
                 T.c['StatusMessage'].label('status_message'),
                 T.c['Events.Timestamp'].label('events_timestamp'),
@@ -360,7 +386,7 @@ class OtelTracesDAO:
             )
             .select_from(OtelTraces)
             .where(
-                literal_column(_PROJECT_UUID_ATTR) == str(project_uuid),
+                _in_project(project_uuid),
                 T.c['TraceId'] == trace_id,
                 T.c['SpanId'] == span_id,
             )
@@ -378,6 +404,21 @@ class OtelTracesDAO:
             )
             return SpanRecord.model_validate(row_data)
 
+    def _span_stats_columns(self) -> list[Label[Any]]:
+        """Return the SpanStats columns of a group of spans, in SpanStats order."""
+        T = self.T
+        return [
+            F.count().label('span_count'),
+            F.countIf(T.c['StatusCode'] == 'Error').label('error_count'),
+            F.sum(F.toInt64OrDefault(_INPUT_TOKENS, F.toInt64(0))).label(
+                'input_tokens'
+            ),
+            F.sum(F.toInt64OrDefault(_OUTPUT_TOKENS, F.toInt64(0))).label(
+                'output_tokens'
+            ),
+            F.max(T.c['Timestamp']).label('last_span'),
+        ]
+
     def get_spans_stats_by_request_uuids(
         self,
         request_uuids: list[str],
@@ -385,25 +426,11 @@ class OtelTracesDAO:
         if not request_uuids:
             return {}
 
-        T = self.T
-        req_uuid_attr = literal_column(_REQUEST_UUID_ATTR)
-
         stmt = (
-            select(
-                req_uuid_attr.label('request_uuid'),
-                F.count().label('span_count'),
-                F.countIf(T.c['StatusCode'] == 'Error').label('error_count'),
-                literal_column(
-                    f'SUM(toInt64OrDefault({_INPUT_TOKENS_ATTR}, toInt64(0)))'
-                ).label('input_tokens'),
-                literal_column(
-                    f'SUM(toInt64OrDefault({_OUTPUT_TOKENS_ATTR}, toInt64(0)))'
-                ).label('output_tokens'),
-                F.max(T.c['Timestamp']).label('last_span'),
-            )
+            select(_REQUEST_UUID.label('request_uuid'), *self._span_stats_columns())
             .select_from(OtelTraces)
-            .where(req_uuid_attr.in_(request_uuids))
-            .group_by(text(_REQUEST_UUID_ATTR))
+            .where(_REQUEST_UUID.in_(request_uuids))
+            .group_by(_REQUEST_UUID)
         )
 
         with self.db.begin_session() as session:
@@ -418,6 +445,44 @@ class OtelTracesDAO:
                 )
                 for row in res
             }
+
+    def get_trace_ids_by_request_uuids(
+        self,
+        project_uuid: UUID,
+        request_uuids: list[str],
+        date_from: date,
+        date_to: date,
+    ) -> dict[str, str]:
+        """Map each request UUID to the trace its root span belongs to.
+
+        Requests that left no trace are absent from the result. Spans are
+        bounded to `[date_from, date_to]` so ClickHouse prunes partitions.
+        """
+        if not request_uuids:
+            return {}
+
+        T = self.T
+        stmt = (
+            select(
+                _REQUEST_UUID.label('request_uuid'),
+                F.any(T.c['TraceId']).label('trace_id'),
+            )
+            .select_from(OtelTraces)
+            .where(
+                T.c['ParentSpanId'] == '',
+                _in_project(project_uuid),
+                _REQUEST_UUID.in_(request_uuids),
+                # Timestamp has no column timezone: read its date in UTC, as
+                # event and request_event DATE are, or the window shifts on a
+                # server whose timezone is not UTC.
+                F.toDate(T.c['Timestamp'], 'UTC') >= date_from,
+                F.toDate(T.c['Timestamp'], 'UTC') <= date_to,
+            )
+            .group_by(_REQUEST_UUID)
+        )
+
+        with self.db.begin_session() as session:
+            return {row[0]: row[1] for row in session.execute(stmt).all()}
 
     def get_traces_chart_data(
         self,
@@ -442,7 +507,7 @@ class OtelTracesDAO:
         T = self.T
         FIELD_NAMES = ['bucket', 'trace_status', 'total_requests']
 
-        conditions = [literal_column(_PROJECT_UUID_ATTR) == str(project_uuid)]
+        conditions = [_in_project(project_uuid)]
         if _from is not None:
             conditions.append(T.c['Timestamp'] >= _from)
         if _to is not None:
@@ -458,7 +523,7 @@ class OtelTracesDAO:
                 # below instead of bucketing to 1970 and exploding the range.
                 F.nullIf(
                     F.anyIf(T.c['Timestamp'], T.c['ParentSpanId'] == ''),
-                    text('toDateTime(0)'),
+                    F.toDateTime(0),
                 ).label('root_timestamp'),
                 F.anyIf(T.c['StatusCode'], T.c['ParentSpanId'] == '').label(
                     'root_status'
@@ -466,12 +531,8 @@ class OtelTracesDAO:
                 F.countIf(
                     T.c['ParentSpanId'] != '', T.c['StatusCode'] == 'Error'
                 ).label('child_error_count'),
-                F.anyIf(
-                    literal_column(_ROUTE_NAME_ATTR), T.c['ParentSpanId'] == ''
-                ).label('route_name'),
-                F.anyIf(literal_column(_TAGS_ATTR), T.c['ParentSpanId'] == '').label(
-                    'tags_str'
-                ),
+                F.anyIf(_ROUTE_NAME, T.c['ParentSpanId'] == '').label('route_name'),
+                F.anyIf(_TAGS, T.c['ParentSpanId'] == '').label('tags_str'),
             )
             .select_from(OtelTraces)
             .where(*conditions)
@@ -480,7 +541,9 @@ class OtelTracesDAO:
 
         # Drop traces with no root span: their root_timestamp is NULL (see the
         # nullIf above) and they would otherwise bucket to the Unix epoch.
-        outer_conditions = [trace_agg.c.root_timestamp.isnot(None)]
+        outer_conditions: list[ColumnElement[Any]] = [
+            trace_agg.c.root_timestamp.isnot(None)
+        ]
         if route_names:
             outer_conditions.append(trace_agg.c.route_name.in_(route_names))
         add_tags_filter(
@@ -495,12 +558,12 @@ class OtelTracesDAO:
         )
 
         # Classify: root error → error, child errors only → warning, else success
-        trace_status_expr = literal_column(
-            'multiIf('
-            "root_status = 'Error', 'error', "
-            "child_error_count > 0, 'warning', "
-            "'success'"
-            ')'
+        trace_status_expr = F.multiIf(
+            trace_agg.c.root_status == 'Error',
+            'error',
+            trace_agg.c.child_error_count > 0,
+            'warning',
+            'success',
         )
 
         stmt = (
@@ -511,8 +574,8 @@ class OtelTracesDAO:
             )
             .select_from(trace_agg)
             .where(*outer_conditions)
-            .group_by(text('bucket'), text('trace_status'))
-            .order_by(text('bucket'))
+            .group_by('bucket', 'trace_status')
+            .order_by('bucket')
         )
 
         with self.db.begin_session() as session:
@@ -522,8 +585,32 @@ class OtelTracesDAO:
                 for row_tuple in res
             ]
 
-    def get_root_span_error_by_trace_ids(self, trace_ids: list[str]) -> set[str]:
-        """Return trace IDs where the root span has StatusCode = 'Error'."""
+    def _date_window(
+        self, date_from: date | None, date_to: date | None
+    ) -> list[ColumnElement[Any]]:
+        """Bound spans to `[date_from, date_to]` so ClickHouse prunes partitions.
+
+        Timestamp has no column timezone: its date is read in UTC, as the
+        callers compute theirs.
+        """
+        conditions: list[ColumnElement[Any]] = []
+        if date_from is not None:
+            conditions.append(F.toDate(self.T.c['Timestamp'], 'UTC') >= date_from)
+        if date_to is not None:
+            conditions.append(F.toDate(self.T.c['Timestamp'], 'UTC') <= date_to)
+        return conditions
+
+    def get_root_span_error_by_trace_ids(
+        self,
+        trace_ids: list[str],
+        date_from: date | None = None,
+        date_to: date | None = None,
+    ) -> set[str]:
+        """Return trace IDs where the root span has StatusCode = 'Error'.
+
+        A lookup by TraceId alone reads every partition: pass the dates the
+        traces span to bound it.
+        """
         if not trace_ids:
             return set()
 
@@ -535,6 +622,7 @@ class OtelTracesDAO:
                 T.c['TraceId'].in_(trace_ids),
                 T.c['ParentSpanId'] == '',
                 T.c['StatusCode'] == 'Error',
+                *self._date_window(date_from, date_to),
             )
         )
 
@@ -552,26 +640,20 @@ class OtelTracesDAO:
         """Get trace latencies (in ms) from root spans."""
         T = self.T
         FIELD_NAMES = ['p50', 'p90', 'p95', 'p99']
-        route_name_attr = literal_column(_ROUTE_NAME_ATTR)
 
         conditions = [
             T.c['ParentSpanId'] == '',
-            literal_column(_PROJECT_UUID_ATTR) == str(project_uuid),
+            _in_project(project_uuid),
         ]
         if route_names:
-            conditions.append(route_name_attr.in_(route_names))
+            conditions.append(_ROUTE_NAME.in_(route_names))
         if _from is not None:
             conditions.append(T.c['Timestamp'] >= _from)
         if _to is not None:
             conditions.append(T.c['Timestamp'] <= _to)
         self._add_tags_filter(conditions, tags=tags)
 
-        stmt = select(
-            F.quantile(0.50, literal_column('Duration / 1000000')).label('p50'),
-            F.quantile(0.90, literal_column('Duration / 1000000')).label('p90'),
-            F.quantile(0.95, literal_column('Duration / 1000000')).label('p95'),
-            F.quantile(0.99, literal_column('Duration / 1000000')).label('p99'),
-        ).select_from(OtelTraces)
+        stmt = select(*_quantile_columns()).select_from(OtelTraces)
 
         if conditions:
             stmt = stmt.where(*conditions)
@@ -593,40 +675,34 @@ class OtelTracesDAO:
         params: Params,
         tags: list[str] | None = None,
         request_types: list[RequestType] | None = None,
-    ) -> Page[Row]:
+    ) -> Page[Row[*tuple[Any, ...]]]:
         """Get paginated root spans with metadata."""
         T = self.T
-        route_name_attr = literal_column(_ROUTE_NAME_ATTR)
-        api_key_uuid_attr = literal_column(_API_KEY_UUID_ATTR)
-        api_key_name_attr = literal_column(_API_KEY_NAME_ATTR)
-        group_uuid_attr = literal_column(_GROUP_UUID_ATTR)
-        group_name_attr = literal_column(_GROUP_NAME_ATTR)
-        request_uuid_attr = literal_column(_REQUEST_UUID_ATTR)
 
         stmt = (
             select(
                 T.c['TraceId'].label('trace_id'),
-                request_uuid_attr.label('request_uuid'),
-                route_name_attr.label('route_name'),
-                group_name_attr.label('group_name'),
-                group_uuid_attr.label('group_uuid'),
-                api_key_name_attr.label('api_key_name'),
-                api_key_uuid_attr.label('api_key_uuid'),
-                literal_column('Duration / 1000000').label('duration_ms'),
+                _REQUEST_UUID.label('request_uuid'),
+                _ROUTE_NAME.label('route_name'),
+                _GROUP_NAME.label('group_name'),
+                _GROUP_UUID.label('group_uuid'),
+                _API_KEY_NAME.label('api_key_name'),
+                _API_KEY_UUID.label('api_key_uuid'),
+                _DURATION_MS.label('duration_ms'),
                 T.c['Timestamp'].label('created_at'),
-                literal_column(_TAGS_EXPR).label('tags'),
-                literal_column(_REQUEST_TYPE_EXPR).label('request_type'),
+                _TAGS_ARRAY.label('tags'),
+                _REQUEST_TYPE.label('request_type'),
             )
             .select_from(OtelTraces)
             .where(
                 T.c['ParentSpanId'] == '',
-                literal_column(_PROJECT_UUID_ATTR) == str(project_uuid),
+                _in_project(project_uuid),
             )
-            .order_by(text('Timestamp DESC'))
+            .order_by(T.c['Timestamp'].desc())
         )
 
         if route_names:
-            stmt = stmt.where(route_name_attr.in_(route_names))
+            stmt = stmt.where(_ROUTE_NAME.in_(route_names))
         if request_types:
             # Filter on SpanName, not on the derived label, so ClickHouse
             # compares a plain column.
@@ -640,14 +716,14 @@ class OtelTracesDAO:
                 )
             )
         if group_uuids:
-            stmt = stmt.where(group_uuid_attr.in_([str(g) for g in group_uuids]))
+            stmt = stmt.where(_GROUP_UUID.in_([str(g) for g in group_uuids]))
         if key_uuids:
-            stmt = stmt.where(api_key_uuid_attr.in_([str(k) for k in key_uuids]))
+            stmt = stmt.where(_API_KEY_UUID.in_([str(k) for k in key_uuids]))
         if _from is not None:
             stmt = stmt.where(T.c['Timestamp'] >= _from)
         if _to is not None:
             stmt = stmt.where(T.c['Timestamp'] <= _to)
-        tags_conditions: list = []
+        tags_conditions: list[ColumnElement[Any]] = []
         self._add_tags_filter(tags_conditions, tags=tags)
         if tags_conditions:
             stmt = stmt.where(*tags_conditions)
@@ -661,28 +737,26 @@ class OtelTracesDAO:
     def get_spans_stats_by_trace_ids(
         self,
         trace_ids: list[str],
+        date_from: date | None = None,
+        date_to: date | None = None,
     ) -> dict[str, SpanStats]:
-        """Aggregate span stats by TraceId."""
+        """Aggregate span stats by TraceId.
+
+        A lookup by TraceId alone reads every partition: pass the dates the
+        traces span to bound it.
+        """
         if not trace_ids:
             return {}
 
         T = self.T
 
         stmt = (
-            select(
-                T.c['TraceId'].label('trace_id'),
-                F.count().label('span_count'),
-                F.countIf(T.c['StatusCode'] == 'Error').label('error_count'),
-                literal_column(
-                    f'SUM(toInt64OrDefault({_INPUT_TOKENS_ATTR}, toInt64(0)))'
-                ).label('input_tokens'),
-                literal_column(
-                    f'SUM(toInt64OrDefault({_OUTPUT_TOKENS_ATTR}, toInt64(0)))'
-                ).label('output_tokens'),
-                F.max(T.c['Timestamp']).label('last_span'),
-            )
+            select(T.c['TraceId'].label('trace_id'), *self._span_stats_columns())
             .select_from(OtelTraces)
-            .where(T.c['TraceId'].in_(trace_ids))
+            .where(
+                T.c['TraceId'].in_(trace_ids),
+                *self._date_window(date_from, date_to),
+            )
             .group_by(T.c['TraceId'])
         )
 

@@ -35,8 +35,8 @@ class AlertRuleRoute:
             status_code=200,
             response_model=list[AlertRuleOut],
         )
-        def get_all_rules():
-            return alert_rule_service.get_all_rules()
+        async def get_all_rules():
+            return await alert_rule_service.get_all_rules()
 
         # Declared before '/rule/{rule_uuid}', which would otherwise read
         # 'history' as a rule UUID.
@@ -58,12 +58,12 @@ class AlertRuleRoute:
             status_code=200,
             response_model=list[AlertHistoryBucketOut],
         )
-        def get_rule_history(
+        async def get_rule_history(
             rule_uuid: UUID = Path(...),
             _from: Annotated[int | None, Query()] = None,
             _to: Annotated[int | None, Query()] = None,
         ):
-            return alert_rule_service.get_rule_history(
+            return await alert_rule_service.get_rule_history(
                 rule_uuid, _from=_from_epoch(_from), _to=_from_epoch(_to)
             )
 
@@ -72,8 +72,8 @@ class AlertRuleRoute:
             status_code=200,
             response_model=AlertRuleOut,
         )
-        def get_rule_by_uuid(rule_uuid: UUID = Path(...)):
-            return alert_rule_service.get_rule_by_uuid(rule_uuid)
+        async def get_rule_by_uuid(rule_uuid: UUID = Path(...)):
+            return await alert_rule_service.get_rule_by_uuid(rule_uuid)
 
         @router.post(
             '/rule',
@@ -81,8 +81,8 @@ class AlertRuleRoute:
             response_model=AlertRuleOut,
         )
         @route_meta(entity_type='ALERT_RULE', response_uuid_field='uuid')
-        def create_rule(alert_rule_in: AlertRuleIn):
-            return alert_rule_service.create_rule(alert_rule_in)
+        async def create_rule(alert_rule_in: AlertRuleIn):
+            return await alert_rule_service.create_rule(alert_rule_in)
 
         @router.patch(
             '/rule/{rule_uuid}',
@@ -90,10 +90,8 @@ class AlertRuleRoute:
             response_model=AlertRuleOut,
         )
         @route_meta(entity_type='ALERT_RULE', entity_uuid_param='rule_uuid')
-        def update_rule(
-            rule_uuid: UUID = Path(...), alert_rule_in: AlertRuleUpdateIn = ...
-        ):
-            return alert_rule_service.update_rule(rule_uuid, alert_rule_in)
+        async def update_rule(rule_uuid: UUID, alert_rule_in: AlertRuleUpdateIn):
+            return await alert_rule_service.update_rule(rule_uuid, alert_rule_in)
 
         @router.patch(
             '/rule/{rule_uuid}/enabled',
@@ -103,10 +101,10 @@ class AlertRuleRoute:
         @route_meta(
             entity_type='ALERT_RULE', entity_uuid_param='rule_uuid', action='TOGGLE'
         )
-        def toggle_rule_enabled(
-            rule_uuid: UUID = Path(...), toggle_in: AlertRuleToggleIn = ...
-        ):
-            return alert_rule_service.toggle_rule_enabled(rule_uuid, toggle_in.enabled)
+        async def toggle_rule_enabled(rule_uuid: UUID, toggle_in: AlertRuleToggleIn):
+            return await alert_rule_service.toggle_rule_enabled(
+                rule_uuid, toggle_in.enabled
+            )
 
         @router.delete(
             '/rule/{rule_uuid}',
@@ -114,35 +112,39 @@ class AlertRuleRoute:
             response_model=AlertRuleOut,
         )
         @route_meta(entity_type='ALERT_RULE', entity_uuid_param='rule_uuid')
-        def delete_rule(rule_uuid: UUID = Path(...)):
-            return alert_rule_service.delete_rule(rule_uuid)
+        async def delete_rule(rule_uuid: UUID = Path(...)):
+            return await alert_rule_service.delete_rule(rule_uuid)
 
         @router.get(
             '/keys/{key_uuid}/alertable-events',
             status_code=200,
             response_model=AlertableEventsOut,
         )
-        def get_credential_alertable_events(key_uuid: UUID = Path(...)):
-            return alert_rule_service.get_alertable_events_for_credential(key_uuid)
+        async def get_credential_alertable_events(key_uuid: UUID = Path(...)):
+            return await alert_rule_service.get_alertable_events_for_credential(
+                key_uuid
+            )
 
         @router.get(
             '/projects/{project_uuid}/alertable-events',
             status_code=200,
             response_model=AlertableEventsOut,
         )
-        def get_project_alertable_events(project_uuid: UUID = Path(...)):
-            return alert_rule_service.get_alertable_events_for_project(project_uuid)
+        async def get_project_alertable_events(project_uuid: UUID = Path(...)):
+            return await alert_rule_service.get_alertable_events_for_project(
+                project_uuid
+            )
 
         @router.get(
             '/projects/{project_uuid}/routes/{route_name}/alertable-events',
             status_code=200,
             response_model=AlertableEventsOut,
         )
-        def get_route_alertable_events(
+        async def get_route_alertable_events(
             project_uuid: UUID = Path(...),
             route_name: str = Path(...),
         ):
-            return alert_rule_service.get_alertable_events_for_route(
+            return await alert_rule_service.get_alertable_events_for_route(
                 project_uuid=project_uuid, route_name=route_name
             )
 

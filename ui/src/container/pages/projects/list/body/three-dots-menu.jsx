@@ -15,13 +15,11 @@ import {
   CircleStop,
   GitPullRequest,
   Play,
+  Settings2,
   Square,
-  SquarePen,
   Trash,
   Wallet,
 } from 'lucide-react';
-
-const UNAVAILABLE_TOOLTIP = 'Unable to load the latest data, please retry later';
 
 export const useGetThreeDotsMenuItems = (uuid) => {
   const { data, isLoading, isError, isSuccess } = useGetProjectQuery(uuid, { skip: !uuid });
@@ -29,7 +27,7 @@ export const useGetThreeDotsMenuItems = (uuid) => {
   const configs = data?.configs ?? [];
   const visibleConfig = useGetVisibleConfig(configs);
 
-  const editConfigItem = useEditConfigItem(uuid, visibleConfig);
+  const openConfigItem = useOpenConfigItem(uuid, visibleConfig);
   const budgetLimitsItem = useBudgetLimitsItem(uuid);
   const visibleConfigActions = useVisibleConfigItems(uuid, visibleConfig);
   const deleteProjectItems = useDeleteProjectItems(uuid);
@@ -41,7 +39,7 @@ export const useGetThreeDotsMenuItems = (uuid) => {
   if (isError) {
     return [
       {
-        label: <Tooltip title={UNAVAILABLE_TOOLTIP}>Unable to load project</Tooltip>,
+        label: <Tooltip title="Unable to load the latest data, please retry later">Unable to load project</Tooltip>,
         disabled: true,
       },
     ];
@@ -51,7 +49,7 @@ export const useGetThreeDotsMenuItems = (uuid) => {
     return [];
   }
 
-  const configurationGroupItems = [editConfigItem, ...visibleConfigActions].filter(Boolean);
+  const configurationGroupItems = [openConfigItem, ...visibleConfigActions].filter(Boolean);
 
   const configurationGroup = configurationGroupItems.length
     ? {
@@ -91,7 +89,7 @@ const useBudgetLimitsItem = (uuid) => {
   };
 };
 
-const useEditConfigItem = (uuid, visibleConfig) => {
+const useOpenConfigItem = (uuid, visibleConfig) => {
   const { showModal } = useModals();
 
   const handleOnClick = () => {
@@ -99,9 +97,9 @@ const useEditConfigItem = (uuid, visibleConfig) => {
   };
 
   return {
-    key: 'edit-configuration',
-    icon: <Lucide icon={SquarePen} />,
-    label: 'Edit Configuration',
+    key: 'open-configuration',
+    icon: <Lucide icon={Settings2} />,
+    label: 'Open Configuration',
     onClick: handleOnClick,
   };
 };

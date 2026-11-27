@@ -17,20 +17,6 @@ def test_valid_limit():
     assert limit_in.value == 10
 
 
-def test_invalid_window_size_for_aligned_fixed_window_rejected():
-    with pytest.raises(ValueError, match='not allowed for ALIGNED_FIXED_WINDOW'):
-        ProjectBudgetLimitIn(
-            algorithm=LimitingAlgorithmType.ALIGNED_FIXED_WINDOW,
-            window_size='3 days',
-            value=10,
-        )
-
-
-def test_value_must_be_positive():
-    with pytest.raises(ValueError):
-        ProjectBudgetLimitIn(window_size='1 day', value=0)
-
-
 def test_to_project_budget_limit_maps_fields():
     project_uuid = uuid.uuid4()
     limit_in = ProjectBudgetLimitIn(window_size='1 day', value=10)
@@ -46,12 +32,19 @@ def test_limits_in_requires_at_least_one():
         ProjectBudgetLimitsIn(limits=[])
 
 
-def test_limits_in_rejects_duplicate_within_batch():
+@pytest.mark.parametrize(
+    'windows',
+    [
+        pytest.param(['1 day', '1 day'], id='same-window'),
+        pytest.param(['24 hours', '1 day'], id='same-window-written-differently'),
+    ],
+)
+def test_limits_in_rejects_duplicate_within_batch(windows):
     with pytest.raises(ValueError, match='Duplicate limit in request'):
         ProjectBudgetLimitsIn(
             limits=[
-                ProjectBudgetLimitIn(window_size='1 day', value=1),
-                ProjectBudgetLimitIn(window_size='1 day', value=2),
+                ProjectBudgetLimitIn(window_size=window, value=value)
+                for value, window in enumerate(windows, start=1)
             ]
         )
 
@@ -102,17 +95,29 @@ def test_window_size_is_canonicalised(window_size, canonical):
     assert limit_in.window_size == canonical
 
 
-@pytest.mark.parametrize('window_size', ['7 hours', '3 days', '0 seconds'])
-def test_window_outside_the_list_rejected(window_size):
-    with pytest.raises(ValueError, match='not allowed for FIXED_WINDOW|longer than 0'):
-        ProjectBudgetLimitIn(window_size=window_size, value=10)
-
-
-def test_limits_in_rejects_the_same_window_written_differently():
-    with pytest.raises(ValueError, match='Duplicate limit in request'):
-        ProjectBudgetLimitsIn(
-            limits=[
-                ProjectBudgetLimitIn(window_size='24 hours', value=10),
-                ProjectBudgetLimitIn(window_size='1 day', value=20),
-            ]
-        )
+@pytest.mark.parametrize(
+    ('kwargs', 'match'),
+    [
+        pytest.param(
+            {'window_size': '7 hours'}, 'not allowed for FIXED_WINDOW', id='7-hours'
+        ),
+        pytest.param(
+            {'window_size': '3 days'}, 'not allowed for FIXED_WINDOW', id='3-days'
+        ),
+        pytest.param(
+            {'window_size': '0 seconds'}, 'must be longer than 0', id='zero-window'
+        ),
+        pytest.param(
+            {
+                'algorithm': LimitingAlgorithmType.ALIGNED_FIXED_WINDOW,
+                'window_size': '3 days',
+            },
+            'not allowed for ALIGNED_FIXED_WINDOW',
+            id='aligned-3-days',
+        ),
+        pytest.param({'window_size': '1 day', 'value': 0}, None, id='zero-value'),
+    ],
+)
+def test_invalid_limit_rejected(kwargs, match):
+    with pytest.raises(ValueError, match=match):
+        ProjectBudgetLimitIn(**{'value': 10, **kwargs})

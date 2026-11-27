@@ -1,6 +1,13 @@
-from clickhouse_sqlalchemy.engines import MergeTree
-from clickhouse_sqlalchemy.types import Array, DateTime64, LowCardinality, Map, UInt64
-from sqlalchemy import Column, String, func
+from clickhouse_connect.cc_sqlalchemy.engines import MergeTree
+from clickhouse_connect.cc_sqlalchemy.types import (
+    Array,
+    DateTime64,
+    LowCardinality,
+    Map,
+    String,
+    UInt64,
+)
+from sqlalchemy import Column, func
 
 from radicalbit_ai_gateway.db.clickhouse_database import ClickHouseBaseTable
 
@@ -23,24 +30,20 @@ class OtelTraces(ClickHouseBaseTable):
     span_attributes = Column('SpanAttributes', Map(LowCardinality(String), String))
     duration = Column('Duration', UInt64)
     status_code = Column('StatusCode', LowCardinality(String))
-    status_message = Column('StatusMessage', String, nullable=True)
+    status_message = Column('StatusMessage', String)
     # Events stored as parallel arrays (ClickHouse columnar format)
     # These match the production schema: Events.Timestamp, Events.Name, Events.Attributes
-    events_timestamp = Column('Events.Timestamp', Array(DateTime64(9)), nullable=True)
-    events_name = Column('Events.Name', Array(LowCardinality(String)), nullable=True)
+    events_timestamp = Column('Events.Timestamp', Array(DateTime64(9)))
+    events_name = Column('Events.Name', Array(LowCardinality(String)))
     events_attributes = Column(
-        'Events.Attributes',
-        Array(Map(LowCardinality(String), String)),
-        nullable=True,
+        'Events.Attributes', Array(Map(LowCardinality(String), String))
     )
     # Links stored as parallel arrays (ClickHouse columnar format)
-    links_trace_id = Column('Links.TraceId', Array(String), nullable=True)
-    links_span_id = Column('Links.SpanId', Array(String), nullable=True)
-    links_trace_state = Column('Links.TraceState', Array(String), nullable=True)
+    links_trace_id = Column('Links.TraceId', Array(String))
+    links_span_id = Column('Links.SpanId', Array(String))
+    links_trace_state = Column('Links.TraceState', Array(String))
     links_attributes = Column(
-        'Links.Attributes',
-        Array(Map(LowCardinality(String), String)),
-        nullable=True,
+        'Links.Attributes', Array(Map(LowCardinality(String), String))
     )
     __table_args__ = (
         MergeTree(
@@ -52,6 +55,6 @@ class OtelTraces(ClickHouseBaseTable):
                 'SpanName',
                 func.toDateTime(Column('Timestamp', DateTime64(9, timezone='UTC'))),
             ),
-            index_granularity=8192,
+            settings={'index_granularity': 8192},
         ),
     )

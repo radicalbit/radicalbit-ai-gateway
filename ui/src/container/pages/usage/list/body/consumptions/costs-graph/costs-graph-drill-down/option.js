@@ -1,6 +1,6 @@
 import chartTsToDate from '@Helpers/chart-ts-to-date';
 import { CHART_COLORS } from '@Src/constants';
-import formatUsd from '@Helpers/format-usd';
+import formatCost from '@Helpers/format-cost';
 import * as echarts from 'echarts/core';
 import { GROUP_BY } from '../group-by';
 
@@ -24,7 +24,7 @@ const GRANULARITY_TITLE = {
 };
 
 export default ({ xAxisData, series = [], granularity, total, drillDownEntity }) => {
-  const formattedTotal = formatUsd(total);
+  const formattedTotal = formatCost(total);
   const granularityLabel = GRANULARITY_TITLE[granularity] || 'Hourly';
 
   return ({
@@ -100,12 +100,12 @@ export default ({ xAxisData, series = [], granularity, total, drillDownEntity })
         const dateStr = chartTsToDate({ ts, granularity, type: 'tooltip' });
 
         const totalNum = params.reduce((sum, p) => sum + p.value, 0);
-        const totalStr = formatUsd(totalNum);
+        const totalStr = formatCost(totalNum);
 
         const rows = params
           .filter((p) => !!p.value)
           .map((p) => {
-            const valueStr = formatUsd(p.value);
+            const valueStr = formatCost(p.value);
 
             return `
           <tr>

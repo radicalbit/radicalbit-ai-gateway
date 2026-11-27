@@ -1,10 +1,12 @@
 import unittest
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 from uuid import UUID
 
 from fastapi import FastAPI
 from starlette.testclient import TestClient
+from typing_extensions import override
 
+from radicalbit_ai_gateway.middleware.exception_handlers import add_exception_handler
 from radicalbit_ai_gateway.models.tag_dto import TagKeysDTO, TagKeyValuesDTO
 from radicalbit_ai_gateway.routes.tag_route import TagRoute
 from radicalbit_ai_gateway.services.project_service import ProjectService
@@ -19,6 +21,7 @@ PROJECT_NAME = 'test-project'
 
 
 class TestTagRoute(unittest.TestCase):
+    @override
     def setUp(self):
         self.prefix = '/public/api/v1'
         self.request_event_service: RequestEventService = MagicMock(
@@ -28,14 +31,16 @@ class TestTagRoute(unittest.TestCase):
 
         project_mock = MagicMock()
         project_mock.name = PROJECT_NAME
-        self.project_service.get_by_uuid = MagicMock(return_value=project_mock)
+        self.project_service.get_by_uuid = AsyncMock(return_value=project_mock)
 
         router = TagRoute.get_tag_router(
             request_event_service=self.request_event_service,
             project_service=self.project_service,
         )
         app = FastAPI(title='AI Gateway', debug=True)
-        app.add_exception_handler(ProjectNotFoundError, auth_registry_exception_handler)
+        add_exception_handler(
+            app, ProjectNotFoundError, auth_registry_exception_handler
+        )
         app.include_router(router, prefix=self.prefix)
         self.client = TestClient(app)
         self.project_path = f'{self.prefix}/projects/{PROJECT_UUID}'
@@ -57,7 +62,7 @@ class TestTagRoute(unittest.TestCase):
 
     def test_get_tag_keys_project_not_found(self):
         self.request_event_service.get_tag_keys = MagicMock()
-        self.project_service.get_by_uuid = MagicMock(
+        self.project_service.get_by_uuid = AsyncMock(
             side_effect=ProjectNotFoundError('nope')
         )
         response = self.client.get(f'{self.project_path}/tags/keys')
@@ -84,7 +89,7 @@ class TestTagRoute(unittest.TestCase):
 
     def test_get_tag_key_values_project_not_found(self):
         self.request_event_service.get_tag_key_values = MagicMock()
-        self.project_service.get_by_uuid = MagicMock(
+        self.project_service.get_by_uuid = AsyncMock(
             side_effect=ProjectNotFoundError('nope')
         )
         response = self.client.get(f'{self.project_path}/tags/keys/env/values')

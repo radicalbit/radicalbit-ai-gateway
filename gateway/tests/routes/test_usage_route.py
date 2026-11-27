@@ -1,14 +1,16 @@
 import os
 import unittest
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 from uuid import UUID
 
 from fastapi import FastAPI
 from fastapi.encoders import jsonable_encoder
 from fastapi_pagination import Page, Params
 from starlette.testclient import TestClient
+from typing_extensions import override
 
 from radicalbit_ai_gateway.db.models.event import CostData, DetailedCostBreakdown
+from radicalbit_ai_gateway.middleware.exception_handlers import add_exception_handler
 from radicalbit_ai_gateway.models.event_dto import (
     CostDataDTO,
     RouteCostDTO,
@@ -32,6 +34,7 @@ GROUP_UUID = UUID('550e8400-e29b-41d4-a716-446655440003')
 
 
 class TestUsageRoute(unittest.TestCase):
+    @override
     @classmethod
     def setUpClass(cls):
         cls.prefix = '/public/api/v1'
@@ -42,7 +45,7 @@ class TestUsageRoute(unittest.TestCase):
 
         project_mock = MagicMock()
         project_mock.name = PROJECT_NAME
-        cls.project_service.get_by_uuid = MagicMock(return_value=project_mock)
+        cls.project_service.get_by_uuid = AsyncMock(return_value=project_mock)
 
         project_entry_mock = MagicMock()
         project_entry_mock.config.routes = {
@@ -56,9 +59,10 @@ class TestUsageRoute(unittest.TestCase):
             mcp_usage_service=cls.mcp_usage_service,
         )
         app = FastAPI(title='AI Gateway', debug=True)
-        app.add_exception_handler(GatewayError, gateway_exception_handler)
+        add_exception_handler(app, GatewayError, gateway_exception_handler)
         app.state.project_configs = {PROJECT_NAME: project_entry_mock}
         app.include_router(router, prefix=cls.prefix)
+        cls.app = app
         cls.client = TestClient(app)
         cls.project_path = f'{cls.prefix}/projects/{PROJECT_UUID}'
 
@@ -114,13 +118,13 @@ class TestUsageRoute(unittest.TestCase):
         assert response.status_code == 200
         response_json = response.json()
 
-        assert response_json['routes'][0]['summary']['inputCost'] == 10.5
-        assert response_json['routes'][0]['summary']['outputCost'] == 20.3
-        assert response_json['routes'][0]['summary']['totalCost'] == 30.8
-        assert 'total' in response_json['routes'][0]['summary']
-        assert 'totals' in response_json['routes'][0]['summary']
-        assert 'chatModels' in response_json['routes'][0]['summary']
-        assert response_json['routes'][0]['summary']['total'] == 30.8
+        assert response_json == jsonable_encoder(
+            expected, by_alias=True, exclude_none=True
+        )
+        summary = response_json['routes'][0]['summary']
+        # The breakdown only: the pre-breakdown totals are no longer served.
+        assert set(summary) == {'total', 'totals', 'chatModels'}
+        assert summary['total'] == 30.8
 
         call_kwargs = self.event_service.get_all_routes_costs.call_args.kwargs
         assert call_kwargs['project_uuid'] == PROJECT_UUID
@@ -192,7 +196,7 @@ class TestUsageRoute(unittest.TestCase):
         assert response.status_code == 400
 
     def test_usage_costs_returns_empty_when_no_active_config(self):
-        app = self.client.app
+        app = self.app
         original = app.state.project_configs
         app.state.project_configs = {}
         try:
@@ -292,14 +296,14 @@ class TestUsageRoute(unittest.TestCase):
         assert response.json()['total'] == 0
 
     def test_mcp_key_usage_unknown_project_returns_404(self):
-        self.project_service.validate_exists = MagicMock(
+        self.project_service.validate_exists = AsyncMock(
             side_effect=GatewayNotFoundError('Project not found')
         )
         try:
             response = self.client.get(f'{self.project_path}/usage/mcp/keys')
             assert response.status_code == 404
         finally:
-            self.project_service.validate_exists = MagicMock()
+            self.project_service.validate_exists = AsyncMock()
 
     def test_mcp_key_usage_with_malformed_tag_returns_400(self):
         response = self.client.get(f'{self.project_path}/usage/mcp/keys?tags=not-a-tag')

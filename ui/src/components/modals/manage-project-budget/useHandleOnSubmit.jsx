@@ -1,6 +1,6 @@
 import { DUPLICATE_BUDGET_ERROR } from '@Components/limits/constants';
 import {
-  asBudgets, formatCount, getNewLimitsErrors, isLimitComplete,
+  asBudgets, formatCount, getNewLimitsErrors,
 } from '@Components/limits/helpers';
 import SuccessMessage from '@Components/success-message';
 import { getMessageFromQueryError } from '@Helpers/errors';
@@ -44,7 +44,7 @@ export default () => {
   const [trigger, args] = useCreateProjectBudgetLimitsMutation({ fixedCacheKey: `create-project-budget-${uuid}` });
 
   const hasRowErrors = getNewLimitsErrors({ duplicateError: DUPLICATE_BUDGET_ERROR, limits, rows }).some(Boolean);
-  const isSubmitDisabled = isBlocked || isFormInvalid() || hasRowErrors || !rows.every(isLimitComplete) || args.isLoading;
+  const isSubmitDisabled = isBlocked || isFormInvalid() || args.isLoading;
 
   const handleOnSubmit = () => {
     if (isSubmitDisabled) {
@@ -52,6 +52,10 @@ export default () => {
     }
 
     submitForm(async ({ form: formData }, setError) => {
+      if (hasRowErrors) {
+        return;
+      }
+
       const payload = formData.limits.map(({ algorithm, value, windowSize }) => ({ algorithm, value, windowSize }));
 
       const { error } = await trigger({

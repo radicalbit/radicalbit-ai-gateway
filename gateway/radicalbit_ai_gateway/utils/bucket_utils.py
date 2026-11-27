@@ -67,6 +67,11 @@ def get_bucket_delta(
     return timedelta()
 
 
+def add_month(moment: datetime) -> datetime:
+    """Return ``moment`` one calendar month later (Jan 31 -> Feb 28/29)."""
+    return moment + relativedelta(months=1)
+
+
 def advance_bucket(
     bucket: datetime,
     granularity: Literal['hours', 'days', 'weeks', 'months'],
@@ -98,13 +103,13 @@ def advance_bucket(
             offset_delta = timedelta(seconds=offset_seconds)
             shifted = bucket + offset_delta
             # Add exactly one month first, then normalize to day 1
-            next_shifted = shifted + relativedelta(months=1)
+            next_shifted = add_month(shifted)
             next_shifted = next_shifted.replace(
                 day=1, hour=0, minute=0, second=0, microsecond=0
             )
             return next_shifted - offset_delta
         # UTC case: add one month, then normalize to day 1
-        next_bucket = bucket + relativedelta(months=1)
+        next_bucket = add_month(bucket)
         return next_bucket.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
     # For hours, days, weeks - simple addition
     return bucket + delta

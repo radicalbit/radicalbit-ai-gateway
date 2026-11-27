@@ -4,13 +4,10 @@ import uuid
 from fastapi import Request
 import pytest
 
-from radicalbit_ai_gateway.auth.request_auth import (
-    authenticate_bearer_request,
-    ensure_key_bound_to_route,
-)
+from radicalbit_ai_gateway.auth.request_auth import authenticate_bearer_request
 from radicalbit_ai_gateway.middleware.request_event_context import RequestEventContext
 from radicalbit_ai_gateway.models.auth_dto import KeyDetails
-from radicalbit_ai_gateway.utils.exceptions import InvalidApiKey, MissingApiKey
+from radicalbit_ai_gateway.utils.exceptions import MissingApiKey
 
 KEY_DETAILS = KeyDetails(
     api_key_uuid=str(uuid.uuid4()),
@@ -48,6 +45,7 @@ async def test_happy_path_populates_state_and_context():
     assert request.state.api_key_uuid == KEY_DETAILS.api_key_uuid
     assert request.state.group_name == 'team-a'
     ctx = RequestEventContext.get(request)
+    assert ctx is not None
     assert ctx.api_key_uuid == KEY_DETAILS.api_key_uuid
     assert ctx.group_uuid == KEY_DETAILS.group_uuid
 
@@ -59,22 +57,3 @@ async def test_missing_or_malformed_bearer_raises(headers):
     request = _make_request(headers)
     with pytest.raises(MissingApiKey, match='Missing API key'):
         await authenticate_bearer_request(request, 'proj-uuid', 'proj-name')
-
-
-def test_ensure_key_bound_to_route_passes_when_bound():
-    group_service = MagicMock()
-    group_service.check_key_uuid_for_route.return_value = True
-
-    ensure_key_bound_to_route(group_service, 'proj', 'route-a', KEY_DETAILS)
-
-    group_service.check_key_uuid_for_route.assert_called_once_with(
-        'proj/route-a', uuid.UUID(KEY_DETAILS.api_key_uuid)
-    )
-
-
-def test_ensure_key_bound_to_route_raises_when_not_bound():
-    group_service = MagicMock()
-    group_service.check_key_uuid_for_route.return_value = False
-
-    with pytest.raises(InvalidApiKey, match='not associated with route route-a'):
-        ensure_key_bound_to_route(group_service, 'proj', 'route-a', KEY_DETAILS)

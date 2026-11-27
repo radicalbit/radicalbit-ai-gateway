@@ -22,8 +22,6 @@ const HISTORY_HOURS = 48;
 
 const LATEST_HOURS_SHOWN = 5;
 
-const chartStyle = { width: '100%', height: '11rem' };
-
 const SECONDS_PER_HOUR = 3600;
 
 const toHourlyBuckets = (history) => {
@@ -141,7 +139,7 @@ function HistoryChart({ buckets }) {
       onChartReady={handleOnChartReady}
       option={withChartAria(option({ buckets }))}
       ref={chartRef}
-      style={chartStyle}
+      style={{ width: '100%', height: '11rem' }}
     />
   );
 }
@@ -157,10 +155,6 @@ function Stat({ label, value, className = '' }) {
 }
 
 function LatestHour({ bucket: { bucketStart, sent, failed } }) {
-  const failedLabel = failed > 0
-    ? <span className="text-[var(--coo-error)] font-[var(--coo-font-weight-bold)]">{`, ${failed} failed`}</span>
-    : false;
-
   return (
     <div className="flex justify-between py-1 border-b border-[var(--coo-secondary-04)]">
       <span>{dayjs.unix(bucketStart).format('ddd DD MMM, HH:mm')}</span>
@@ -168,7 +162,8 @@ function LatestHour({ bucket: { bucketStart, sent, failed } }) {
       <span>
         {`${sent} sent`}
 
-        {failedLabel}
+        {failed > 0
+    && <span className="text-[var(--coo-error)] font-[var(--coo-font-weight-bold)]">{`, ${failed} failed`}</span>}
       </span>
     </div>
   );

@@ -1,9 +1,10 @@
 from collections.abc import Sequence
-import datetime
+import datetime as dt
 from uuid import UUID
 
 from sqlalchemy import select, update
 
+from radicalbit_ai_gateway.db.dao.dml import rows_matched
 from radicalbit_ai_gateway.db.database import Database
 from radicalbit_ai_gateway.db.tables.project_config_table import ProjectConfig
 from radicalbit_ai_gateway.db.tables.project_table import Project
@@ -11,20 +12,20 @@ from radicalbit_ai_gateway.models.config_slot import Slot
 from radicalbit_ai_gateway.models.config_status import ConfigStatus
 from radicalbit_ai_gateway.models.project_dto import ProjectFilter
 
-_UTC = getattr(datetime, 'UTC', datetime.timezone.utc)
+_UTC = getattr(dt, 'UTC', dt.timezone.utc)
 
 
 class ProjectDAO:
     def __init__(self, database: Database):
         self.db = database
 
-    def insert(self, project: Project) -> Project:
-        with self.db.begin_session() as session:
+    async def insert(self, project: Project) -> Project:
+        async with self.db.begin_session() as session:
             session.add(project)
-            session.flush()
+            await session.flush()
             return project
 
-    def insert_with_configs(
+    async def insert_with_configs(
         self,
         project: Project,
         slots: Sequence[tuple[Slot, str | None, ConfigStatus]],
@@ -33,10 +34,10 @@ class ProjectDAO:
         transaction, so a project is never left with a partial set of slots
         (the "always 2 slots" invariant holds even on a mid-creation crash).
         """
-        now = datetime.datetime.now(tz=_UTC)
-        with self.db.begin_session() as session:
+        now = dt.datetime.now(tz=_UTC)
+        async with self.db.begin_session() as session:
             session.add(project)
-            session.flush()  # assign project.uuid before linking the configs
+            await session.flush()  # assign project.uuid before linking the configs
             for slot, config_file, status in slots:
                 session.add(
                     ProjectConfig(
@@ -48,26 +49,26 @@ class ProjectDAO:
                         updated_at=None,
                     )
                 )
-            session.flush()
+            await session.flush()
             return project
 
-    def get_by_uuid(self, project_uuid: UUID) -> Project | None:
-        with self.db.begin_session() as session:
+    async def get_by_uuid(self, project_uuid: UUID) -> Project | None:
+        async with self.db.begin_session() as session:
             stmt = select(Project).where(
                 Project.uuid == project_uuid,
                 Project.deleted_at.is_(None),
             )
-            return session.scalar(stmt)
+            return await session.scalar(stmt)
 
-    def get_all(self) -> Sequence[Project]:
-        with self.db.begin_session() as session:
+    async def get_all(self) -> Sequence[Project]:
+        async with self.db.begin_session() as session:
             stmt = select(Project).where(Project.deleted_at.is_(None))
-            return session.scalars(stmt).all()
+            return (await session.scalars(stmt)).all()
 
-    def get_all_filtered(
+    async def get_all_filtered(
         self, project_filter: ProjectFilter | None = None
     ) -> Sequence[Project]:
-        with self.db.begin_session() as session:
+        async with self.db.begin_session() as session:
             stmt = select(Project).where(Project.deleted_at.is_(None))
             if project_filter in (ProjectFilter.ACTIVE, ProjectFilter.PROD):
                 stmt = stmt.where(Project.served_config_uuid.is_not(None))
@@ -75,9 +76,9 @@ class ProjectDAO:
                 stmt = stmt.where(Project.served_config_uuid.is_(None))
             elif project_filter == ProjectFilter.WITH_USAGE:
                 stmt = stmt.where(Project.first_served_at.is_not(None))
-            return session.scalars(stmt).all()
+            return (await session.scalars(stmt)).all()
 
-    def get_all_by_config_status(
+    async def get_all_by_config_status(
         self, config_status: ConfigStatus | None = None, *, exclude_empty: bool = False
     ) -> Sequence[Project]:
         """Return non-deleted projects, optionally restricted to those having at
@@ -88,7 +89,7 @@ class ProjectDAO:
         NULL ``updated_at`` (the EMPTY template state), so this distinguishes a
         genuine DRAFT from an untouched EMPTY slot.
         """
-        with self.db.begin_session() as session:
+        async with self.db.begin_session() as session:
             stmt = select(Project).where(Project.deleted_at.is_(None))
             if config_status is not None:
                 conditions = [
@@ -102,23 +103,23 @@ class ProjectDAO:
                     select(ProjectConfig.uuid).where(*conditions).exists()
                 )
                 stmt = stmt.where(has_matching_config)
-            return session.scalars(stmt).all()
+            return (await session.scalars(stmt)).all()
 
-    def get_all_with_config(self) -> Sequence[Project]:
+    async def get_all_with_config(self) -> Sequence[Project]:
         """Projects that currently have a served config (used at startup)."""
-        with self.db.begin_session() as session:
+        async with self.db.begin_session() as session:
             stmt = select(Project).where(
                 Project.served_config_uuid.is_not(None),
                 Project.deleted_at.is_(None),
             )
-            return session.scalars(stmt).all()
+            return (await session.scalars(stmt)).all()
 
-    def soft_delete(self, project_uuid: UUID) -> int:
-        now = datetime.datetime.now(tz=_UTC)
-        with self.db.begin_session() as session:
+    async def soft_delete(self, project_uuid: UUID) -> int:
+        now = dt.datetime.now(tz=_UTC)
+        async with self.db.begin_session() as session:
             query = (
                 update(Project)
                 .where(Project.uuid == project_uuid)
                 .values(deleted_at=now, updated_at=now)
             )
-            return session.execute(query).rowcount
+            return await rows_matched(session, query)

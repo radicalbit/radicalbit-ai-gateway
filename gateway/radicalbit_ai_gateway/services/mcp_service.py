@@ -3,14 +3,12 @@ from collections.abc import Mapping
 from contextvars import ContextVar
 from importlib.metadata import PackageNotFoundError, version as _package_version
 import logging
+from typing import Any
 from urllib.parse import quote, unquote, urlsplit, urlunsplit
-from uuid import UUID
 
 from fastapi import Request
 from opentelemetry.trace import Status, StatusCode, get_current_span
-from traceloop.sdk.decorators import task
 
-from radicalbit_ai_gateway.auth.request_auth import authenticate_bearer_request
 from radicalbit_ai_gateway.events.events_processor import emit_event
 from radicalbit_ai_gateway.mcp_proxy import jsonrpc
 from radicalbit_ai_gateway.mcp_proxy.errors import (
@@ -25,13 +23,14 @@ from radicalbit_ai_gateway.mcp_proxy.list_cache import (
 )
 from radicalbit_ai_gateway.mcp_proxy.upstream_client import McpUpstreamClient
 from radicalbit_ai_gateway.middleware.request_event_context import RequestEventContext
+from radicalbit_ai_gateway.models.auth_dto import KeyDetails
 from radicalbit_ai_gateway.models.event_payload import McpInvocationEventPayload
 from radicalbit_ai_gateway.models.event_type import EventType
 from radicalbit_ai_gateway.models.mcp_authorized_request import McpAuthorizedRequest
 from radicalbit_ai_gateway.models.mcp_dispatch_result import McpDispatchResult
 from radicalbit_ai_gateway.models.mcp_server import ALIAS_TOOL_SEPARATOR, AnyMcpServer
 from radicalbit_ai_gateway.models.project_entry import ProjectEntry
-from radicalbit_ai_gateway.services.group_service import GroupService
+from radicalbit_ai_gateway.telemetry.tracing import task
 from radicalbit_ai_gateway.utils.app_config import get_app_config
 from radicalbit_ai_gateway.utils.exceptions import McpTransportError
 from radicalbit_ai_gateway.utils.request_context import get_current_request_tags
@@ -174,7 +173,9 @@ def strip_uri_credentials(uri: str) -> str:
         return uri
 
 
-def target_attributes(method: str, params: dict, servers: list[AnyMcpServer]) -> dict:
+def target_attributes(
+    method: str, params: dict[str, Any], servers: list[AnyMcpServer]
+) -> dict[str, Any]:
     """``alias``/``target`` for the methods addressing one object.
 
     Resolved here rather than inside each handler because a ``@task`` detaches
@@ -227,39 +228,29 @@ class McpService:
     def __init__(
         self,
         upstream_client: McpUpstreamClient,
-        group_service: GroupService,
         allowed_origins: list[str] | None = None,
     ):
         self._upstream_client = upstream_client
-        self._group_service = group_service
         self._allowed_origins = (
             allowed_origins
             if allowed_origins is not None
             else get_app_config().cors_config.cors_allow_origins
         )
 
-    async def authorize(
-        self,
-        request: Request,
-        project_name: str,
-        route_name: str,
-        request_uuid: str,
-    ) -> McpAuthorizedRequest:
-        """Attribute the POST, then authenticate and authorize it.
+    def open(
+        self, request: Request, project_name: str, route_name: str, request_uuid: str
+    ) -> str:
+        """Attribute the POST before any check can reject it; return the
+        project's uuid ('' for an unknown project).
 
-        Everything that can reject before the route's own features apply:
-        Origin, bearer auth, an unknown project or route, and a key not bound
-        to it. The caller applies the route-level features to the result and
-        then calls :meth:`dispatch` — the same division the /v1 endpoints use,
-        where the endpoint orchestrates features and the route object only
-        carries the instances.
+        Every outcome — a rejected Origin, a missing, invalid or unbound key —
+        still names the route and project it targeted in both the span and
+        the REQUEST event.
         """
-        entry: ProjectEntry | None = request.app.state.project_configs.get(project_name)
+        entry: object = request.app.state.project_configs.get(project_name)
+        if not isinstance(entry, ProjectEntry):
+            entry = None
         project_uuid = str(entry.uuid) if entry else ''
-
-        # Populated before the first check that can reject, so every outcome —
-        # a rejected Origin, a missing, invalid or unbound key — still names the
-        # route and project it targeted in both the span and the REQUEST event.
         set_trace_attributes(
             request_uuid=request_uuid,
             project_uuid=project_uuid,
@@ -271,38 +262,32 @@ class McpService:
         ctx.route_name = route_name
         ctx.project_uuid = project_uuid
         ctx.project_name = project_name
+        return project_uuid
 
-        self._validate_origin(request)
-
-        set_operation_category(OperationCategory.AUTH)
-        key_details = await authenticate_bearer_request(
-            request, project_uuid, project_name
-        )
-
-        if entry is None or route_name not in entry.config.routes:
-            raise McpTransportError(
-                f"Unknown project or route: '{project_name}/{route_name}'",
-                404,
-                code='mcp_route_not_found',
-            )
-        route_key = f'{project_name}/{route_name}'
-        if not self._group_service.check_key_uuid_for_route(
-            route_key, UUID(key_details.api_key_uuid)
-        ):
-            raise McpTransportError(
-                f'API Key not associated with route {route_name}',
-                403,
-                code='mcp_key_not_bound',
-            )
-
+    def authorized(
+        self,
+        request: Request,
+        *,
+        request_uuid: str,
+        project_name: str,
+        project_uuid: str,
+        route_name: str,
+        key_details: KeyDetails,
+    ) -> McpAuthorizedRequest:
+        """Return what admission established, with the route's upstream
+        servers, for :meth:`dispatch`.
+        """
+        entry: object = request.app.state.project_configs.get(project_name)
+        if not isinstance(entry, ProjectEntry):
+            entry = None
         return McpAuthorizedRequest(
             request_uuid=request_uuid,
             project_name=project_name,
             project_uuid=project_uuid,
             route_name=route_name,
-            route_key=route_key,
+            route_key=f'{project_name}/{route_name}',
             key_details=key_details,
-            servers=entry.config.get_route_mcp_servers(route_name),
+            servers=entry.config.get_route_mcp_servers(route_name) if entry else [],
         )
 
     async def dispatch(
@@ -407,7 +392,7 @@ class McpService:
         list_cache: McpListCache | None,
         method: str,
         key: str,
-    ) -> dict | None:
+    ) -> dict[str, Any] | None:
         """Return the cached result for a list method, or ``None`` to fan out."""
         if list_cache is None:
             return None
@@ -423,7 +408,7 @@ class McpService:
     async def _store_list(
         list_cache: McpListCache | None,
         method: str,
-        result: dict,
+        result: dict[str, Any],
         failed: list[str],
     ) -> None:
         """Cache a list method's result, unless the fan-out was degraded.
@@ -452,7 +437,7 @@ class McpService:
 
     @staticmethod
     def _record_invocation(
-        authorized: McpAuthorizedRequest, method: str, target: dict
+        authorized: McpAuthorizedRequest, method: str, target: dict[str, Any]
     ) -> None:
         """Report an addressed MCP invocation to the events pipeline.
 
@@ -486,7 +471,7 @@ class McpService:
 
     async def _dispatch(
         self,
-        body: dict,
+        body: object,
         servers: list[AnyMcpServer],
         client_headers: Mapping[str, str] | None,
         list_cache: McpListCache | None = None,
@@ -601,7 +586,7 @@ class McpService:
         )
 
     @task(name='mcp_initialize')
-    def _initialize(self, params: dict) -> dict:
+    def _initialize(self, params: dict[str, Any]) -> dict[str, Any]:
         return {
             'protocolVersion': negotiate_protocol_version(
                 params.get('protocolVersion')
@@ -616,7 +601,7 @@ class McpService:
         servers: list[AnyMcpServer],
         client_headers: Mapping[str, str] | None,
         list_cache: McpListCache | None = None,
-    ) -> dict:
+    ) -> dict[str, Any]:
         """Fan out to the route's upstreams and merge their tools.
 
         Each tool name is prefixed ``'{alias}__{tool}'``; all other fields
@@ -638,7 +623,7 @@ class McpService:
             ),
             return_exceptions=True,
         )
-        tools: list[dict] = []
+        tools: list[dict[str, Any]] = []
         failed: list[str] = []
         for server, result in zip(targets, results, strict=True):
             if isinstance(result, BaseException):
@@ -673,10 +658,10 @@ class McpService:
     @task(name='mcp_tools_call')
     async def _tools_call(
         self,
-        params: dict,
+        params: dict[str, Any],
         servers: list[AnyMcpServer],
         client_headers: Mapping[str, str] | None,
-    ) -> dict:
+    ) -> dict[str, Any]:
         """Resolve the ``'{alias}__{tool}'`` prefix and forward the call.
 
         The upstream ``CallToolResult`` passes through unchanged, including
@@ -719,7 +704,7 @@ class McpService:
         servers: list[AnyMcpServer],
         client_headers: Mapping[str, str] | None,
         list_cache: McpListCache | None = None,
-    ) -> dict:
+    ) -> dict[str, Any]:
         """Fan out to the route's upstreams and merge their prompts.
 
         Same shape as :meth:`_tools_list`, ``allowed_prompts`` included: each
@@ -744,7 +729,7 @@ class McpService:
             ),
             return_exceptions=True,
         )
-        prompts: list[dict] = []
+        prompts: list[dict[str, Any]] = []
         failed: list[str] = []
         for server, result in zip(targets, results, strict=True):
             if isinstance(result, BaseException):
@@ -779,10 +764,10 @@ class McpService:
     @task(name='mcp_prompts_get')
     async def _prompts_get(
         self,
-        params: dict,
+        params: dict[str, Any],
         servers: list[AnyMcpServer],
         client_headers: Mapping[str, str] | None,
-    ) -> dict:
+    ) -> dict[str, Any]:
         """Resolve the ``'{alias}__{name}'`` prefix and forward the call.
 
         Same shape as :meth:`_tools_call`.
@@ -818,7 +803,7 @@ class McpService:
         servers: list[AnyMcpServer],
         client_headers: Mapping[str, str] | None,
         list_cache: McpListCache | None = None,
-    ) -> dict:
+    ) -> dict[str, Any]:
         """Fan out to the route's upstreams and merge their resources.
 
         Each resource ``uri`` is wrapped via :func:`encode_resource_uri` so
@@ -847,7 +832,7 @@ class McpService:
             ),
             return_exceptions=True,
         )
-        resources: list[dict] = []
+        resources: list[dict[str, Any]] = []
         failed: list[str] = []
         for server, result in zip(targets, results, strict=True):
             if isinstance(result, BaseException):
@@ -888,10 +873,10 @@ class McpService:
     @task(name='mcp_resources_read')
     async def _resources_read(
         self,
-        params: dict,
+        params: dict[str, Any],
         servers: list[AnyMcpServer],
         client_headers: Mapping[str, str] | None,
-    ) -> dict:
+    ) -> dict[str, Any]:
         """Unwrap the aliased ``uri`` and forward the read.
 
         The returned ``contents[].uri`` is re-wrapped so the raw upstream URI
@@ -933,7 +918,7 @@ class McpService:
                 content['uri'] = encode_resource_uri(alias, content['uri'])
         return data
 
-    def _validate_origin(self, request: Request) -> None:
+    def validate_origin(self, request: Request) -> None:
         """DNS-rebinding defense: reject browser Origins not in the allowlist.
 
         Requests without an ``Origin`` header (non-browser clients) pass.

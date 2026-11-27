@@ -5,14 +5,14 @@ import { Route } from 'lucide-react';
 function TracingListHeader() {
   return (
     <>
-      <Helmet title="Tracing – Radicalbit Platform" />
+      <Helmet title="Observability – Radicalbit Platform" />
 
       <NewHeader
         title={(
           <SectionTitle
             level={1}
             subtitle="Inspect individual requests processed by the gateway."
-            title="Tracing"
+            title="Observability"
             titlePrefix={<Lucide icon={Route} />}
           />
         )}

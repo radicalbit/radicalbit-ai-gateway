@@ -45,6 +45,16 @@ class TestCeleryBuffer:
             mock_send.assert_called_once()
             assert len(buffer._buffer) == 0
 
+    def test_a_batch_celery_refuses_goes_back_to_the_head_of_the_buffer(self):
+        buffer = CeleryBuffer(task_name='test_task', buffer_name='TestBuffer')
+        buffer._buffer = [{'id': 2}]
+
+        with patch('radicalbit_ai_gateway.events.buffer.celery_app') as celery:
+            celery.send_task.side_effect = ConnectionError('broker down')
+            buffer._send_batch([{'id': 0}, {'id': 1}])
+
+        assert buffer._buffer == [{'id': 0}, {'id': 1}, {'id': 2}]
+
     def test_close(self):
         """Test closing the buffer."""
         buffer = CeleryBuffer(task_name='test_task', buffer_name='TestBuffer')

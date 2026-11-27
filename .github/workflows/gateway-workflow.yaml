@@ -5,6 +5,8 @@ on:
       - "main"
     paths:
       - "gateway/**"
+      - "ui/**"
+      - "Dockerfile"
       - ".github/workflows/gateway-**"
       - ".github/workflows/tests.yaml"
   pull_request:
@@ -12,6 +14,8 @@ on:
       - "*"
     paths:
       - "gateway/**"
+      - "ui/**"
+      - "Dockerfile"
       - ".github/workflows/gateway-**"
       - ".github/workflows/tests.yaml"
 
@@ -20,7 +24,7 @@ permissions:
 
 env:
   PYTHON_VERSION: "3.11"
-  UV_VERSION: "0.7.13"
+  UV_VERSION: "0.13.8"
   IMAGES_TAG: main
   # Dependency-Track project names (registry-independent, stable across builds)
   GATEWAY_PYTHON_PROJECT: radicalbit-ai-gateway-python

@@ -50,10 +50,6 @@ function ThreeDotsMenu() {
   );
 }
 
-const DISABLED_GROUP_TOOLTIP = 'This group is managed externally and cannot be modified';
-
-const NO_CREDENTIALS_TOOLTIP = 'Add at least one credential: limits are applied to the credentials in the group, not to the group';
-
 export const useGetThreeDotsMenuItems = (uuid) => {
   const { showModal } = useModals();
   const { data, isLoading, isError, isSuccess } = useGetGroupQuery(uuid, { skip: !uuid });
@@ -90,33 +86,15 @@ export const useGetThreeDotsMenuItems = (uuid) => {
 
   const applyLimitsItem = hasCredentials
     ? { label: 'Apply limits to credentials', onClick: handleOnApplyLimits }
-    : { label: <Tooltip title={NO_CREDENTIALS_TOOLTIP}>Apply limits to credentials</Tooltip>, disabled: true };
+    : { label: <Tooltip title="Add at least one credential: limits are applied to the credentials in the group, not to the group">Apply limits to credentials</Tooltip>, disabled: true };
 
   if (isExternallyManaged) {
     return [
       {
-        label: <Tooltip title={DISABLED_GROUP_TOOLTIP}>Edit group</Tooltip>,
-        disabled: true,
-      },
-      {
-        type: 'divider',
-      },
-      {
         label: 'Associate routes',
         onClick: handleOnAssociateRoutes,
       },
-      {
-        label: <Tooltip title={DISABLED_GROUP_TOOLTIP}>Associate credentials</Tooltip>,
-        disabled: true,
-      },
       applyLimitsItem,
-      {
-        type: 'divider',
-      },
-      {
-        label: <Tooltip title={DISABLED_GROUP_TOOLTIP}><div className="is-error">Delete group</div></Tooltip>,
-        disabled: true,
-      },
     ];
   }
 

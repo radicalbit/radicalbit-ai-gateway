@@ -3,6 +3,7 @@ import { forwardRef } from 'react';
 import './_styles.less';
 
 const SIZE_CLASSNAMES = {
+  sm: 'w-3.5 h-3.5',
   md: 'w-5 h-5',
 };
 
@@ -20,12 +21,12 @@ const Lucide = forwardRef(({
     {
       [`c-lucide--type-${type}`]: type,
       'c-lucide--disabled': disabled,
+      'c-lucide--clickable': onClick,
     },
     'c-lucide',
   );
   const sizeClassName = SIZE_CLASSNAMES[size] ?? SIZE_CLASSNAMES.md;
 
-  // A clickable icon behaves as a button: focusable and activable with Enter / Space
   const handleOnKeyDown = (e) => {
     if (e.key === 'Enter' || e.key === ' ') {
       e.preventDefault();

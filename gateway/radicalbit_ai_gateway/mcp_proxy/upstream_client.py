@@ -1,8 +1,8 @@
 import asyncio
-from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
+from collections.abc import AsyncGenerator, Awaitable, Callable, Mapping
 from contextlib import asynccontextmanager
 import logging
-from typing import TypeVar
+from typing import Any, TypeVar
 
 from mcp import ClientSession, types
 from mcp.client.stdio import (
@@ -12,7 +12,6 @@ from mcp.client.stdio import (
 )
 from mcp.client.streamable_http import create_mcp_http_client, streamable_http_client
 from mcp.shared.exceptions import MCPError as SdkMcpError
-from traceloop.sdk.decorators import task
 
 from radicalbit_ai_gateway.mcp_proxy.errors import McpUpstreamError
 from radicalbit_ai_gateway.mcp_proxy.headers import build_upstream_headers
@@ -21,6 +20,7 @@ from radicalbit_ai_gateway.models.mcp_server import (
     McpHttpServer,
     McpStdioServer,
 )
+from radicalbit_ai_gateway.telemetry.tracing import task
 
 logger = logging.getLogger(__name__)
 
@@ -70,7 +70,7 @@ class McpUpstreamClient:
         self,
         server: AnyMcpServer,
         name: str,
-        arguments: dict | None = None,
+        arguments: dict[str, Any] | None = None,
         *,
         client_headers: Mapping[str, str] | None = None,
     ) -> types.CallToolResult:
@@ -136,7 +136,7 @@ class McpUpstreamClient:
         self,
         server: AnyMcpServer,
         client_headers: Mapping[str, str] | None,
-    ) -> AsyncIterator[ClientSession]:
+    ) -> AsyncGenerator[ClientSession]:
         if isinstance(server, McpHttpServer):
             # The transport no longer takes headers: they belong to the httpx
             # client, which we own and therefore have to close ourselves.

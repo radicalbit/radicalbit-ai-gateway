@@ -22,7 +22,6 @@ import CodeEditor from './code-editor';
 import { schema } from './schema';
 import useGetActiveConfig from './useGetActiveConfig';
 
-const ACCEPTED_IMPORT_EXTENSIONS = '.yaml,.yml';
 const PREVENT_AUTO_UPLOAD = Upload.LIST_IGNORE ?? false;
 
 const MENU_TRIGGER = ['click'];
@@ -170,7 +169,7 @@ function ImportButton() {
 
   return (
     <Upload
-      accept={ACCEPTED_IMPORT_EXTENSIONS}
+      accept=".yaml,.yml"
       beforeUpload={handleBeforeUpload}
       disabled={isDisabled}
       showUploadList={false}

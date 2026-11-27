@@ -59,8 +59,6 @@ spec:
           image: "{{ .Values.gateway.migrations.image.repository }}:{{ .Values.image.tag }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           env:
-            - name: DB_TYPE
-              value: postgresql
             - name: DB_HOST
               value: {{ .Values.postgresql.host }}
             - name: DB_PORT
@@ -104,8 +102,6 @@ spec:
             {{- toYaml . | nindent 12 }}
           {{- end }}
           env:
-            - name: DB_TYPE
-              value: postgresql
             - name: DB_HOST
               value: {{ .Values.postgresql.host }}
             - name: DB_PORT
@@ -142,8 +138,8 @@ spec:
                   {{- end }}
             - name: CLICKHOUSE_DB_HOST
               value: {{ .Values.clickhouse.host }}
-            - name: CLICKHOUSE_DB_PORT
-              value: {{ .Values.clickhouse.port | quote }}
+            - name: CLICKHOUSE_DB_HTTP_PORT
+              value: {{ .Values.clickhouse.nativeProtocolPort | quote }}
             - name: CLICKHOUSE_DB_USER
               valueFrom:
                 secretKeyRef:

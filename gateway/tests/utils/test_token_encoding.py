@@ -1,3 +1,4 @@
+import pytest
 import tiktoken
 
 from radicalbit_ai_gateway.utils.token_encoding import (
@@ -14,46 +15,102 @@ class TestGetEncodingForModel:
     def setup_method():
         get_encoding_for_model.cache_clear()
 
-    def test_openai_returns_tiktoken_adapter(self):
-        enc = get_encoding_for_model('openai/gpt-4o')
-        assert isinstance(enc, TiktokenEncodingAdapter)
+    @pytest.mark.parametrize(
+        ('model', 'adapter', 'name'),
+        [
+            pytest.param(
+                'openai/gpt-4o',
+                TiktokenEncodingAdapter,
+                'o200k_base',
+                id='openai-gpt-4o',
+            ),
+            pytest.param(
+                'openai/gpt-4o-mini',
+                TiktokenEncodingAdapter,
+                'o200k_base',
+                id='openai-gpt-4o-mini',
+            ),
+            pytest.param(
+                'openai/gpt-4',
+                TiktokenEncodingAdapter,
+                'cl100k_base',
+                id='openai-gpt-4',
+            ),
+            pytest.param(
+                'openai/gpt-3.5-turbo',
+                TiktokenEncodingAdapter,
+                'cl100k_base',
+                id='openai-gpt-3.5-turbo',
+            ),
+            pytest.param(
+                'azure/gpt-4',
+                TiktokenEncodingAdapter,
+                'cl100k_base',
+                id='azure-uses-encoding-for-model',
+            ),
+            pytest.param(
+                'openai/some-unknown-model-xyz',
+                TiktokenEncodingAdapter,
+                DEFAULT_ENCODING,
+                id='unknown-openai-model-default',
+            ),
+            # Ollama models behind the openai/ prefix are unknown to tiktoken.
+            pytest.param(
+                'openai/llama3',
+                TiktokenEncodingAdapter,
+                DEFAULT_ENCODING,
+                id='ollama-via-openai-default',
+            ),
+            pytest.param(
+                'anthropic/claude-3-5-sonnet-latest',
+                TiktokenEncodingAdapter,
+                DEFAULT_ENCODING,
+                id='anthropic-default',
+            ),
+            pytest.param(
+                'google-genai/gemini-1.5-pro',
+                TiktokenEncodingAdapter,
+                DEFAULT_ENCODING,
+                id='google-genai-default',
+            ),
+            pytest.param(
+                'mock/test-model',
+                TiktokenEncodingAdapter,
+                DEFAULT_ENCODING,
+                id='mock-default',
+            ),
+            pytest.param(
+                '', TiktokenEncodingAdapter, DEFAULT_ENCODING, id='empty-string-default'
+            ),
+            pytest.param(
+                'gpt-4o',
+                TiktokenEncodingAdapter,
+                DEFAULT_ENCODING,
+                id='no-slash-default',
+            ),
+            pytest.param(
+                'deepseek/deepseek-chat',
+                DeepSeekEncodingAdapter,
+                'deepseek',
+                id='deepseek',
+            ),
+        ],
+    )
+    def test_selects_the_encoding_for_the_model(self, model, adapter, name):
+        enc = get_encoding_for_model(model)
+        assert isinstance(enc, adapter)
+        assert isinstance(enc, TokenEncoding)
+        assert enc.name == name
 
-    def test_openai_gpt4o_returns_o200k_base(self):
-        enc = get_encoding_for_model('openai/gpt-4o')
-        assert enc.name == 'o200k_base'
-
-    def test_openai_gpt4_returns_cl100k_base(self):
-        enc = get_encoding_for_model('openai/gpt-4')
-        assert enc.name == 'cl100k_base'
-
-    def test_openai_gpt35_turbo_returns_cl100k_base(self):
-        enc = get_encoding_for_model('openai/gpt-3.5-turbo')
-        assert enc.name == 'cl100k_base'
-
-    def test_openai_gpt4o_mini_returns_o200k_base(self):
-        enc = get_encoding_for_model('openai/gpt-4o-mini')
-        assert enc.name == 'o200k_base'
-
-    def test_azure_model_uses_encoding_for_model(self):
-        enc = get_encoding_for_model('azure/gpt-4')
-        assert enc.name == 'cl100k_base'
-
-    def test_unknown_openai_model_falls_back_to_default(self):
-        enc = get_encoding_for_model('openai/some-unknown-model-xyz')
-        assert enc.name == DEFAULT_ENCODING
-
-    def test_anthropic_returns_default(self):
-        enc = get_encoding_for_model('anthropic/claude-3-5-sonnet-latest')
-        assert enc.name == DEFAULT_ENCODING
-
-    def test_deepseek_returns_deepseek_adapter(self):
-        enc = get_encoding_for_model('deepseek/deepseek-chat')
-        assert isinstance(enc, DeepSeekEncodingAdapter)
-        assert enc.name == 'deepseek'
-
-    def test_deepseek_produces_tokens(self):
-        enc = get_encoding_for_model('deepseek/deepseek-chat')
-        tokens = enc.encode('Hello, world!')
+    @pytest.mark.parametrize(
+        'model',
+        [
+            pytest.param('openai/gpt-4o', id='tiktoken'),
+            pytest.param('deepseek/deepseek-chat', id='deepseek'),
+        ],
+    )
+    def test_encoding_produces_tokens(self, model):
+        tokens = get_encoding_for_model(model).encode('Hello, world!')
         assert len(tokens) > 0
 
     def test_deepseek_token_count_differs_from_cl100k(self):
@@ -63,38 +120,6 @@ class TestGetEncodingForModel:
         ds_tokens = len(ds_enc.encode(text))
         cl_tokens = len(cl_enc.encode(text))
         assert ds_tokens != cl_tokens
-
-    def test_deepseek_satisfies_protocol(self):
-        enc = get_encoding_for_model('deepseek/deepseek-chat')
-        assert isinstance(enc, TokenEncoding)
-
-    def test_google_genai_returns_default(self):
-        enc = get_encoding_for_model('google-genai/gemini-1.5-pro')
-        assert enc.name == DEFAULT_ENCODING
-
-    def test_ollama_via_openai_provider(self):
-        """Ollama models using openai/ prefix with custom base_url should
-        fall back to default when tiktoken doesn't know the model name.
-        """
-        enc = get_encoding_for_model('openai/llama3')
-        assert enc.name == DEFAULT_ENCODING
-
-    def test_mock_provider_returns_default(self):
-        enc = get_encoding_for_model('mock/test-model')
-        assert enc.name == DEFAULT_ENCODING
-
-    def test_empty_string_returns_default(self):
-        enc = get_encoding_for_model('')
-        assert enc.name == DEFAULT_ENCODING
-
-    def test_no_slash_returns_default(self):
-        enc = get_encoding_for_model('gpt-4o')
-        assert enc.name == DEFAULT_ENCODING
-
-    def test_encoding_produces_tokens(self):
-        enc = get_encoding_for_model('openai/gpt-4o')
-        tokens = enc.encode('Hello, world!')
-        assert len(tokens) > 0
 
     def test_results_are_cached(self):
         enc1 = get_encoding_for_model('openai/gpt-4')

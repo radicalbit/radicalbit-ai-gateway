@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-import datetime
+import datetime as dt
 from uuid import UUID
 
 from pydantic import (
@@ -53,8 +53,8 @@ class ProjectBudgetLimitIn(BaseModel):
         return self
 
     def to_project_budget_limit(self, project_uuid: UUID) -> ProjectBudgetLimit:
-        UTC = getattr(datetime, 'UTC', datetime.timezone.utc)
-        now = datetime.datetime.now(tz=UTC)
+        UTC = getattr(dt, 'UTC', dt.timezone.utc)
+        now = dt.datetime.now(tz=UTC)
         return ProjectBudgetLimit(
             project_uuid=project_uuid,
             algorithm=self.algorithm.value,

@@ -27,19 +27,20 @@ from radicalbit_ai_gateway.llm.providers.anthropic import (
 
 URL = 'https://api.anthropic.com/v1/messages'
 MESSAGES = [HumanMessage('Hi')]
-WEATHER_TOOL = {
-    'type': 'function',
-    'function': {
-        'name': 'get_weather',
-        'description': 'Get the weather.',
-        'parameters': {'type': 'object', 'properties': {'city': {'type': 'string'}}},
-    },
+WEATHER_PARAMETERS = {'type': 'object', 'properties': {'city': {'type': 'string'}}}
+WEATHER_FUNCTION = {
+    'name': 'get_weather',
+    'description': 'Get the weather.',
+    'parameters': WEATHER_PARAMETERS,
 }
+WEATHER_TOOL = {'type': 'function', 'function': WEATHER_FUNCTION}
 WEATHER_USE = canned.ANTHROPIC_WEATHER_TOOL_USE
 
 
 def model(name: str = 'claude-sonnet-4-5', **kwargs) -> ChatAnthropic:
-    return init_chat_model(f'anthropic:{name}', api_key='sk', **kwargs)
+    chat_model = init_chat_model(f'anthropic:{name}', api_key='sk', **kwargs)
+    assert isinstance(chat_model, ChatAnthropic)
+    return chat_model
 
 
 async def invoke(chat_model, responses, messages=MESSAGES, **kwargs):
@@ -124,11 +125,13 @@ async def test_configured_params_reach_the_body():
     }
 
 
+@pytest.mark.filterwarnings('ignore:WARNING! .* is not default parameter')
 async def test_unknown_params_are_sent_as_is():
     _, requests = await invoke(model(service_tier='auto'), [canned.anthropic_message()])
     assert requests[0]['body']['service_tier'] == 'auto'
 
 
+@pytest.mark.filterwarnings('ignore:WARNING! .* is not default parameter')
 async def test_unknown_param_the_sdk_rejects_raises_type_error():
     with pytest.raises(TypeError):
         await invoke(model(api_version='2024'), [canned.anthropic_message()])
@@ -210,6 +213,7 @@ def test_tool_round_trip_is_merged_into_user_turns():
         ]
     )
     normalized = _normalize_tool_call_id('a:b.c')
+    assert normalized is not None
     assert normalized.startswith('toolu_')
     assert payload['messages'] == [
         {'role': 'user', 'content': 'Weather?'},
@@ -343,7 +347,7 @@ def test_bind_tools(tool_choice, expected):
     assert payload['tools'] == [
         {
             'name': 'get_weather',
-            'input_schema': WEATHER_TOOL['function']['parameters'],
+            'input_schema': WEATHER_PARAMETERS,
             'description': 'Get the weather.',
         }
     ]
@@ -407,6 +411,25 @@ async def test_usage_counts_cache_reads_and_writes_as_input():
             'ephemeral_5m_input_tokens': 200,
             'ephemeral_1h_input_tokens': 0,
         },
+    }
+
+
+async def test_usage_counts_a_cache_write_without_a_ttl_breakdown_as_input():
+    reply = canned.anthropic_message()
+    reply.json_body['usage'] = {
+        'input_tokens': 30,
+        'output_tokens': 7,
+        'cache_read_input_tokens': 1000,
+        'cache_creation_input_tokens': 200,
+    }
+
+    result, _ = await invoke(model(), [reply])
+
+    assert result.usage_metadata == {
+        'input_tokens': 1230,
+        'output_tokens': 7,
+        'total_tokens': 1237,
+        'input_token_details': {'cache_read': 1000, 'cache_creation': 200},
     }
 
 
@@ -600,7 +623,6 @@ async def test_missing_credentials_raise_a_clear_error(monkeypatch):
     monkeypatch.delenv('ANTHROPIC_API_KEY', raising=False)
     monkeypatch.delenv('ANTHROPIC_AUTH_TOKEN', raising=False)
     chat_model = ChatAnthropic('claude-sonnet-4-5')
-    chat_model.anthropic_api_key = None
     with pytest.raises(TypeError, match='Anthropic authentication failed'):
         await invoke(chat_model, [canned.anthropic_message()])
 
@@ -650,7 +672,7 @@ def test_inference_geo_container_and_user_profile_betas():
 def test_tool_betas_are_added_once():
     tools = [
         {'type': 'mcp_toolset', 'mcp_server_name': 'm'},
-        {**WEATHER_TOOL['function'], 'input_examples': [{'city': 'Rome'}]},
+        {**WEATHER_FUNCTION, 'input_examples': [{'city': 'Rome'}]},
         {
             'name': 'x',
             'description': 'Kept as is.',
@@ -933,6 +955,27 @@ def test_consecutive_user_turns_are_merged():
         }
     ]
     assert payload['system'] == 'late system'
+
+
+def test_consecutive_string_turns_are_merged_into_text_blocks():
+    payload = model()._request_payload(
+        [
+            SystemMessage('be brief'),
+            SystemMessage('be kind'),
+            HumanMessage('a'),
+            HumanMessage('b'),
+        ]
+    )
+    assert payload['system'] == [
+        {'type': 'text', 'text': 'be brief'},
+        {'type': 'text', 'text': 'be kind'},
+    ]
+    assert payload['messages'] == [
+        {
+            'role': 'user',
+            'content': [{'type': 'text', 'text': 'a'}, {'type': 'text', 'text': 'b'}],
+        }
+    ]
 
 
 def test_system_content_list_of_strings_and_blocks():
@@ -1311,6 +1354,8 @@ async def test_thinking_and_citation_replies_keep_their_blocks():
     }
 
 
+# The provider sends a float where the SDK types an int.
+@pytest.mark.filterwarnings('ignore:Pydantic serializer warnings')
 async def test_usage_with_non_integer_cache_creation_breakdown():
     usage = {
         'input_tokens': 5,

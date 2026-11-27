@@ -1,12 +1,12 @@
 import asyncio
+from collections.abc import Awaitable, Sequence
 from contextvars import ContextVar
 import logging
 import re
-from typing import NamedTuple, Protocol
+from typing import Any, NamedTuple, Protocol
 
 import httpx
 from opentelemetry import trace
-from traceloop.sdk.decorators import task, workflow
 
 from radicalbit_ai_gateway.events.events_processor import emit_event
 from radicalbit_ai_gateway.guardrails.judges.decision_judge_engine import (
@@ -25,28 +25,35 @@ from radicalbit_ai_gateway.llm.messages import (
     ToolMessage,
 )
 from radicalbit_ai_gateway.metrics.define_metrics import guardrails_triggered_counter
-from radicalbit_ai_gateway.models.event_payload import GuardrailEventPayload
+from radicalbit_ai_gateway.models.event_payload import (
+    GuardrailEventBehavior,
+    GuardrailEventPayload,
+)
 from radicalbit_ai_gateway.models.event_type import EventType
 from radicalbit_ai_gateway.models.gateway_config import get_model_from_model_id
-from radicalbit_ai_gateway.models.gateway_route_config import GatewayRouteConfig
 from radicalbit_ai_gateway.models.guardrails import (
+    CheckClassGuardrail,
+    CheckGuardrail,
     CheckParameter,
+    DecisionJudgeGuardrail,
     DecisionJudgeParameter,
     Guardrail,
     GuardrailBehaviorType,
-    GuardrailClass,
     GuardrailHistory,
     GuardrailMessageRole,
-    GuardrailParameter,
     GuardrailsAIParameter,
     GuardrailType,
     GuardrailWhereType,
+    JudgeGuardrail,
     JudgeParameter,
+    PresidioAnalyzerGuardrail,
     RedactParameter,
 )
 from radicalbit_ai_gateway.models.model import Model
-from radicalbit_ai_gateway.models.soft_block_info import SoftBlockInfo
+from radicalbit_ai_gateway.models.request_identity import RequestIdentity
+from radicalbit_ai_gateway.models.soft_block_info import SoftBlock
 from radicalbit_ai_gateway.services.cost_service import CostService
+from radicalbit_ai_gateway.telemetry.tracing import task, workflow
 from radicalbit_ai_gateway.utils.app_config import get_app_config
 from radicalbit_ai_gateway.utils.content_utils import ContentUtils
 from radicalbit_ai_gateway.utils.exceptions import (
@@ -108,18 +115,35 @@ def _context_words(
     return _trunc(snippet, max_len=max_len)
 
 
-class GuardrailCheckFunction(Protocol):
+class TextCheck(Protocol):
+    """A check of the texts against a CHECK parameter's values."""
+
     async def __call__(
         self,
         messages: list[BaseMessage],
-        params: GuardrailParameter,
-        route_config: GatewayRouteConfig,
+        params: CheckParameter,
+        route: str,
         **kwargs,
     ) -> bool: ...
 
 
-# A check function sets this when it triggers. apply_guardrails reads it.
-_reason_payload_ctx: ContextVar[dict | None] = ContextVar(
+class BoundCheck(Protocol):
+    """A guardrail's check, bound to its parameters."""
+
+    def __call__(
+        self, messages: list[BaseMessage], route: str, **kwargs
+    ) -> Awaitable[bool]: ...
+
+
+class CheckResult(NamedTuple):
+    """What the check guardrails found: a soft block, and whether a WARN fired."""
+
+    soft_block: SoftBlock | None = None
+    warned: bool = False
+
+
+# A check function sets this when it triggers. apply reads it.
+_reason_payload_ctx: ContextVar[dict[str, Any] | None] = ContextVar(
     'guardrail_reason_payload', default=None
 )
 
@@ -148,7 +172,7 @@ def _indexed_texts(
     for i, m in zip(indices, messages):
         text = ContentUtils.extract_text_content(getattr(m, 'content', ''))
         # A judge drops blank text too, so the reported indexes stay true.
-        if isinstance(text, str) and text.strip():
+        if text.strip():
             msg_type = getattr(m, 'type', '')
             items.append(_Text(i, _TYPE_TO_ROLE.get(msg_type, msg_type), text))
     return items
@@ -178,7 +202,7 @@ def _text_at_offset(
     return None
 
 
-def _window_payload(items: list[_Text]) -> dict:
+def _window_payload(items: list[_Text]) -> dict[str, Any]:
     """Index fields for a check that reads all texts as one (a judge).
 
     It cannot point at one message, so ``message_indices`` lists every message
@@ -192,7 +216,7 @@ def _window_payload(items: list[_Text]) -> dict:
     }
 
 
-def _judge_texts(messages: list[BaseMessage], kwargs: dict) -> list[_Text]:
+def _judge_texts(messages: list[BaseMessage], kwargs: dict[str, Any]) -> list[_Text]:
     """Return the texts a judge reads. Mirrors utils.judge.content_extractor."""
     items = _indexed_texts(messages, kwargs.get('message_indices'))
     if kwargs.get('where') == GuardrailWhereType.OUTPUT:
@@ -204,13 +228,13 @@ def _judge_texts(messages: list[BaseMessage], kwargs: dict) -> list[_Text]:
 
 def _match_check(
     kind: GuardrailType, params: CheckParameter, items: list[_Text]
-) -> dict | None:
+) -> dict[str, Any] | None:
     """Find the first text that matches. Return the reason payload or None."""
     values = params.values or []
     if not values:
         return None
 
-    def payload(it: _Text, span: tuple[int, int], **extra) -> dict:
+    def payload(it: _Text, span: tuple[int, int], **extra) -> dict[str, Any]:
         return {
             'kind': kind.value.lower(),
             **extra,
@@ -221,7 +245,7 @@ def _match_check(
 
     if kind == GuardrailType.REGEX:
         flags = re.IGNORECASE if params.ignore_case else 0
-        compiled: list[tuple[str, re.Pattern]] = []
+        compiled: list[tuple[str, re.Pattern[str]]] = []
         for i, raw in enumerate(values):
             try:
                 compiled.append((raw, re.compile(raw, flags)))
@@ -254,10 +278,10 @@ def _run_check(
     kind: GuardrailType,
     messages: list[BaseMessage],
     params: CheckParameter,
-    route_config: GatewayRouteConfig,
-    kwargs: dict,
+    route: str,
+    kwargs: dict[str, Any],
 ) -> bool:
-    logger.debug('Applying Guardrail %s on route %s', kind, route_config.route_name)
+    logger.debug('Applying Guardrail %s on route %s', kind, route)
     items = _indexed_texts(messages, kwargs.get('message_indices'))
     reason = _match_check(kind, params, items)
     if reason is None:
@@ -358,92 +382,108 @@ class GuardrailCheck:
         presidio_engine: PresidioEngine,
         judge_engine: JudgeEngine,
         cost_service: CostService,
-        guardrails_by_name: dict[str, Guardrail] | None = None,
         chat_models_by_id: dict[str, Model] | None = None,
         decision_judge_engine: DecisionJudgeEngine | None = None,
     ):
         self._presidio_engine = presidio_engine
         self._judge_engine = judge_engine
         self._decision_judge_engine = decision_judge_engine
-        self._guardrails_by_name = guardrails_by_name or {}
         self._chat_models_by_id = chat_models_by_id or {}
         self._cost_service = cost_service
         self._reason_payload_ctx = _reason_payload_ctx
 
-        self._guardrail_check_mapping: dict[GuardrailType, GuardrailCheckFunction] = {
+        self._text_checks: dict[GuardrailType, TextCheck] = {
             GuardrailType.STARTS_WITH: self._check_starts_with,
             GuardrailType.ENDS_WITH: self._check_ends_with,
             GuardrailType.CONTAINS: self._check_contains,
             GuardrailType.REGEX: self._check_regex,
-            GuardrailType.PRESIDIO_ANALYZER: self._check_presidio_analyzer,
-            GuardrailType.JUDGE: self._check_judge,
-            GuardrailType.DECISION_JUDGE: self._check_decision_judge,
-            GuardrailType.GUARDRAILS_AI: self._check_guardrails_ai,
         }
+
+    def _check_of(self, guardrail: CheckClassGuardrail) -> BoundCheck:
+        """Return the check of a guardrail, bound to its parameters."""
+        if isinstance(guardrail, CheckGuardrail):
+            check_params = guardrail.parameters
+            text_check = self._text_checks[guardrail.type]
+            return lambda messages, route, **kwargs: text_check(
+                messages, check_params, route, **kwargs
+            )
+        if isinstance(guardrail, PresidioAnalyzerGuardrail):
+            redact_params = guardrail.parameters
+            return lambda messages, route, **kwargs: self._check_presidio_analyzer(
+                messages, redact_params, route, **kwargs
+            )
+        if isinstance(guardrail, JudgeGuardrail):
+            judge_params = guardrail.parameters
+            return lambda messages, route, **kwargs: self._check_judge(
+                messages, judge_params, route, **kwargs
+            )
+        if isinstance(guardrail, DecisionJudgeGuardrail):
+            decision_params = guardrail.parameters
+            return lambda messages, route, **kwargs: self._check_decision_judge(
+                messages, decision_params, route, **kwargs
+            )
+        guardrails_ai_params = guardrail.parameters
+        return lambda messages, route, **kwargs: self._check_guardrails_ai(
+            messages, guardrails_ai_params, route, **kwargs
+        )
 
     @staticmethod
     @task(name='check_starts_with')
     async def _check_starts_with(
         messages: list[BaseMessage],
         params: CheckParameter,
-        route_config: GatewayRouteConfig,
+        route: str,
         **kwargs,
     ) -> bool:
         """Check if any message text starts with a given value."""
-        return _run_check(
-            GuardrailType.STARTS_WITH, messages, params, route_config, kwargs
-        )
+        return _run_check(GuardrailType.STARTS_WITH, messages, params, route, kwargs)
 
     @staticmethod
     @task(name='check_ends_with')
     async def _check_ends_with(
         messages: list[BaseMessage],
         params: CheckParameter,
-        route_config: GatewayRouteConfig,
+        route: str,
         **kwargs,
     ) -> bool:
         """Check if any message text ends with a given value."""
-        return _run_check(
-            GuardrailType.ENDS_WITH, messages, params, route_config, kwargs
-        )
+        return _run_check(GuardrailType.ENDS_WITH, messages, params, route, kwargs)
 
     @staticmethod
     @task(name='check_contains')
     async def _check_contains(
         messages: list[BaseMessage],
         params: CheckParameter,
-        route_config: GatewayRouteConfig,
+        route: str,
         **kwargs,
     ) -> bool:
         """Check if any message text contains a given value (ignores case)."""
-        return _run_check(
-            GuardrailType.CONTAINS, messages, params, route_config, kwargs
-        )
+        return _run_check(GuardrailType.CONTAINS, messages, params, route, kwargs)
 
     @staticmethod
     @task(name='check_regex')
     async def _check_regex(
         messages: list[BaseMessage],
         params: CheckParameter,
-        route_config: GatewayRouteConfig,
+        route: str,
         **kwargs,
     ) -> bool:
         """Check message text against regex patterns."""
-        return _run_check(GuardrailType.REGEX, messages, params, route_config, kwargs)
+        return _run_check(GuardrailType.REGEX, messages, params, route, kwargs)
 
     @task(name='presidio_analyzer')
     async def _check_presidio_analyzer(
         self,
         messages: list[BaseMessage],
         params: RedactParameter,
-        route_config: GatewayRouteConfig,
+        route: str,
         **kwargs,
     ) -> bool:
         """Run Presidio Analyzer over a single text blob (never a list)."""
         logger.debug(
             'Applying Guardrail %s on route %s',
             GuardrailType.PRESIDIO_ANALYZER,
-            route_config.route_name,
+            route,
         )
 
         language = params.language
@@ -511,7 +551,7 @@ class GuardrailCheck:
         self,
         messages: list[BaseMessage],
         params: JudgeParameter,
-        route_config: GatewayRouteConfig,
+        route: str,
         count_judge_usage: JudgeUsageCounter | None = None,
         **kwargs,
     ) -> bool:
@@ -519,13 +559,13 @@ class GuardrailCheck:
         try:
             primary_model = get_model_from_model_id(
                 models_by_id=self._chat_models_by_id,
-                route_name=route_config.route_name,
+                route_name=route,
                 model_id=params.model_id,
             )
             fallback_model = (
                 get_model_from_model_id(
                     models_by_id=self._chat_models_by_id,
-                    route_name=route_config.route_name,
+                    route_name=route,
                     model_id=params.fallback_model_id,
                 )
                 if params.fallback_model_id
@@ -534,7 +574,7 @@ class GuardrailCheck:
 
             logger.debug(
                 'Running LLM-based guardrail on route=%s with model=%s',
-                route_config.route_name,
+                route,
                 primary_model.model,
             )
 
@@ -614,7 +654,7 @@ class GuardrailCheck:
         self,
         messages: list[BaseMessage],
         params: DecisionJudgeParameter,
-        route_config: GatewayRouteConfig,
+        route: str,
         **kwargs,
     ) -> bool:
         """Ask a decision model one yes/no question: trigger when noul >= threshold."""
@@ -628,7 +668,7 @@ class GuardrailCheck:
         triggered = noul >= params.threshold
         logger.info(
             'Decision judge on route=%s: noul=%s, threshold=%s, triggered=%s',
-            route_config.route_name,
+            route,
             noul,
             params.threshold,
             triggered,
@@ -654,14 +694,14 @@ class GuardrailCheck:
         self,
         messages: list[BaseMessage],
         params: GuardrailsAIParameter,
-        route_config: GatewayRouteConfig,
+        route: str,
         **kwargs,
     ) -> bool:
         """Check using external guardrails-ai validation service."""
         logger.debug(
             'Applying Guardrail %s on route %s',
             GuardrailType.GUARDRAILS_AI,
-            route_config.route_name,
+            route,
         )
         items = _indexed_texts(messages, kwargs.get('message_indices'))
         blob, _ = _blob_with_spans(items)
@@ -689,7 +729,7 @@ class GuardrailCheck:
             logger.error(
                 'Guardrails-AI timeout for guard=%s on route=%s',
                 params.guard_name,
-                route_config.route_name,
+                route,
             )
             raise
         except httpx.HTTPStatusError as e:
@@ -721,54 +761,51 @@ class GuardrailCheck:
         return triggered
 
     @workflow(name='apply_check_guardrails')
-    async def apply_guardrails(
+    async def apply(
         self,
-        request_uuid: str,
-        api_key_uuid: str,
-        group_uuid: str,
-        api_key_name: str,
-        group_name: str,
-        route_config: GatewayRouteConfig,
+        identity: RequestIdentity,
+        guardrails: Sequence[CheckClassGuardrail],
         messages: list[BaseMessage],
         where: GuardrailWhereType,
-        project_uuid: str = '',
-        project_name: str = '',
+        *,
+        unknown: Sequence[str] = (),
         count_judge_usage: JudgeUsageCounter | None = None,
         windowed: bool = True,
         skip: int = 0,
-    ) -> SoftBlockInfo | None:
-        """Apply guardrails to messages and return SoftBlockInfo on SOFT_BLOCK.
+    ) -> CheckResult:
+        """Apply check ``guardrails`` to messages. Return the SOFT_BLOCK that
+        stopped them, if any, and whether a WARN guardrail triggered.
 
-        ``windowed`` is False on calls with no conversation (embeddings,
-        decision models): every guardrail then reads every message. ``skip``
-        is how many leading messages the gateway added (its system prompt).
-        They are not checked and do not count in the message indexes.
+        ``unknown`` are names the route lists that the project does not
+        define: each is logged. ``windowed`` is False on calls with no
+        conversation (embeddings, decision models): every guardrail then reads
+        every message. ``skip`` is how many leading messages the gateway added
+        (its system prompt). They are not checked and do not count in the
+        message indexes.
         """
+        for name in unknown:
+            logger.warning(
+                'Guardrail id %r not found for route %s', name, identity.route_name
+            )
         kwargs = {
-            'request_uuid': request_uuid,
-            'api_key_uuid': api_key_uuid,
-            'group_uuid': group_uuid,
-            'api_key_name': api_key_name,
-            'group_name': group_name,
-            'project_uuid': project_uuid,
-            'project_name': project_name,
-            'route_name': route_config.route_name,
+            'request_uuid': identity.request_uuid,
+            'api_key_uuid': identity.api_key_uuid,
+            'group_uuid': identity.group_uuid,
+            'api_key_name': identity.api_key_name,
+            'group_name': identity.group_name,
+            'project_uuid': identity.project_uuid,
+            'project_name': identity.project_name,
+            'route_name': identity.route_name,
             'where': where,
             'parent_span': trace.get_current_span(),
             'count_judge_usage': count_judge_usage,
         }
 
-        check_guardrails = self._get_guardrails_for_route(
-            route_config=route_config,
-            where=where,
-            guardrail_class=GuardrailClass.CHECK,
-            only_warn=False,
-        )
+        if not guardrails:
+            return CheckResult()
 
-        if not check_guardrails:
-            return None
-
-        for guardrail in check_guardrails:
+        warned = False
+        for guardrail in guardrails:
             logger.debug(
                 'Evaluating guardrail: %s (type=%s, where=%s, behavior=%s)',
                 guardrail.name,
@@ -777,11 +814,7 @@ class GuardrailCheck:
                 guardrail.behavior.name,
             )
 
-            check_function = self._guardrail_check_mapping.get(guardrail.type)
-            if not check_function:
-                raise GuardrailBadRequest(
-                    f'Unknown guardrail type: {guardrail.type}', guardrail
-                )
+            check_function = self._check_of(guardrail)
 
             selected = _select_messages(
                 messages, guardrail, where, windowed=windowed, skip=skip
@@ -799,8 +832,7 @@ class GuardrailCheck:
                 token = _reason_payload_ctx.set(None)
                 is_triggered = await check_function(
                     [m for _, m in selected],
-                    guardrail.parameters,
-                    route_config,
+                    identity.route_name,
                     message_roles=guardrail.message_roles,
                     # Indexes in the client's own list.
                     message_indices=[i - skip for i, _ in selected],
@@ -815,37 +847,28 @@ class GuardrailCheck:
 
             if not is_triggered:
                 continue
-            should_stop, soft_block = self._handle_triggered_check_guardrail(
+            soft_block = self._handle_triggered_check_guardrail(
                 guardrail=guardrail,
                 where=where,
-                route_name=route_config.route_name,
-                request_uuid=request_uuid,
-                api_key_uuid=api_key_uuid,
-                group_uuid=group_uuid,
-                api_key_name=api_key_name,
-                group_name=group_name,
-                project_uuid=project_uuid,
-                project_name=project_name,
+                identity=identity,
                 reason_payload=reason_payload,
             )
             if soft_block is not None:
-                return soft_block
-            if should_stop:
-                return None
-            # WARN/INFO: keep evaluating remaining guardrails
-            continue
+                return CheckResult(soft_block=soft_block, warned=warned)
+            # WARN: keep evaluating the remaining guardrails.
+            warned = True
 
-        return None
+        return CheckResult(warned=warned)
 
     @staticmethod
-    def _indices_for_logs(reason_payload: dict) -> str:
+    def _indices_for_logs(reason_payload: dict[str, Any]) -> str:
         mi = reason_payload.get('message_indices')
         if mi:
             return f' message_indices={mi}'
         return ''
 
     @staticmethod
-    def _format_presidio_reason_for_logs(reason_payload: dict) -> str | None:
+    def _format_presidio_reason_for_logs(reason_payload: dict[str, Any]) -> str | None:
         et = reason_payload.get('entity_type')
         val = reason_payload.get('value')
         if et is None or val is None:
@@ -858,7 +881,9 @@ class GuardrailCheck:
         return s
 
     @staticmethod
-    def _format_check_reason_for_logs(reason_payload: dict | None) -> str | None:
+    def _format_check_reason_for_logs(
+        reason_payload: dict[str, Any] | None,
+    ) -> str | None:
         """Return a readable reason string for logs from a reason payload."""
         if not isinstance(reason_payload, dict):
             return None
@@ -935,18 +960,15 @@ class GuardrailCheck:
     def _handle_triggered_check_guardrail(
         self,
         *,
-        guardrail: Guardrail,
+        guardrail: CheckClassGuardrail,
         where: GuardrailWhereType,
-        route_name: str,
-        request_uuid: str,
-        api_key_uuid: str,
-        group_uuid: str,
-        api_key_name: str,
-        group_name: str,
-        project_uuid: str = '',
-        project_name: str = '',
-        reason_payload: dict | None = None,
-    ) -> tuple[bool, SoftBlockInfo | None]:
+        identity: RequestIdentity,
+        reason_payload: dict[str, Any] | None = None,
+    ) -> SoftBlock | None:
+        """Record a triggered guardrail. Raise its error on a BLOCK; return
+        its soft block on a SOFT_BLOCK; return None on a WARN.
+        """
+        route_name = identity.route_name
         attrs = {
             'name': guardrail.name,
             'type': guardrail.type.name,
@@ -957,21 +979,21 @@ class GuardrailCheck:
         }
         emit_event(
             GuardrailEventPayload(
-                request_uuid=request_uuid,
-                api_key_uuid=api_key_uuid,
-                group_uuid=group_uuid,
-                api_key_name=api_key_name,
+                request_uuid=identity.request_uuid,
+                api_key_uuid=identity.api_key_uuid,
+                group_uuid=identity.group_uuid,
+                api_key_name=identity.api_key_name,
                 route_name=route_name,
                 value=1.0,
                 event_type=EventType.GUARDRAIL,
-                group_name=group_name,
-                project_uuid=project_uuid,
-                project_name=project_name,
+                group_name=identity.group_name,
+                project_uuid=identity.project_uuid,
+                project_name=identity.project_name,
                 name=guardrail.name,
                 type=guardrail.type.name,
                 where=where.name,
                 parameters=str(guardrail.parameters),
-                behavior=guardrail.behavior.name,
+                behavior=GuardrailEventBehavior(guardrail.behavior.name),
                 is_judge=guardrail.type == GuardrailType.JUDGE,
             )
         )
@@ -1045,107 +1067,7 @@ class GuardrailCheck:
                 log_message=log_message,
                 reason=reason_payload,
             )
+        logger.warning(log_message)
         if guardrail.behavior == GuardrailBehaviorType.SOFT_BLOCK:
-            logger.warning(log_message)
-            return True, SoftBlockInfo(
-                guardrail=guardrail, where=where, message=client_message
-            )
-        if guardrail.behavior == GuardrailBehaviorType.WARN:
-            logger.warning(log_message)
-        else:
-            logger.info(log_message)
-        return False, None
-
-    async def evaluate_warn_triggered(
-        self,
-        route_config: GatewayRouteConfig,
-        messages: list[BaseMessage],
-        where: GuardrailWhereType,
-        request_uuid: str,
-        api_key_uuid: str,
-        group_uuid: str,
-        api_key_name: str,
-        group_name: str,
-        count_judge_usage: JudgeUsageCounter | None = None,
-        skip: int = 0,
-    ) -> bool:
-        """Evaluate only WARN-behavior guardrails without emitting events/logs.
-        Used to surface a response header for non-blocking guardrails.
-        ``skip`` works as in apply_guardrails.
-        """
-
-        check_guardrails = self._get_guardrails_for_route(
-            route_config=route_config,
-            where=where,
-            guardrail_class=GuardrailClass.CHECK,
-            only_warn=True,
-        )
-
-        if not check_guardrails:
-            return False
-
-        kwargs = {
-            'request_uuid': request_uuid,
-            'api_key_uuid': api_key_uuid,
-            'group_uuid': group_uuid,
-            'api_key_name': api_key_name,
-            'group_name': group_name,
-            'route_name': route_config.route_name,
-            'where': where,
-            'parent_span': trace.get_current_span(),
-            'count_judge_usage': count_judge_usage,
-        }
-
-        for guardrail in check_guardrails:
-            check_function = self._guardrail_check_mapping.get(guardrail.type)
-            if not check_function:
-                continue
-            selected = _select_messages(messages, guardrail, where, skip=skip)
-            if not selected:
-                continue
-            try:
-                if await check_function(
-                    [m for _, m in selected],
-                    guardrail.parameters,
-                    route_config,
-                    message_roles=guardrail.message_roles,
-                    # Indexes in the client's own list.
-                    message_indices=[i - skip for i, _ in selected],
-                    **kwargs,
-                ):
-                    return True
-            except Exception:
-                # Ignore evaluation failures for WARN header calculation
-                continue
-        return False
-
-    def _get_guardrails_for_route(
-        self,
-        route_config: GatewayRouteConfig,
-        where: GuardrailWhereType,
-        guardrail_class: GuardrailClass,
-        only_warn: bool = False,
-    ) -> list[Guardrail]:
-        guardrail_names = route_config.guardrails or []
-        guardrails: list[Guardrail] = []
-
-        for gr_name in guardrail_names:
-            guardrail = self._guardrails_by_name.get(gr_name)
-            if not guardrail:
-                logger.warning(
-                    'Guardrail id %r not found for route %s',
-                    gr_name,
-                    route_config.route_name,
-                )
-                continue
-            if not guardrail.enabled:
-                continue
-            if guardrail.guardrail_class() != guardrail_class:
-                continue
-            if guardrail.where not in (where, GuardrailWhereType.IO):
-                continue
-            if only_warn and guardrail.behavior != GuardrailBehaviorType.WARN:
-                continue
-            guardrails.append(guardrail)
-
-        return guardrails
+            return SoftBlock(guardrail=guardrail, where=where, message=client_message)
+        return None

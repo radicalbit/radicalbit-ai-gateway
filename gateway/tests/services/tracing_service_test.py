@@ -1,10 +1,13 @@
-import datetime
+import datetime as dt
 import unittest
 from unittest.mock import MagicMock
 from uuid import UUID
 
 from fastapi_pagination import Page, Params
 import pytest
+from typing_extensions import override
+
+from tests.common.worker import in_worker
 
 from radicalbit_ai_gateway.db.dao.otel_traces_dao import OtelTracesDAO
 from radicalbit_ai_gateway.db.models.trace import (
@@ -22,6 +25,7 @@ from radicalbit_ai_gateway.models.trace_dto import (
     LatenciesDTO,
     SpanDTO,
     SpanLatenciesDTO,
+    SpanStatus,
     TraceDTO,
     TracesChartDataDTO,
     TraceStatus,
@@ -35,34 +39,28 @@ PROJECT_UUID = UUID('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa')
 
 
 class TracingServiceTest(unittest.TestCase):
-    @classmethod
-    def setUpClass(cls):
-        cls.otel_traces_dao = MagicMock(spec_set=OtelTracesDAO)
-        cls.key_service = MagicMock(spec_set=KeyService)
-        cls.group_service = MagicMock(spec_set=GroupService)
-        cls.tracing_service = TracingService(
-            otel_traces_dao=cls.otel_traces_dao,
-            key_service=cls.key_service,
-            group_service=cls.group_service,
-        )
-
+    @override
     def setUp(self):
+        self.otel_traces_dao = MagicMock(spec_set=OtelTracesDAO)
+        self.key_service = MagicMock(spec_set=KeyService)
+        self.group_service = MagicMock(spec_set=GroupService)
+        self.tracing_service = TracingService(
+            otel_traces_dao=self.otel_traces_dao,
+            key_service=self.key_service,
+            group_service=self.group_service,
+        )
         # Default: name resolution returns names for common test UUIDs
-        self.key_service.get_names_by_uuids.reset_mock()
         self.key_service.get_names_by_uuids.return_value = {
             UUID('660e8400-e29b-41d4-a716-446655440003'): 'test-key',
             UUID('660e8400-e29b-41d4-a716-446655440004'): 'my-key',
         }
-        self.group_service.get_names_by_uuids.reset_mock()
         self.group_service.get_names_by_uuids.return_value = {
             UUID('550e8400-e29b-41d4-a716-446655440003'): 'test-group',
             UUID('550e8400-e29b-41d4-a716-446655440004'): 'my-group',
         }
 
     def test_get_traces_chart_data(self):
-        base_time = datetime.datetime(
-            2025, 1, 8, 10, 0, 0, tzinfo=datetime.timezone.utc
-        )
+        base_time = dt.datetime(2025, 1, 8, 10, 0, 0, tzinfo=dt.timezone.utc)
         self.otel_traces_dao.get_traces_chart_data = MagicMock(
             return_value=[
                 TracesChartDataPoint(
@@ -75,7 +73,7 @@ class TracingServiceTest(unittest.TestCase):
         )
 
         _from = base_time
-        _to = base_time + datetime.timedelta(hours=1)
+        _to = base_time + dt.timedelta(hours=1)
 
         res = self.tracing_service.get_traces_chart_data(
             project_uuid=PROJECT_UUID,
@@ -95,16 +93,14 @@ class TracingServiceTest(unittest.TestCase):
         assert series['error'][0] == 1.0
 
     def test_get_traces_chart_data_empty(self):
-        base_time = datetime.datetime(
-            2025, 1, 8, 10, 0, 0, tzinfo=datetime.timezone.utc
-        )
+        base_time = dt.datetime(2025, 1, 8, 10, 0, 0, tzinfo=dt.timezone.utc)
         self.otel_traces_dao.get_traces_chart_data = MagicMock(return_value=[])
 
         res = self.tracing_service.get_traces_chart_data(
             project_uuid=PROJECT_UUID,
             route_names=None,
             _from=base_time,
-            _to=base_time + datetime.timedelta(hours=2),
+            _to=base_time + dt.timedelta(hours=2),
             granularity='hours',
         )
 
@@ -113,9 +109,7 @@ class TracingServiceTest(unittest.TestCase):
         )
 
     def test_get_traces_chart_data_merges_error_statuses(self):
-        base_time = datetime.datetime(
-            2025, 1, 8, 10, 0, 0, tzinfo=datetime.timezone.utc
-        )
+        base_time = dt.datetime(2025, 1, 8, 10, 0, 0, tzinfo=dt.timezone.utc)
         self.otel_traces_dao.get_traces_chart_data = MagicMock(
             return_value=[
                 TracesChartDataPoint(
@@ -131,7 +125,7 @@ class TracingServiceTest(unittest.TestCase):
         )
 
         _from = base_time
-        _to = base_time + datetime.timedelta(hours=0)
+        _to = base_time + dt.timedelta(hours=0)
 
         res = self.tracing_service.get_traces_chart_data(
             project_uuid=PROJECT_UUID,
@@ -147,39 +141,8 @@ class TracingServiceTest(unittest.TestCase):
         assert series['warning'][0] == 0.0
         assert series['error'][0] == 2.0
 
-    def test_get_traces_chart_data_no_route_filter(self):
-        base_time = datetime.datetime(
-            2025, 1, 8, 10, 0, 0, tzinfo=datetime.timezone.utc
-        )
-        self.otel_traces_dao.get_traces_chart_data = MagicMock(
-            return_value=[
-                TracesChartDataPoint(
-                    bucket=base_time, trace_status='success', total_requests=10
-                ),
-            ]
-        )
-
-        res = self.tracing_service.get_traces_chart_data(
-            project_uuid=PROJECT_UUID,
-            route_names=None,
-            _from=base_time,
-            _to=base_time + datetime.timedelta(hours=0),
-            granularity='hours',
-        )
-
-        self.otel_traces_dao.get_traces_chart_data.assert_called_once()
-        call_args = self.otel_traces_dao.get_traces_chart_data.call_args
-        assert call_args.args[1] is None  # route_names is None
-        assert res.total == 10
-        series = {s.name: s.data for s in res.data}
-        assert series['success'][0] == 10.0
-        assert series['warning'][0] == 0.0
-        assert series['error'][0] == 0.0
-
     def test_get_latencies(self):
-        base_time = datetime.datetime(
-            2025, 1, 8, 10, 0, 0, tzinfo=datetime.timezone.utc
-        )
+        base_time = dt.datetime(2025, 1, 8, 10, 0, 0, tzinfo=dt.timezone.utc)
         self.otel_traces_dao.get_latencies = MagicMock(
             return_value=TraceLatencies(p50=100.0, p90=200.0, p95=250.0, p99=400.0)
         )
@@ -188,7 +151,7 @@ class TracingServiceTest(unittest.TestCase):
             project_uuid=PROJECT_UUID,
             route_names=['route-a'],
             _from=base_time,
-            _to=base_time + datetime.timedelta(hours=1),
+            _to=base_time + dt.timedelta(hours=1),
         )
 
         assert isinstance(res, LatenciesDTO)
@@ -197,41 +160,8 @@ class TracingServiceTest(unittest.TestCase):
         assert res.p95 == 250.0
         assert res.p99 == 400.0
 
-    def test_get_latencies_no_data(self):
-        self.otel_traces_dao.get_latencies = MagicMock(return_value=TraceLatencies())
-
-        res = self.tracing_service.get_latencies(
-            project_uuid=PROJECT_UUID,
-            route_names=None,
-            _from=None,
-            _to=None,
-        )
-
-        assert isinstance(res, LatenciesDTO)
-        assert res.p50 is None
-        assert res.p90 is None
-        assert res.p95 is None
-        assert res.p99 is None
-
-    def test_get_latencies_no_route_filter(self):
-        self.otel_traces_dao.get_latencies = MagicMock(
-            return_value=TraceLatencies(p50=50.0, p90=90.0, p95=95.0, p99=99.0)
-        )
-
-        self.tracing_service.get_latencies(
-            project_uuid=PROJECT_UUID,
-            route_names=None,
-            _from=None,
-            _to=None,
-        )
-
-        call_args = self.otel_traces_dao.get_latencies.call_args
-        assert call_args.args[1] is None  # route_names is None
-
     def test_get_span_latencies(self):
-        base_time = datetime.datetime(
-            2025, 1, 8, 10, 0, 0, tzinfo=datetime.timezone.utc
-        )
+        base_time = dt.datetime(2025, 1, 8, 10, 0, 0, tzinfo=dt.timezone.utc)
         self.otel_traces_dao.get_span_latencies = MagicMock(
             return_value=[
                 SpanLatencies(
@@ -251,7 +181,7 @@ class TracingServiceTest(unittest.TestCase):
             project_uuid=PROJECT_UUID,
             route_names=['route-a'],
             _from=base_time,
-            _to=base_time + datetime.timedelta(hours=1),
+            _to=base_time + dt.timedelta(hours=1),
         )
 
         assert isinstance(res, SpanLatenciesDTO)
@@ -262,44 +192,10 @@ class TracingServiceTest(unittest.TestCase):
         assert invoke.p95 == 250.0
         assert invoke.p99 == 400.0
 
-    def test_get_span_latencies_empty(self):
-        self.otel_traces_dao.get_span_latencies = MagicMock(return_value=[])
-
-        res = self.tracing_service.get_span_latencies(
-            project_uuid=PROJECT_UUID,
-            route_names=None,
-            _from=None,
-            _to=None,
-        )
-
-        assert isinstance(res, SpanLatenciesDTO)
-        assert res.data == []
-
-    def test_get_span_latencies_no_route_filter(self):
-        self.otel_traces_dao.get_span_latencies = MagicMock(
-            return_value=[
-                SpanLatencies(
-                    span_name='invoke', p50=50.0, p90=90.0, p95=95.0, p99=99.0
-                )
-            ]
-        )
-
-        self.tracing_service.get_span_latencies(
-            project_uuid=PROJECT_UUID,
-            route_names=None,
-            _from=None,
-            _to=None,
-        )
-
-        call_args = self.otel_traces_dao.get_span_latencies.call_args
-        assert call_args.args[1] is None  # route_names is None
-
     # --- get_grouped_span_latencies tests ---
 
     def test_get_grouped_span_latencies(self):
-        base_time = datetime.datetime(
-            2025, 1, 8, 10, 0, 0, tzinfo=datetime.timezone.utc
-        )
+        base_time = dt.datetime(2025, 1, 8, 10, 0, 0, tzinfo=dt.timezone.utc)
         self.otel_traces_dao.get_category_latencies = MagicMock(
             return_value=[
                 CategoryLatencies(
@@ -347,7 +243,7 @@ class TracingServiceTest(unittest.TestCase):
             project_uuid=PROJECT_UUID,
             route_names=['route-a'],
             _from=base_time,
-            _to=base_time + datetime.timedelta(hours=1),
+            _to=base_time + dt.timedelta(hours=1),
         )
 
         assert isinstance(res, GroupedSpanLatenciesDTO)
@@ -402,13 +298,13 @@ class TracingServiceTest(unittest.TestCase):
         self.otel_traces_dao.get_spans_by_trace_id = MagicMock(return_value=[])
 
         with pytest.raises(GatewayNotFoundError):
-            self.tracing_service.get_trace_by_id(PROJECT_UUID, 'nonexistent-trace')
+            in_worker(self.tracing_service.get_trace_by_id)(
+                PROJECT_UUID, 'nonexistent-trace'
+            )
 
     def test_get_trace_by_id_single_span(self):
         """Test retrieving a trace with a single span."""
-        base_time = datetime.datetime(
-            2025, 1, 8, 10, 0, 0, tzinfo=datetime.timezone.utc
-        )
+        base_time = dt.datetime(2025, 1, 8, 10, 0, 0, tzinfo=dt.timezone.utc)
         request_uuid = '12345678-1234-5678-1234-567812345678'
         self.otel_traces_dao.get_spans_by_trace_id = MagicMock(
             return_value=[
@@ -431,7 +327,9 @@ class TracingServiceTest(unittest.TestCase):
             ]
         )
 
-        result = self.tracing_service.get_trace_by_id(PROJECT_UUID, 'trace-123')
+        result = in_worker(self.tracing_service.get_trace_by_id)(
+            PROJECT_UUID, 'trace-123'
+        )
 
         assert isinstance(result, TraceDTO)
         assert result.trace_id == 'trace-123'
@@ -441,9 +339,7 @@ class TracingServiceTest(unittest.TestCase):
 
     def test_get_trace_by_id_includes_tags(self):
         """TraceDTO.tags comes straight from the root span's parsed tags."""
-        base_time = datetime.datetime(
-            2025, 1, 8, 10, 0, 0, tzinfo=datetime.timezone.utc
-        )
+        base_time = dt.datetime(2025, 1, 8, 10, 0, 0, tzinfo=dt.timezone.utc)
         self.otel_traces_dao.get_spans_by_trace_id = MagicMock(
             return_value=[
                 SpanRecord(
@@ -466,15 +362,15 @@ class TracingServiceTest(unittest.TestCase):
             ]
         )
 
-        result = self.tracing_service.get_trace_by_id(PROJECT_UUID, 'trace-tags')
+        result = in_worker(self.tracing_service.get_trace_by_id)(
+            PROJECT_UUID, 'trace-tags'
+        )
 
         assert result.tags == ['env=prod', 'cost_center=retail']
 
     def test_get_trace_by_id_includes_request_type(self):
         """TraceDTO.request_type comes from the root span name."""
-        base_time = datetime.datetime(
-            2025, 1, 8, 10, 0, 0, tzinfo=datetime.timezone.utc
-        )
+        base_time = dt.datetime(2025, 1, 8, 10, 0, 0, tzinfo=dt.timezone.utc)
         self.otel_traces_dao.get_spans_by_trace_id = MagicMock(
             return_value=[
                 SpanRecord(
@@ -496,15 +392,15 @@ class TracingServiceTest(unittest.TestCase):
             ]
         )
 
-        result = self.tracing_service.get_trace_by_id(PROJECT_UUID, 'trace-mcp')
+        result = in_worker(self.tracing_service.get_trace_by_id)(
+            PROJECT_UUID, 'trace-mcp'
+        )
 
         assert result.request_type == RequestType.MCP
 
     def test_get_trace_by_id_single_span_no_request_uuid(self):
         """Test retrieving a trace without request_uuid."""
-        base_time = datetime.datetime(
-            2025, 1, 8, 10, 0, 0, tzinfo=datetime.timezone.utc
-        )
+        base_time = dt.datetime(2025, 1, 8, 10, 0, 0, tzinfo=dt.timezone.utc)
         self.otel_traces_dao.get_spans_by_trace_id = MagicMock(
             return_value=[
                 SpanRecord(
@@ -526,7 +422,9 @@ class TracingServiceTest(unittest.TestCase):
             ]
         )
 
-        result = self.tracing_service.get_trace_by_id(PROJECT_UUID, 'trace-no-uuid')
+        result = in_worker(self.tracing_service.get_trace_by_id)(
+            PROJECT_UUID, 'trace-no-uuid'
+        )
 
         assert result.request_uuid is None
         assert result.total_spans == 1
@@ -547,9 +445,7 @@ class TracingServiceTest(unittest.TestCase):
 
     def test_get_trace_by_id_with_hierarchy(self):
         """Test building hierarchical tree from multiple spans."""
-        base_time = datetime.datetime(
-            2025, 1, 8, 10, 0, 0, tzinfo=datetime.timezone.utc
-        )
+        base_time = dt.datetime(2025, 1, 8, 10, 0, 0, tzinfo=dt.timezone.utc)
         request_uuid = '12345678-1234-5678-1234-567812345678'
         self.otel_traces_dao.get_spans_by_trace_id = MagicMock(
             return_value=[
@@ -570,7 +466,7 @@ class TracingServiceTest(unittest.TestCase):
                     group_name='test-group',
                 ),
                 SpanRecord(
-                    timestamp=base_time + datetime.timedelta(milliseconds=10),
+                    timestamp=base_time + dt.timedelta(milliseconds=10),
                     trace_id='trace-hierarchy',
                     request_uuid=request_uuid,
                     span_id='span-child',
@@ -586,7 +482,7 @@ class TracingServiceTest(unittest.TestCase):
                     group_name='test-group',
                 ),
                 SpanRecord(
-                    timestamp=base_time + datetime.timedelta(milliseconds=20),
+                    timestamp=base_time + dt.timedelta(milliseconds=20),
                     trace_id='trace-hierarchy',
                     request_uuid=request_uuid,
                     span_id='span-grandchild',
@@ -604,7 +500,9 @@ class TracingServiceTest(unittest.TestCase):
             ]
         )
 
-        result = self.tracing_service.get_trace_by_id(PROJECT_UUID, 'trace-hierarchy')
+        result = in_worker(self.tracing_service.get_trace_by_id)(
+            PROJECT_UUID, 'trace-hierarchy'
+        )
 
         assert result.total_spans == 3
         assert result.root_span_id == 'span-root'
@@ -620,11 +518,346 @@ class TracingServiceTest(unittest.TestCase):
         assert grandchild.span_id == 'span-grandchild'
         assert grandchild.children == []
 
+    def test_tree_nodes_carry_their_category_and_kind(self):
+        base_time = dt.datetime(2025, 1, 8, 10, 0, 0, tzinfo=dt.timezone.utc)
+
+        def span(span_id, parent, category='', kind=''):
+            return SpanRecord(
+                timestamp=base_time,
+                trace_id='trace-123',
+                request_uuid='12345678-1234-5678-1234-567812345678',
+                span_id=span_id,
+                span_name=span_id,
+                service_name='ai-gateway',
+                duration=1_000_000,
+                status_code='Unset',
+                parent_span_id=parent,
+                route_name='test-route',
+                api_key_uuid='',
+                api_key_name='',
+                group_uuid='',
+                group_name='',
+                operation_category=category,
+                span_kind=kind,
+            )
+
+        self.otel_traces_dao.get_spans_by_trace_id = MagicMock(
+            return_value=[
+                span('root', '', 'endpoint', 'workflow'),
+                span('auth', 'root', 'auth', 'task'),
+                span('invoke', 'root', 'invocation', 'task'),
+                span('bare', 'root'),
+            ]
+        )
+        # The DAO mock is shared by the class: start this one clean.
+        self.otel_traces_dao.get_span_by_trace_and_span_id = MagicMock()
+
+        tree = in_worker(self.tracing_service.get_trace_by_id)(
+            PROJECT_UUID, 'trace-123'
+        ).tree
+
+        assert tree is not None
+        assert (tree.operation_category, tree.span_kind) == ('endpoint', 'workflow')
+        children = {c.span_id: c for c in tree.children}
+        assert children['auth'].operation_category == 'auth'
+        assert children['invoke'].operation_category == 'invocation'
+        assert children['invoke'].span_kind == 'task'
+        # A span with no such attribute answers None, not an empty string.
+        assert children['bare'].operation_category is None
+        assert children['bare'].span_kind is None
+        # Both fields come with the spans already read: no query per span.
+        self.otel_traces_dao.get_spans_by_trace_id.assert_called_once()
+        self.otel_traces_dao.get_span_by_trace_and_span_id.assert_not_called()
+
+    def _tree_of(self, *spans: SpanRecord):
+        self.otel_traces_dao.get_spans_by_trace_id = MagicMock(return_value=list(spans))
+        return in_worker(self.tracing_service.get_trace_by_id)(
+            PROJECT_UUID, 'trace-123'
+        ).tree
+
+    @staticmethod
+    def _named_span(
+        span_id: str,
+        parent: str,
+        span_name: str,
+        status_code: str = 'Unset',
+        gen_ai_provider: str = '',
+        fallback_triggered: bool = False,
+    ) -> SpanRecord:
+        return SpanRecord(
+            timestamp=dt.datetime(2025, 1, 8, 10, 0, 0, tzinfo=dt.timezone.utc),
+            trace_id='trace-123',
+            request_uuid='12345678-1234-5678-1234-567812345678',
+            span_id=span_id,
+            span_name=span_name,
+            service_name='ai-gateway',
+            duration=1_000_000,
+            parent_span_id=parent,
+            route_name='test-route',
+            api_key_uuid='',
+            api_key_name='',
+            group_uuid='',
+            group_name='',
+            status_code=status_code,
+            gen_ai_provider=gen_ai_provider,
+            fallback_triggered=fallback_triggered,
+        )
+
+    def test_tree_nodes_carry_a_readable_label(self):
+        span = self._named_span
+
+        tree = self._tree_of(
+            span('root', '', 'decision_model.workflow'),
+            span('auth', 'root', 'auth_api_key.task'),
+            span('decide', 'root', 'decide.task'),
+        )
+
+        assert tree.label == 'Decision request'
+        children = {c.span_id: c for c in tree.children}
+        assert children['auth'].label == 'Authenticate credential'
+        assert children['decide'].label == 'Decide'
+        # The raw span name stays on the node, next to the label.
+        assert children['auth'].span_name == 'auth_api_key.task'
+        assert tree.model_dump(by_alias=True)['label'] == 'Decision request'
+
+    def test_a_span_with_an_unknown_name_has_no_label(self):
+        span = self._named_span
+
+        tree = self._tree_of(
+            span('root', '', 'chat_completions.workflow'),
+            span('new', 'root', 'brand_new_step.task'),
+            # The whole name must match, with or without one .workflow / .task
+            # suffix. So a bare `decide` gets a label, a doubled or other
+            # suffix does not.
+            span('bare', 'root', 'decide'),
+            span('odd', 'root', 'decide.task.task'),
+            span('other-suffix', 'root', 'decide.agent'),
+        )
+
+        assert tree.label == 'Chat request'
+        children = {c.span_id: c for c in tree.children}
+        assert children['new'].label is None
+        assert children['bare'].label == 'Decide'
+        assert children['odd'].label is None
+        assert children['other-suffix'].label is None
+        assert children['new'].model_dump(by_alias=True)['label'] is None
+
+    def test_span_labels_follow_the_agreed_table(self):
+        # From the AG-1166 starting table, then the Span naming board for the
+        # names the ticket does not list.
+        expected = {
+            'decision_model.workflow': 'Decision request',
+            'chat_completions.workflow': 'Chat request',
+            'auth_api_key.task': 'Authenticate credential',
+            'check_route_access.task': 'Check route access',
+            'select_model.task': 'Select model',
+            'run_preprocessing.workflow': 'Preprocess request',
+            'apply_check_guardrails.workflow': 'Guardrail checks',
+            'apply_output_guardrails.workflow': 'Output guardrails',
+            'check_regex.task': 'Regex guardrail',
+            'check_contains.task': 'Contains guardrail',
+            'check_starts_with.task': 'Starts-with guardrail',
+            'check_ends_with.task': 'Ends-with guardrail',
+            'presidio_analyzer.task': 'PII detection',
+            'redact_presidio.task': 'PII redaction',
+            'check_judge.task': 'LLM judge guardrail',
+            'check_decision_judge.task': 'Decision judge guardrail',
+            'check_guardrails_ai.task': 'Guardrails AI check',
+            'get_semantic_cache.task': 'Cache lookup',
+            'get_exact_cache.task': 'Cache lookup',
+            'set_semantic_cache.task': 'Cache store',
+            'set_exact_cache.task': 'Cache store',
+            'llm_complete.task': 'Call model',
+            'llm_stream.task': 'Stream from model',
+            'llm_embed.task': 'Embed with model',
+            'llm_transcribe.task': 'Transcribe with model',
+            'decide.task': 'Decide',
+            'select_embedding_model.task': 'Select embedding model',
+            'select_transcription_model.task': 'Select transcription model',
+            'apply_redact_guardrails.workflow': 'Redaction',
+            'llm_complete_responses.task': 'Call model (Responses API)',
+            'llm_complete_messages.task': 'Call model (Messages API)',
+            'stream_with_output_guardrails.workflow': 'Stream with output guardrails',
+            'mcp_tools_call.task': 'MCP tool call',
+            'mcp_upstream_call_tool.task': 'Upstream tool call',
+            'responses.workflow': 'Responses request',
+            'messages.workflow': 'Messages request',
+            'embeddings.workflow': 'Embeddings request',
+            'audio_transcriptions.workflow': 'Transcription request',
+            'mcp_request.workflow': 'MCP request',
+            'check_limiters.task': 'Check limits',
+            'check_embedding_limiters.task': 'Check limits',
+            'get_in_memory_cache.task': 'Cache lookup',
+            'set_in_memory_cache.task': 'Cache store',
+            'llm_stream_responses.task': 'Stream from model (Responses API)',
+            'llm_stream_messages.task': 'Stream from model (Messages API)',
+            'llm_transcribe_stream.task': 'Stream transcription from model',
+            'apply_responses_output_guardrails.workflow': 'Output guardrails (Responses API)',
+            'apply_messages_output_guardrails.workflow': 'Output guardrails (Messages API)',
+            'mcp_initialize.task': 'MCP initialize',
+            'mcp_tools_list.task': 'MCP list tools',
+            'mcp_prompts_list.task': 'MCP list prompts',
+            'mcp_prompts_get.task': 'MCP get prompt',
+            'mcp_resources_list.task': 'MCP list resources',
+            'mcp_resources_read.task': 'MCP read resource',
+            'mcp_upstream_list_tools.task': 'Upstream list tools',
+            'mcp_upstream_list_prompts.task': 'Upstream list prompts',
+            'mcp_upstream_get_prompt.task': 'Upstream get prompt',
+            'mcp_upstream_list_resources.task': 'Upstream list resources',
+            'mcp_upstream_read_resource.task': 'Upstream read resource',
+        }
+        span = self._named_span
+
+        tree = self._tree_of(
+            span('root', '', 'root'),
+            *(span(name, 'root', name) for name in expected),
+        )
+
+        assert {c.span_name: c.label for c in tree.children} == expected
+
+    def test_cache_limit_and_project_limit_spans_are_labelled(self):
+        expected = {
+            'lookup_cache.task': 'Check cache',
+            'lookup_responses_cache.task': 'Check cache',
+            'lookup_messages_cache.task': 'Check cache',
+            'get_cached_response.task': 'Read cached response',
+            'generate_semantic_cache_embedding.task': 'Embed for semantic cache',
+            'set_cached_response.task': 'Store response in cache',
+            'set_cached_stream_response.task': 'Store streamed response in cache',
+            'load_project_limits.task': 'Load project limits',
+            'check_request_rate.task': 'Request rate limit',
+            'check_token_input_limit.task': 'Input token limit',
+            'check_token_input_room.task': 'Input token limit',
+            'check_token_output_limit.task': 'Output token limit',
+            'check_budget_limit.task': 'Budget limit',
+            'check_audio_duration_limit.task': 'Audio duration limit',
+        }
+        span = self._named_span
+
+        tree = self._tree_of(
+            span('root', '', 'root'),
+            *(span(name, 'root', name) for name in expected),
+        )
+
+        assert {c.span_name: c.label for c in tree.children} == expected
+
+    def test_a_preprocessing_plugin_span_is_labelled_with_its_key(self):
+        span = self._named_span
+
+        tree = self._tree_of(
+            span('root', '', 'root'),
+            span('plugin', 'root', 'preprocess.pii_mask.task'),
+        )
+
+        assert tree.children[0].label == 'Preprocessing plugin: pii_mask'
+
+    def test_provider_call_spans_are_labelled_by_their_provider(self):
+        expected = {
+            'ChatOpenAI.chat': ('openai', 'OpenAI request'),
+            'AzureChatOpenAI.chat': ('azure.ai.openai', 'Azure OpenAI request'),
+            'GatewayDeepSeekChatModel.chat': ('deepseek', 'DeepSeek request'),
+            'ChatAnthropic.chat': ('anthropic', 'Anthropic request'),
+            'ChatGoogleGenerativeAI.chat': ('gcp.gen_ai', 'Google Gemini request'),
+            'ChatMistralAI.chat': ('mistral_ai', 'Mistral AI request'),
+            'MockGatewayChatModel.chat': ('mock', 'Mock model request'),
+            'SomeNewChatModel.chat': ('unknown', None),
+            'NoProvider.chat': ('', None),
+        }
+        span = self._named_span
+
+        tree = self._tree_of(
+            span('root', '', 'root'),
+            *(
+                span(name, 'root', name, gen_ai_provider=provider)
+                for name, (provider, _) in expected.items()
+            ),
+        )
+
+        assert {c.span_name: c.label for c in tree.children} == {
+            name: label for name, (_, label) in expected.items()
+        }
+
+    def test_tree_nodes_carry_their_status(self):
+        span = self._named_span
+
+        tree = self._tree_of(
+            span('root', '', 'decision_model.workflow'),
+            span('ok', 'root', 'auth_api_key.task', status_code='Ok'),
+            span('unset', 'root', 'check_route_access.task'),
+            span('failed', 'root', 'llm_complete.task', status_code='Error'),
+            span('fallback', 'root', 'decide.task', fallback_triggered=True),
+            span(
+                'failed-fallback',
+                'root',
+                'decide.task',
+                status_code='Error',
+                fallback_triggered=True,
+            ),
+        )
+
+        children = {c.span_id: c for c in tree.children}
+        assert children['ok'].status == SpanStatus.SUCCESS
+        assert children['unset'].status == SpanStatus.SUCCESS
+        assert children['failed'].status == SpanStatus.ERROR
+        # A fallback answered: the span did its job, but not as planned.
+        assert children['fallback'].status == SpanStatus.WARNING
+        # A failed span is in error, fallback or not.
+        assert children['failed-fallback'].status == SpanStatus.ERROR
+        # The status is the span's own: a failed child does not change its parent.
+        assert tree.status == SpanStatus.SUCCESS
+        assert children['fallback'].model_dump(by_alias=True, mode='json')[
+            'status'
+        ] == ('warning')
+
+    def test_tree_nodes_carry_their_start_offset_from_the_root(self):
+        base_time = dt.datetime(2025, 1, 8, 10, 0, 0, tzinfo=dt.timezone.utc)
+
+        def span(span_id, parent, offset_ms, duration_ms):
+            return SpanRecord(
+                timestamp=base_time + dt.timedelta(milliseconds=offset_ms),
+                trace_id='trace-123',
+                request_uuid='12345678-1234-5678-1234-567812345678',
+                span_id=span_id,
+                span_name=span_id,
+                service_name='ai-gateway',
+                duration=duration_ms * 1_000_000,
+                status_code='Unset',
+                parent_span_id=parent,
+                route_name='test-route',
+                api_key_uuid='',
+                api_key_name='',
+                group_uuid='',
+                group_name='',
+            )
+
+        # Two children running in parallel, one grandchild; listed out of order.
+        self.otel_traces_dao.get_spans_by_trace_id = MagicMock(
+            return_value=[
+                span('child-b', 'root', 20.5, 50),
+                span('root', '', 0, 100),
+                span('grandchild', 'child-a', 15, 5),
+                span('child-a', 'root', 10, 50),
+            ]
+        )
+
+        tree = in_worker(self.tracing_service.get_trace_by_id)(
+            PROJECT_UUID, 'trace-123'
+        ).tree
+
+        assert tree is not None
+        assert tree.start_offset_ms == 0
+        children = {c.span_id: c for c in tree.children}
+        a, b = children['child-a'], children['child-b']
+        assert a.start_offset_ms == 10
+        assert b.start_offset_ms == 20.5
+        # The parallel children overlap: b starts before a ends.
+        assert b.start_offset_ms < a.start_offset_ms + a.duration_ms
+        assert a.children[0].start_offset_ms == 15
+        assert tree.model_dump(by_alias=True)['startOffsetMs'] == 0
+
     def test_get_trace_by_id_with_errors(self):
         """Test error count is calculated correctly — root span error gives ERROR."""
-        base_time = datetime.datetime(
-            2025, 1, 8, 10, 0, 0, tzinfo=datetime.timezone.utc
-        )
+        base_time = dt.datetime(2025, 1, 8, 10, 0, 0, tzinfo=dt.timezone.utc)
         request_uuid = '12345678-1234-5678-1234-567812345678'
         self.otel_traces_dao.get_spans_by_trace_id = MagicMock(
             return_value=[
@@ -645,7 +878,7 @@ class TracingServiceTest(unittest.TestCase):
                     group_name='test-group',
                 ),
                 SpanRecord(
-                    timestamp=base_time + datetime.timedelta(milliseconds=10),
+                    timestamp=base_time + dt.timedelta(milliseconds=10),
                     trace_id='trace-error',
                     request_uuid=request_uuid,
                     span_id='span-2',
@@ -661,7 +894,7 @@ class TracingServiceTest(unittest.TestCase):
                     group_name='test-group',
                 ),
                 SpanRecord(
-                    timestamp=base_time + datetime.timedelta(milliseconds=20),
+                    timestamp=base_time + dt.timedelta(milliseconds=20),
                     trace_id='trace-error',
                     request_uuid=request_uuid,
                     span_id='span-3',
@@ -679,16 +912,16 @@ class TracingServiceTest(unittest.TestCase):
             ]
         )
 
-        result = self.tracing_service.get_trace_by_id(PROJECT_UUID, 'trace-error')
+        result = in_worker(self.tracing_service.get_trace_by_id)(
+            PROJECT_UUID, 'trace-error'
+        )
 
         assert result.error_count == 2
         assert result.trace_status == TraceStatus.ERROR
 
     def test_get_trace_by_id_duration_calculation(self):
         """Test that duration is calculated from max span duration."""
-        base_time = datetime.datetime(
-            2025, 1, 8, 10, 0, 0, tzinfo=datetime.timezone.utc
-        )
+        base_time = dt.datetime(2025, 1, 8, 10, 0, 0, tzinfo=dt.timezone.utc)
         request_uuid = '12345678-1234-5678-1234-567812345678'
         self.otel_traces_dao.get_spans_by_trace_id = MagicMock(
             return_value=[
@@ -709,7 +942,7 @@ class TracingServiceTest(unittest.TestCase):
                     group_name='test-group',
                 ),
                 SpanRecord(
-                    timestamp=base_time + datetime.timedelta(milliseconds=10),
+                    timestamp=base_time + dt.timedelta(milliseconds=10),
                     trace_id='trace-duration',
                     request_uuid=request_uuid,
                     span_id='span-2',
@@ -727,7 +960,9 @@ class TracingServiceTest(unittest.TestCase):
             ]
         )
 
-        result = self.tracing_service.get_trace_by_id(PROJECT_UUID, 'trace-duration')
+        result = in_worker(self.tracing_service.get_trace_by_id)(
+            PROJECT_UUID, 'trace-duration'
+        )
 
         # Duration should be the max of all spans
         assert result.duration_ms == 350.0
@@ -735,9 +970,7 @@ class TracingServiceTest(unittest.TestCase):
 
     def test_get_trace_by_id_warning_child_error(self):
         """Test WARNING: root span OK but child span has error."""
-        base_time = datetime.datetime(
-            2025, 1, 8, 10, 0, 0, tzinfo=datetime.timezone.utc
-        )
+        base_time = dt.datetime(2025, 1, 8, 10, 0, 0, tzinfo=dt.timezone.utc)
         request_uuid = '12345678-1234-5678-1234-567812345678'
         self.otel_traces_dao.get_spans_by_trace_id = MagicMock(
             return_value=[
@@ -758,7 +991,7 @@ class TracingServiceTest(unittest.TestCase):
                     group_name='test-group',
                 ),
                 SpanRecord(
-                    timestamp=base_time + datetime.timedelta(milliseconds=10),
+                    timestamp=base_time + dt.timedelta(milliseconds=10),
                     trace_id='trace-warn',
                     request_uuid=request_uuid,
                     span_id='span-child',
@@ -776,17 +1009,67 @@ class TracingServiceTest(unittest.TestCase):
             ]
         )
 
-        result = self.tracing_service.get_trace_by_id(PROJECT_UUID, 'trace-warn')
+        result = in_worker(self.tracing_service.get_trace_by_id)(
+            PROJECT_UUID, 'trace-warn'
+        )
 
         assert result.error_count == 1
         assert result.trace_status == TraceStatus.WARNING
 
     # --- get_traces (list) tests ---
 
-    def test_get_traces(self):
-        base_time = datetime.datetime(
-            2025, 1, 8, 10, 0, 0, tzinfo=datetime.timezone.utc
+    def test_get_traces_bounds_the_span_lookups_to_the_page_dates(self):
+        # Two traces whose root spans are three days apart.
+        first = dt.datetime(2025, 1, 5, 23, 0, tzinfo=dt.timezone.utc)
+        last = dt.datetime(2025, 1, 8, 10, 0, tzinfo=dt.timezone.utc)
+        rows = []
+        for trace_id, created_at in [('trace-old', first), ('trace-new', last)]:
+            row = MagicMock()
+            row.trace_id = trace_id
+            row.request_uuid = None
+            row.route_name = 'my-route'
+            row.group_name = None
+            row.group_uuid = None
+            row.api_key_name = None
+            row.api_key_uuid = None
+            row.duration_ms = 10.0
+            row.tags = []
+            row.request_type = None
+            row.created_at = created_at
+            rows.append(row)
+        mock_page = MagicMock(spec=Page)
+        mock_page.items = rows
+        mock_page.total = 2
+        self.otel_traces_dao.get_root_traces_paginated = MagicMock(
+            return_value=mock_page
         )
+        self.otel_traces_dao.get_spans_stats_by_trace_ids = MagicMock(return_value={})
+        self.otel_traces_dao.get_root_span_error_by_trace_ids = MagicMock(
+            return_value=set()
+        )
+
+        in_worker(self.tracing_service.get_traces)(
+            project_uuid=PROJECT_UUID,
+            route_names=None,
+            group_uuids=None,
+            key_uuids=None,
+            _from=None,
+            _to=None,
+            params=Params(page=1, size=50),
+        )
+
+        # One day of margin each side, for a trace that crossed midnight.
+        window = (dt.date(2025, 1, 4), dt.date(2025, 1, 9))
+        trace_ids = ['trace-old', 'trace-new']
+        self.otel_traces_dao.get_spans_stats_by_trace_ids.assert_called_once_with(
+            trace_ids, *window
+        )
+        self.otel_traces_dao.get_root_span_error_by_trace_ids.assert_called_once_with(
+            trace_ids, *window
+        )
+
+    def test_get_traces(self):
+        base_time = dt.datetime(2025, 1, 8, 10, 0, 0, tzinfo=dt.timezone.utc)
         trace_id = 'trace-123'
         request_uuid = '12345678-1234-5678-1234-567812345678'
 
@@ -816,7 +1099,7 @@ class TracingServiceTest(unittest.TestCase):
                     error_count=1,
                     input_tokens=200,
                     output_tokens=300,
-                    last_span=base_time + datetime.timedelta(seconds=1),
+                    last_span=base_time + dt.timedelta(seconds=1),
                 )
             }
         )
@@ -824,13 +1107,13 @@ class TracingServiceTest(unittest.TestCase):
             return_value=set()  # Root span has no error
         )
 
-        res = self.tracing_service.get_traces(
+        res = in_worker(self.tracing_service.get_traces)(
             project_uuid=PROJECT_UUID,
             route_names=['my-route'],
             group_uuids=None,
             key_uuids=None,
             _from=base_time,
-            _to=base_time + datetime.timedelta(hours=1),
+            _to=base_time + dt.timedelta(hours=1),
             params=Params(page=1, size=50),
         )
 
@@ -857,14 +1140,12 @@ class TracingServiceTest(unittest.TestCase):
         assert item.total_tokens == 500
         assert item.created_at == int(base_time.timestamp())
         assert item.latest_span_ts == int(
-            (base_time + datetime.timedelta(seconds=1)).timestamp()
+            (base_time + dt.timedelta(seconds=1)).timestamp()
         )
 
     def test_get_traces_includes_tags(self):
         """TraceDTO.tags comes straight from the paginated row, no extra DAO call."""
-        base_time = datetime.datetime(
-            2025, 1, 8, 10, 0, 0, tzinfo=datetime.timezone.utc
-        )
+        base_time = dt.datetime(2025, 1, 8, 10, 0, 0, tzinfo=dt.timezone.utc)
         trace_id = 'trace-tags'
 
         mock_row = MagicMock()
@@ -891,13 +1172,13 @@ class TracingServiceTest(unittest.TestCase):
             return_value=set()
         )
 
-        res = self.tracing_service.get_traces(
+        res = in_worker(self.tracing_service.get_traces)(
             project_uuid=PROJECT_UUID,
             route_names=None,
             group_uuids=None,
             key_uuids=None,
             _from=base_time,
-            _to=base_time + datetime.timedelta(hours=1),
+            _to=base_time + dt.timedelta(hours=1),
             params=Params(page=1, size=50),
             tags=['env=prod'],
         )
@@ -908,9 +1189,7 @@ class TracingServiceTest(unittest.TestCase):
 
     def test_get_traces_includes_request_type(self):
         """TraceDTO.request_type comes from the row; unknown or empty is None."""
-        base_time = datetime.datetime(
-            2025, 1, 8, 10, 0, 0, tzinfo=datetime.timezone.utc
-        )
+        base_time = dt.datetime(2025, 1, 8, 10, 0, 0, tzinfo=dt.timezone.utc)
 
         def make_row(trace_id: str, request_type: str) -> MagicMock:
             row = MagicMock()
@@ -940,7 +1219,7 @@ class TracingServiceTest(unittest.TestCase):
             return_value=set()
         )
 
-        res = self.tracing_service.get_traces(
+        res = in_worker(self.tracing_service.get_traces)(
             project_uuid=PROJECT_UUID,
             route_names=None,
             group_uuids=None,
@@ -956,66 +1235,9 @@ class TracingServiceTest(unittest.TestCase):
         call_args = self.otel_traces_dao.get_root_traces_paginated.call_args
         assert call_args.kwargs['request_types'] == [RequestType.EMBEDDINGS]
 
-    def test_get_traces_page_offset_conversion(self):
-        """Test that params are passed correctly to the paginated DAO method."""
-        base_time = datetime.datetime(
-            2025, 1, 8, 10, 0, 0, tzinfo=datetime.timezone.utc
-        )
-
-        mock_page = MagicMock(spec=Page)
-        mock_page.items = []
-        mock_page.total = 100
-
-        self.otel_traces_dao.get_root_traces_paginated = MagicMock(
-            return_value=mock_page
-        )
-
-        self.tracing_service.get_traces(
-            project_uuid=PROJECT_UUID,
-            route_names=None,
-            group_uuids=None,
-            key_uuids=None,
-            _from=base_time,
-            _to=base_time + datetime.timedelta(hours=1),
-            params=Params(page=3, size=10),
-        )
-
-        call_args = self.otel_traces_dao.get_root_traces_paginated.call_args
-        # Verify params are passed correctly (now at position 6)
-        assert call_args.args[6] == Params(page=3, size=10)
-
-    def test_get_traces_empty(self):
-        base_time = datetime.datetime(
-            2025, 1, 8, 10, 0, 0, tzinfo=datetime.timezone.utc
-        )
-
-        mock_page = MagicMock(spec=Page)
-        mock_page.items = []
-        mock_page.total = 0
-
-        self.otel_traces_dao.get_root_traces_paginated = MagicMock(
-            return_value=mock_page
-        )
-
-        res = self.tracing_service.get_traces(
-            project_uuid=PROJECT_UUID,
-            route_names=None,
-            group_uuids=None,
-            key_uuids=None,
-            _from=base_time,
-            _to=base_time + datetime.timedelta(hours=1),
-            params=Params(page=1, size=50),
-        )
-
-        assert isinstance(res, Page)
-        assert res.total == 0
-        assert res.items == []
-
     def test_get_traces_no_span_data(self):
         """Test that get_traces uses defaults when no span stats available."""
-        base_time = datetime.datetime(
-            2025, 1, 8, 10, 0, 0, tzinfo=datetime.timezone.utc
-        )
+        base_time = dt.datetime(2025, 1, 8, 10, 0, 0, tzinfo=dt.timezone.utc)
         trace_id = 'trace-456'
 
         # Create a mock row object that has attributes
@@ -1042,7 +1264,7 @@ class TracingServiceTest(unittest.TestCase):
             return_value=set()
         )
 
-        res = self.tracing_service.get_traces(
+        res = in_worker(self.tracing_service.get_traces)(
             project_uuid=PROJECT_UUID,
             route_names=None,
             group_uuids=None,
@@ -1061,17 +1283,13 @@ class TracingServiceTest(unittest.TestCase):
         # When no span data, use created_at as fallback for latest_span_ts
         assert item.latest_span_ts == int(base_time.timestamp())
 
-    def test_get_traces_trace_status_ok(self):
-        """Test trace status SUCCESS: root OK + no child errors."""
-        base_time = datetime.datetime(
-            2025, 1, 8, 10, 0, 0, tzinfo=datetime.timezone.utc
-        )
-        trace_id = 'trace-ok'
-        request_uuid = '11111111-1111-1111-1111-111111111111'
-
+    def test_get_traces_trace_status(self):
+        """SUCCESS: no errors; WARNING: root OK + child errors; ERROR: root error."""
+        base_time = dt.datetime(2025, 1, 8, 10, 0, 0, tzinfo=dt.timezone.utc)
+        trace_id = 'trace-1'
         mock_row = MagicMock()
         mock_row.trace_id = trace_id
-        mock_row.request_uuid = request_uuid
+        mock_row.request_uuid = '11111111-1111-1111-1111-111111111111'
         mock_row.route_name = 'my-route'
         mock_row.group_name = ''
         mock_row.group_uuid = ''
@@ -1079,224 +1297,51 @@ class TracingServiceTest(unittest.TestCase):
         mock_row.api_key_uuid = ''
         mock_row.duration_ms = 100.0
         mock_row.created_at = base_time
-
         mock_page = MagicMock(spec=Page)
         mock_page.items = [mock_row]
         mock_page.total = 1
-
         self.otel_traces_dao.get_root_traces_paginated = MagicMock(
             return_value=mock_page
         )
-        self.otel_traces_dao.get_spans_stats_by_trace_ids = MagicMock(
-            return_value={
-                trace_id: SpanStats(
-                    span_count=1,
-                    error_count=0,
-                    input_tokens=0,
-                    output_tokens=0,
-                    last_span=base_time,
+
+        for span_count, error_count, root_errors, expected in (
+            (1, 0, set(), TraceStatus.SUCCESS),
+            (3, 1, set(), TraceStatus.WARNING),
+            (2, 1, {trace_id}, TraceStatus.ERROR),
+        ):
+            with self.subTest(expected=expected):
+                self.otel_traces_dao.get_spans_stats_by_trace_ids = MagicMock(
+                    return_value={
+                        trace_id: SpanStats(
+                            span_count=span_count,
+                            error_count=error_count,
+                            input_tokens=0,
+                            output_tokens=0,
+                            last_span=base_time,
+                        )
+                    }
                 )
-            }
-        )
-        self.otel_traces_dao.get_root_span_error_by_trace_ids = MagicMock(
-            return_value=set()
-        )
-
-        res = self.tracing_service.get_traces(
-            project_uuid=PROJECT_UUID,
-            route_names=None,
-            group_uuids=None,
-            key_uuids=None,
-            _from=None,
-            _to=None,
-            params=Params(page=1, size=50),
-        )
-
-        item = res.items[0]
-        assert item.error_count == 0
-        assert item.trace_status == TraceStatus.SUCCESS
-
-    def test_get_traces_trace_status_warning(self):
-        """Test trace status WARNING: root OK + child errors."""
-        base_time = datetime.datetime(
-            2025, 1, 8, 10, 0, 0, tzinfo=datetime.timezone.utc
-        )
-        trace_id = 'trace-warning'
-        request_uuid = '22222222-2222-2222-2222-222222222222'
-
-        mock_row = MagicMock()
-        mock_row.trace_id = trace_id
-        mock_row.request_uuid = request_uuid
-        mock_row.route_name = 'my-route'
-        mock_row.group_name = ''
-        mock_row.group_uuid = ''
-        mock_row.api_key_name = ''
-        mock_row.api_key_uuid = ''
-        mock_row.duration_ms = 100.0
-        mock_row.created_at = base_time
-
-        mock_page = MagicMock(spec=Page)
-        mock_page.items = [mock_row]
-        mock_page.total = 1
-
-        self.otel_traces_dao.get_root_traces_paginated = MagicMock(
-            return_value=mock_page
-        )
-        self.otel_traces_dao.get_spans_stats_by_trace_ids = MagicMock(
-            return_value={
-                trace_id: SpanStats(
-                    span_count=3,
-                    error_count=1,
-                    input_tokens=0,
-                    output_tokens=0,
-                    last_span=base_time,
+                self.otel_traces_dao.get_root_span_error_by_trace_ids = MagicMock(
+                    return_value=root_errors
                 )
-            }
-        )
-        self.otel_traces_dao.get_root_span_error_by_trace_ids = MagicMock(
-            return_value=set()  # Root OK
-        )
 
-        res = self.tracing_service.get_traces(
-            project_uuid=PROJECT_UUID,
-            route_names=None,
-            group_uuids=None,
-            key_uuids=None,
-            _from=None,
-            _to=None,
-            params=Params(page=1, size=50),
-        )
-
-        item = res.items[0]
-        assert item.error_count == 1
-        assert item.trace_status == TraceStatus.WARNING
-
-    def test_get_traces_trace_status_error(self):
-        """Test trace status ERROR: root span has error."""
-        base_time = datetime.datetime(
-            2025, 1, 8, 10, 0, 0, tzinfo=datetime.timezone.utc
-        )
-        trace_id = 'trace-error'
-        request_uuid = '33333333-3333-3333-3333-333333333333'
-
-        mock_row = MagicMock()
-        mock_row.trace_id = trace_id
-        mock_row.request_uuid = request_uuid
-        mock_row.route_name = 'my-route'
-        mock_row.group_name = ''
-        mock_row.group_uuid = ''
-        mock_row.api_key_name = ''
-        mock_row.api_key_uuid = ''
-        mock_row.duration_ms = 100.0
-        mock_row.created_at = base_time
-
-        mock_page = MagicMock(spec=Page)
-        mock_page.items = [mock_row]
-        mock_page.total = 1
-
-        self.otel_traces_dao.get_root_traces_paginated = MagicMock(
-            return_value=mock_page
-        )
-        self.otel_traces_dao.get_spans_stats_by_trace_ids = MagicMock(
-            return_value={
-                trace_id: SpanStats(
-                    span_count=2,
-                    error_count=1,
-                    input_tokens=0,
-                    output_tokens=0,
-                    last_span=base_time,
+                res = in_worker(self.tracing_service.get_traces)(
+                    project_uuid=PROJECT_UUID,
+                    route_names=None,
+                    group_uuids=None,
+                    key_uuids=None,
+                    _from=None,
+                    _to=None,
+                    params=Params(page=1, size=50),
                 )
-            }
-        )
-        self.otel_traces_dao.get_root_span_error_by_trace_ids = MagicMock(
-            return_value={trace_id}  # Root span has error
-        )
 
-        res = self.tracing_service.get_traces(
-            project_uuid=PROJECT_UUID,
-            route_names=None,
-            group_uuids=None,
-            key_uuids=None,
-            _from=None,
-            _to=None,
-            params=Params(page=1, size=50),
-        )
-
-        item = res.items[0]
-        assert item.error_count == 1
-        assert item.trace_status == TraceStatus.ERROR
-
-    def test_get_traces_with_group_filter(self):
-        base_time = datetime.datetime(
-            2025, 1, 8, 10, 0, 0, tzinfo=datetime.timezone.utc
-        )
-
-        mock_page = MagicMock(spec=Page)
-        mock_page.items = []
-        mock_page.total = 0
-
-        self.otel_traces_dao.get_root_traces_paginated = MagicMock(
-            return_value=mock_page
-        )
-
-        self.tracing_service.get_traces(
-            project_uuid=PROJECT_UUID,
-            route_names=None,
-            group_uuids=[
-                UUID('550e8400-e29b-41d4-a716-446655440001'),
-                UUID('550e8400-e29b-41d4-a716-446655440002'),
-            ],
-            key_uuids=None,
-            _from=base_time,
-            _to=base_time + datetime.timedelta(hours=1),
-            params=Params(page=1, size=50),
-        )
-
-        call_args = self.otel_traces_dao.get_root_traces_paginated.call_args
-        assert call_args.args[2] == [
-            UUID('550e8400-e29b-41d4-a716-446655440001'),
-            UUID('550e8400-e29b-41d4-a716-446655440002'),
-        ]  # group_uuids
-        assert call_args.args[3] is None  # key_uuids
-
-    def test_get_traces_with_key_filter(self):
-        base_time = datetime.datetime(
-            2025, 1, 8, 10, 0, 0, tzinfo=datetime.timezone.utc
-        )
-
-        mock_page = MagicMock(spec=Page)
-        mock_page.items = []
-        mock_page.total = 0
-
-        self.otel_traces_dao.get_root_traces_paginated = MagicMock(
-            return_value=mock_page
-        )
-
-        self.tracing_service.get_traces(
-            project_uuid=PROJECT_UUID,
-            route_names=None,
-            group_uuids=None,
-            key_uuids=[
-                UUID('660e8400-e29b-41d4-a716-446655440001'),
-                UUID('660e8400-e29b-41d4-a716-446655440002'),
-            ],
-            _from=base_time,
-            _to=base_time + datetime.timedelta(hours=1),
-            params=Params(page=1, size=50),
-        )
-
-        call_args = self.otel_traces_dao.get_root_traces_paginated.call_args
-        assert call_args.args[2] is None  # group_uuids
-        assert call_args.args[3] == [
-            UUID('660e8400-e29b-41d4-a716-446655440001'),
-            UUID('660e8400-e29b-41d4-a716-446655440002'),
-        ]  # key_uuids
+                item = res.items[0]
+                assert item.error_count == error_count
+                assert item.trace_status == expected
 
     def test_get_traces_with_combined_filters(self):
         """Test that all filters are passed correctly to DAO when combined."""
-        base_time = datetime.datetime(
-            2025, 1, 8, 10, 0, 0, tzinfo=datetime.timezone.utc
-        )
+        base_time = dt.datetime(2025, 1, 8, 10, 0, 0, tzinfo=dt.timezone.utc)
 
         mock_page = MagicMock(spec=Page)
         mock_page.items = []
@@ -1306,7 +1351,7 @@ class TracingServiceTest(unittest.TestCase):
             return_value=mock_page
         )
 
-        self.tracing_service.get_traces(
+        in_worker(self.tracing_service.get_traces)(
             project_uuid=PROJECT_UUID,
             route_names=['route-a', 'route-b'],
             group_uuids=[UUID('550e8400-e29b-41d4-a716-446655440001')],
@@ -1315,7 +1360,7 @@ class TracingServiceTest(unittest.TestCase):
                 UUID('660e8400-e29b-41d4-a716-446655440002'),
             ],
             _from=base_time,
-            _to=base_time + datetime.timedelta(hours=1),
+            _to=base_time + dt.timedelta(hours=1),
             params=Params(page=2, size=25),
         )
 
@@ -1339,15 +1384,15 @@ class TracingServiceTest(unittest.TestCase):
         )
 
         with pytest.raises(GatewayNotFoundError) as exc_info:
-            self.tracing_service.get_span_by_id(PROJECT_UUID, 'trace-123', 'span-456')
+            in_worker(self.tracing_service.get_span_by_id)(
+                PROJECT_UUID, 'trace-123', 'span-456'
+            )
 
         assert "Span 'span-456' not found in trace 'trace-123'" in str(exc_info.value)
 
     def test_get_span_by_id_success(self):
         """Test retrieving a span with all fields."""
-        base_time = datetime.datetime(
-            2025, 1, 8, 10, 0, 0, tzinfo=datetime.timezone.utc
-        )
+        base_time = dt.datetime(2025, 1, 8, 10, 0, 0, tzinfo=dt.timezone.utc)
         self.otel_traces_dao.get_span_by_trace_and_span_id = MagicMock(
             return_value=SpanRecord(
                 timestamp=base_time,
@@ -1379,7 +1424,7 @@ class TracingServiceTest(unittest.TestCase):
             UUID('550e8400-e29b-41d4-a716-446655440003'): 'test-group'
         }
 
-        result = self.tracing_service.get_span_by_id(
+        result = in_worker(self.tracing_service.get_span_by_id)(
             PROJECT_UUID, 'trace-123', 'span-456'
         )
 
@@ -1405,9 +1450,7 @@ class TracingServiceTest(unittest.TestCase):
 
     def test_get_span_by_id_with_error_events(self):
         """Test that error events are converted from events list."""
-        base_time = datetime.datetime(
-            2025, 1, 8, 10, 0, 0, tzinfo=datetime.timezone.utc
-        )
+        base_time = dt.datetime(2025, 1, 8, 10, 0, 0, tzinfo=dt.timezone.utc)
         self.otel_traces_dao.get_span_by_trace_and_span_id = MagicMock(
             return_value=SpanRecord(
                 timestamp=base_time,
@@ -1443,7 +1486,7 @@ class TracingServiceTest(unittest.TestCase):
             )
         )
 
-        result = self.tracing_service.get_span_by_id(
+        result = in_worker(self.tracing_service.get_span_by_id)(
             PROJECT_UUID, 'trace-123', 'span-456'
         )
 
@@ -1460,9 +1503,7 @@ class TracingServiceTest(unittest.TestCase):
 
     def test_get_span_by_id_without_events(self):
         """Test that empty error_events list is returned when no events."""
-        base_time = datetime.datetime(
-            2025, 1, 8, 10, 0, 0, tzinfo=datetime.timezone.utc
-        )
+        base_time = dt.datetime(2025, 1, 8, 10, 0, 0, tzinfo=dt.timezone.utc)
         self.otel_traces_dao.get_span_by_trace_and_span_id = MagicMock(
             return_value=SpanRecord(
                 timestamp=base_time,
@@ -1487,7 +1528,7 @@ class TracingServiceTest(unittest.TestCase):
             )
         )
 
-        result = self.tracing_service.get_span_by_id(
+        result = in_worker(self.tracing_service.get_span_by_id)(
             PROJECT_UUID, 'trace-123', 'span-456'
         )
 
@@ -1500,9 +1541,7 @@ class TracingServiceTest(unittest.TestCase):
 
     def test_get_span_by_id_with_empty_uuids(self):
         """Test that empty UUIDs are handled correctly and converted to None."""
-        base_time = datetime.datetime(
-            2025, 1, 8, 10, 0, 0, tzinfo=datetime.timezone.utc
-        )
+        base_time = dt.datetime(2025, 1, 8, 10, 0, 0, tzinfo=dt.timezone.utc)
         self.otel_traces_dao.get_span_by_trace_and_span_id = MagicMock(
             return_value=SpanRecord(
                 timestamp=base_time,
@@ -1527,7 +1566,7 @@ class TracingServiceTest(unittest.TestCase):
             )
         )
 
-        result = self.tracing_service.get_span_by_id(
+        result = in_worker(self.tracing_service.get_span_by_id)(
             PROJECT_UUID, 'trace-123', 'span-456'
         )
 

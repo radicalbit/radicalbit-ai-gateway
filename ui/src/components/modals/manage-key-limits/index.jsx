@@ -1,4 +1,4 @@
-import { formatCount, isLimitComplete } from '@Components/limits/helpers';
+import { formatCount } from '@Components/limits/helpers';
 import useModals from '@Hooks/use-modals';
 import { useGetKeyQuery } from '@State/keys/api';
 import { useKeyLimitSaveWarnings } from '@State/keys/hooks';
@@ -17,10 +17,6 @@ import useHandleOnDelete from './useHandleOnDelete';
 import useHandleOnEdit from './useHandleOnEdit';
 import useHandleOnReplace from './useHandleOnReplace';
 import useHandleOnSubmit from './useHandleOnSubmit';
-
-const UNAVAILABLE_MESSAGE = 'Unable to load this credential, please close and retry later';
-
-const MODAL_WIDTH = 760;
 
 const SCREENS = {
   [ScreenEnum.LIST]: ListScreen,
@@ -59,7 +55,7 @@ function ManageKeyLimitsInner() {
       header={<Header />}
       onCancel={hideModal}
       open
-      width={MODAL_WIDTH}
+      width={760}
     >
       <Body />
     </RbitModal>
@@ -102,7 +98,7 @@ function Body() {
   }
 
   if (isError) {
-    return <Alert title={UNAVAILABLE_MESSAGE} type="error" />;
+    return <Alert title="Unable to load this credential, please close and retry later" type="error" />;
   }
 
   if (!isSuccess) {
@@ -152,18 +148,11 @@ function AddActions() {
 
   const saveLabel = `Save ${formatCount(count, 'limit')}`;
 
-  const rows = form?.limits ?? [];
-  const isIncomplete = !rows.every(isLimitComplete);
-  const hint = isIncomplete ? <span className="mr-auto self-center text-xs text-[var(--coo-fg-secondary)]" id="manage-key-limits-hint">Fill in every field of each limit to save</span> : false;
-  const hintId = isIncomplete ? 'manage-key-limits-hint' : undefined;
-
   return (
     <div className="flex gap-2 justify-end">
-      {hint}
-
       <Button onClick={handleOnCancel} type="secondary-light">Cancel</Button>
 
-      <Button aria-describedby={hintId} disabled={isSubmitDisabled} loading={isLoading} onClick={handleOnSubmit} type="primary">{saveLabel}</Button>
+      <Button disabled={isSubmitDisabled} loading={isLoading} onClick={handleOnSubmit} type="primary">{saveLabel}</Button>
     </div>
   );
 }

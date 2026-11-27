@@ -1,4 +1,4 @@
-import datetime
+import datetime as dt
 from decimal import Decimal
 
 from radicalbit_ai_gateway.models.caching import CacheConfig, Caching, SemanticCaching
@@ -7,10 +7,12 @@ from radicalbit_ai_gateway.models.fallback import Fallback
 from radicalbit_ai_gateway.models.gateway_config import GatewayConfig
 from radicalbit_ai_gateway.models.gateway_route_config import GatewayRouteConfig
 from radicalbit_ai_gateway.models.guardrails import (
+    CheckGuardrail,
     Guardrail,
     GuardrailBehaviorType,
     GuardrailType,
     GuardrailWhereType,
+    JudgeGuardrail,
     JudgeParameter,
 )
 from radicalbit_ai_gateway.models.limiting import (
@@ -21,7 +23,7 @@ from radicalbit_ai_gateway.models.limiting import (
 )
 from radicalbit_ai_gateway.models.model import Model
 from radicalbit_ai_gateway.models.routing import (
-    DeterministicRoutingConfig,
+    KeywordRoutingConfig,
     OutputMappingEntry,
     RoutingRuleType,
 )
@@ -39,7 +41,7 @@ def get_default_fallback(
 
 def get_global_guardrails() -> list[Guardrail]:
     return [
-        Guardrail(
+        CheckGuardrail(
             name='starts_with_check',
             type=GuardrailType.STARTS_WITH,
             description='Check words which starts with a specific word',
@@ -47,7 +49,7 @@ def get_global_guardrails() -> list[Guardrail]:
             behavior=GuardrailBehaviorType.BLOCK,
             parameters={'values': ['ciao', 'buonasera']},
         ),
-        Guardrail(
+        CheckGuardrail(
             name='keyword_block',
             type=GuardrailType.CONTAINS,
             description=None,
@@ -55,7 +57,7 @@ def get_global_guardrails() -> list[Guardrail]:
             behavior=GuardrailBehaviorType.BLOCK,
             parameters={'values': ['ciao']},
         ),
-        Guardrail(
+        CheckGuardrail(
             name='email_address_redaction',
             type=GuardrailType.REGEX,
             description=None,
@@ -65,7 +67,7 @@ def get_global_guardrails() -> list[Guardrail]:
                 'values': [r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z|a-z]{2,}\b']
             },
         ),
-        Guardrail(
+        CheckGuardrail(
             name='uuid_block',
             type=GuardrailType.REGEX,
             description=None,
@@ -118,13 +120,13 @@ def get_chat_models(
             credentials=Credentials(
                 api_key=None,
                 api_base='https://openai-gpt-4-test-v-1.openai.azure.com/',
-                api_version=datetime.datetime(
+                api_version=dt.datetime(
                     2023,
                     5,
                     15,
                     0,
                     0,
-                    tzinfo=datetime.timezone(datetime.timedelta(0), 'Z'),
+                    tzinfo=dt.timezone(dt.timedelta(0), 'Z'),
                 ),
                 azure_ad_token='sk-123',
                 project_id=None,
@@ -319,8 +321,8 @@ def get_default_gateway_with_caching(
     )
 
 
-def get_routing_config(name: str = 'keyword-routing') -> DeterministicRoutingConfig:
-    return DeterministicRoutingConfig(
+def get_routing_config(name: str = 'keyword-routing') -> KeywordRoutingConfig:
+    return KeywordRoutingConfig(
         name=name,
         type='deterministic',
         rule=RoutingRuleType.KEYWORD,
@@ -380,7 +382,7 @@ def get_gateway_with_judge_and_semantic_cache(
     embedding_models = get_embedding_models()
 
     # Create JUDGE guardrail
-    judge_guardrail = Guardrail(
+    judge_guardrail = JudgeGuardrail(
         name=judge_guardrail_name,
         type=GuardrailType.JUDGE,
         description='Test judge guardrail',

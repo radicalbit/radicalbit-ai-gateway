@@ -2,6 +2,7 @@ from uuid import UUID
 
 from fastapi import APIRouter
 
+from radicalbit_ai_gateway.db.database import run_from_worker
 from radicalbit_ai_gateway.models.tag_dto import TagKeysDTO, TagKeyValuesDTO
 from radicalbit_ai_gateway.services.project_service import ProjectService
 from radicalbit_ai_gateway.services.request_event_service import RequestEventService
@@ -21,7 +22,7 @@ class TagRoute:
             response_model=TagKeysDTO,
         )
         def get_tag_keys(project_uuid: UUID):
-            project_service.get_by_uuid(project_uuid)
+            run_from_worker(project_service.get_by_uuid, project_uuid)
             return request_event_service.get_tag_keys(project_uuid)
 
         @router.get(
@@ -30,7 +31,7 @@ class TagRoute:
             response_model=TagKeyValuesDTO,
         )
         def get_tag_key_values(project_uuid: UUID, tag_key: str):
-            project_service.get_by_uuid(project_uuid)
+            run_from_worker(project_service.get_by_uuid, project_uuid)
             return request_event_service.get_tag_key_values(project_uuid, tag_key)
 
         return router

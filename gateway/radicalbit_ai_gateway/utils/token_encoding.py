@@ -54,7 +54,12 @@ class DeepSeekEncodingAdapter:
         self._tokenizer = ds_token
 
     def encode(self, text: str) -> list[int]:
-        return self._tokenizer.encode(text)
+        tokens = self._tokenizer.encode(text)
+        ids: list[int] = [token for token in tokens if isinstance(token, int)]
+        # One text encodes to a flat list; anything else would count as 0 tokens.
+        if len(ids) != len(tokens):
+            raise TypeError('DeepSeek tokenizer returned nested token lists')
+        return ids
 
 
 def _tiktoken_default() -> TiktokenEncodingAdapter:

@@ -1,6 +1,6 @@
 from datetime import datetime
 from enum import Enum
-from typing import Literal, TypeVar
+from typing import Any, Literal, TypeVar
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -17,16 +17,37 @@ class TraceStatus(str, Enum):
     ERROR = 'error'
 
 
+class SpanStatus(str, Enum):
+    """How one span ended. It is the span's own: a failed child does not
+    change its parent.
+    """
+
+    SUCCESS = 'success'
+    # A fallback answered. Not the same as TraceStatus.WARNING.
+    WARNING = 'warning'
+    ERROR = 'error'
+
+
 class TreeNodeDTO(BaseModel):
     span_id: str
     span_name: str
+    # Readable name for the span. None when the span name is not known.
+    label: str | None = None
     duration_ms: float
     status_code: str
+    status: SpanStatus = SpanStatus.SUCCESS
     output_tokens: int = 0
     input_tokens: int = 0
     total_tokens: int = 0
     error_count: int = 0
     created_at: int
+    # Span start minus root span start, so a waterfall can place parallel spans
+    start_offset_ms: float = 0.0
+    # auth, invocation, guardrail...: lets the detail pick the invocation span
+    # without loading every span. None when the span carries no category.
+    operation_category: str | None = None
+    # workflow or task (traceloop.span.kind)
+    span_kind: str | None = None
     children: list['TreeNodeDTO'] = Field(default_factory=list)
 
     model_config = ConfigDict(
@@ -137,7 +158,7 @@ class GroupedSpanLatenciesDTO(BaseModel):
 class ErrorEvents(BaseModel):
     timestamp: datetime | None = None
     name: str | None = None
-    attributes: dict | None = None
+    attributes: dict[str, Any] | None = None
 
     model_config = ConfigDict(
         populate_by_name=True, alias_generator=to_camel, protected_namespaces=()
@@ -159,7 +180,7 @@ class SpanDTO(BaseModel):
     api_key_name: str | None = None
     group_uuid: UUID | None = None
     group_name: str | None = None
-    attributes: dict
+    attributes: dict[str, Any]
     status_message: str | None = None
     error_count: int = 0
     error_events: list[ErrorEvents]

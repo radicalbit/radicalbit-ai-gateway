@@ -1,3 +1,4 @@
+import HtmlAnchor from '@Components/html-anchor';
 import useModals from '@Hooks/use-modals';
 import { PathsEnum } from '@Src/constants';
 import Lucide from '@Components/lucide';
@@ -11,7 +12,6 @@ import {
 } from '@radicalbit/radicalbit-design-system';
 import { Search } from 'lucide-react';
 import { useId } from 'react';
-import { Link } from 'react-router-dom';
 
 function Routes() {
   const { modalPayload } = useModals();
@@ -119,7 +119,7 @@ function NoRoutesAlert() {
 
             {'. To add a new route, go to the '}
 
-            <Link className="c-anchor light" to={`/${PathsEnum.CONFIGURATIONS}`}><strong>configurations section</strong></Link>
+            <HtmlAnchor className="light" to={`/${PathsEnum.CONFIGURATIONS}`}><strong>configurations section</strong></HtmlAnchor>
 
             {' and update the configuration.'}
           </span>

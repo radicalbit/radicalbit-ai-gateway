@@ -1,4 +1,5 @@
 import json
+from typing import Any
 
 
 class ContentUtils:
@@ -6,7 +7,7 @@ class ContentUtils:
 
     @staticmethod
     def extract_text_content(
-        content: str | list | dict | bytes | bytearray | None,
+        content: str | list[Any] | dict[str, Any] | bytes | bytearray | None,
         strip: bool = False,
     ) -> str:
         """Extract text content from various content formats.
@@ -45,13 +46,13 @@ class ContentUtils:
 
         if isinstance(content, dict):
             if content.get('type') == 'text':
-                val = content.get('text')
+                val: object = content.get('text')
                 if isinstance(val, str):
                     return val.strip() if strip else val
                 return '' if val is None else str(val)
-            if isinstance(content.get('content'), str):
-                val = content['content']
-                return val.strip() if strip else val
+            inner: object = content.get('content')
+            if isinstance(inner, str):
+                return inner.strip() if strip else inner
             return ''
 
         if isinstance(content, bytes | bytearray):
@@ -65,7 +66,7 @@ class ContentUtils:
 
     @staticmethod
     def normalize_openai_message_content(
-        content: str | list | None,
+        content: str | list[Any] | None,
     ) -> str | None:
         """Normalize ChatCompletionMessage.content to avoid double-encoded JSON arrays.
 
@@ -87,18 +88,17 @@ class ContentUtils:
         # If it's already a list (multi-modal blocks), join text parts into a string
         if isinstance(content, list):
             return ContentUtils.extract_text_content(content)
-        # If it's a string and looks like a JSON array, try to parse it
-        if isinstance(content, str):
-            s = content.strip()
-            if s.startswith('[') and s.endswith(']'):
-                try:
-                    parsed = json.loads(s)
-                    # Ensure it's a list of 'type'/'text' blocks then join texts
-                    if isinstance(parsed, list) and all(
-                        isinstance(b, dict) and 'type' in b for b in parsed
-                    ):
-                        return ContentUtils.extract_text_content(parsed)
-                except Exception:
-                    # Not valid JSON or not the expected format: keep the string
-                    return content
+        # If it looks like a JSON array, try to parse it
+        s = content.strip()
+        if s.startswith('[') and s.endswith(']'):
+            try:
+                parsed = json.loads(s)
+                # Ensure it's a list of 'type'/'text' blocks then join texts
+                if isinstance(parsed, list) and all(
+                    isinstance(b, dict) and 'type' in b for b in parsed
+                ):
+                    return ContentUtils.extract_text_content(parsed)
+            except Exception:
+                # Not valid JSON or not the expected format: keep the string
+                return content
         return content

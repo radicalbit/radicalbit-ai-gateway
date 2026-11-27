@@ -12,9 +12,7 @@ from radicalbit_ai_gateway.utils.trace_attributes import (
 )
 
 
-@patch(
-    'radicalbit_ai_gateway.utils.trace_attributes.Traceloop.set_association_properties'
-)
+@patch('radicalbit_ai_gateway.utils.trace_attributes.set_association_properties')
 def test_set_trace_attributes(mock_set_props):
     with patch(
         'radicalbit_ai_gateway.utils.trace_attributes.get_value',
@@ -41,9 +39,7 @@ def test_set_trace_attributes(mock_set_props):
     )
 
 
-@patch(
-    'radicalbit_ai_gateway.utils.trace_attributes.Traceloop.set_association_properties'
-)
+@patch('radicalbit_ai_gateway.utils.trace_attributes.set_association_properties')
 def test_set_trace_attributes_partial(mock_set_props):
     with patch(
         'radicalbit_ai_gateway.utils.trace_attributes.get_value',
@@ -62,9 +58,7 @@ def test_set_trace_attributes_partial(mock_set_props):
     )
 
 
-@patch(
-    'radicalbit_ai_gateway.utils.trace_attributes.Traceloop.set_association_properties'
-)
+@patch('radicalbit_ai_gateway.utils.trace_attributes.set_association_properties')
 def test_set_trace_attributes_comma_joins_tags(mock_set_props):
     with patch(
         'radicalbit_ai_gateway.utils.trace_attributes.get_value',
@@ -83,9 +77,7 @@ def test_set_trace_attributes_comma_joins_tags(mock_set_props):
     )
 
 
-@patch(
-    'radicalbit_ai_gateway.utils.trace_attributes.Traceloop.set_association_properties'
-)
+@patch('radicalbit_ai_gateway.utils.trace_attributes.set_association_properties')
 def test_set_trace_attributes_omits_empty_tags(mock_set_props):
     with patch(
         'radicalbit_ai_gateway.utils.trace_attributes.get_value',
@@ -96,9 +88,7 @@ def test_set_trace_attributes_omits_empty_tags(mock_set_props):
     mock_set_props.assert_called_once_with({'request_uuid': 'req-123'})
 
 
-@patch(
-    'radicalbit_ai_gateway.utils.trace_attributes.Traceloop.set_association_properties'
-)
+@patch('radicalbit_ai_gateway.utils.trace_attributes.set_association_properties')
 def test_set_mcp_attributes(mock_set_props):
     with patch(
         'radicalbit_ai_gateway.utils.trace_attributes.get_value',
@@ -122,9 +112,7 @@ def test_set_mcp_attributes(mock_set_props):
     )
 
 
-@patch(
-    'radicalbit_ai_gateway.utils.trace_attributes.Traceloop.set_association_properties'
-)
+@patch('radicalbit_ai_gateway.utils.trace_attributes.set_association_properties')
 def test_set_mcp_attributes_omits_unset_fields(mock_set_props):
     with patch(
         'radicalbit_ai_gateway.utils.trace_attributes.get_value',
@@ -135,9 +123,7 @@ def test_set_mcp_attributes_omits_unset_fields(mock_set_props):
     mock_set_props.assert_called_once_with({'rb.gateway.mcp_method': 'ping'})
 
 
-@patch(
-    'radicalbit_ai_gateway.utils.trace_attributes.Traceloop.set_association_properties'
-)
+@patch('radicalbit_ai_gateway.utils.trace_attributes.set_association_properties')
 def test_set_mcp_attributes_with_nothing_set_is_a_noop(mock_set_props):
     with patch(
         'radicalbit_ai_gateway.utils.trace_attributes.get_value',
@@ -148,11 +134,9 @@ def test_set_mcp_attributes_with_nothing_set_is_a_noop(mock_set_props):
     mock_set_props.assert_not_called()
 
 
-@patch(
-    'radicalbit_ai_gateway.utils.trace_attributes.Traceloop.set_association_properties'
-)
+@patch('radicalbit_ai_gateway.utils.trace_attributes.set_association_properties')
 def test_set_mcp_attributes_preserves_existing_properties(mock_set_props):
-    """Traceloop replaces the whole dict, so the helper must read-merge-write."""
+    """Setting replaces the whole dict, so the helper must read-merge-write."""
     with patch(
         'radicalbit_ai_gateway.utils.trace_attributes.get_value',
         return_value={'api_key_uuid': 'key-456', 'route_name': 'my-route'},
@@ -168,9 +152,7 @@ def test_set_mcp_attributes_preserves_existing_properties(mock_set_props):
     )
 
 
-@patch(
-    'radicalbit_ai_gateway.utils.trace_attributes.Traceloop.set_association_properties'
-)
+@patch('radicalbit_ai_gateway.utils.trace_attributes.set_association_properties')
 def test_set_mcp_attributes_records_the_failed_upstreams(mock_set_props):
     with patch(
         'radicalbit_ai_gateway.utils.trace_attributes.get_value',
@@ -183,9 +165,7 @@ def test_set_mcp_attributes_records_the_failed_upstreams(mock_set_props):
     )
 
 
-@patch(
-    'radicalbit_ai_gateway.utils.trace_attributes.Traceloop.set_association_properties'
-)
+@patch('radicalbit_ai_gateway.utils.trace_attributes.set_association_properties')
 def test_set_mcp_attributes_records_a_zero_error_code(mock_set_props):
     """0 is falsy but a legitimate code — only None means 'unset'."""
     with patch(
@@ -221,8 +201,9 @@ async def test_in_request_trace_keeps_a_stream_in_the_endpoint_trace():
     assert [item async for item in unrelated] == ['chunk']
 
     _, model, orphan = exporter.get_finished_spans()
-    assert model.context.trace_id == endpoint.context.trace_id
-    assert model.parent.span_id == endpoint.context.span_id
+    assert model.context.trace_id == endpoint.get_span_context().trace_id
+    assert model.parent is not None
+    assert model.parent.span_id == endpoint.get_span_context().span_id
     # Without it, the stream's spans open a trace of their own.
     assert orphan.parent is None
     assert context_api.get_current() == before

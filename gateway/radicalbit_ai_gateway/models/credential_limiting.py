@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-import datetime
+import datetime as dt
 from enum import Enum
 from uuid import UUID
 
@@ -73,8 +73,8 @@ class CredentialLimitIn(BaseModel):
         return self
 
     def to_key_limit(self, key_uuid: UUID) -> KeyLimit:
-        UTC = getattr(datetime, 'UTC', datetime.timezone.utc)
-        now = datetime.datetime.now(tz=UTC)
+        UTC = getattr(dt, 'UTC', dt.timezone.utc)
+        now = dt.datetime.now(tz=UTC)
         return KeyLimit(
             key_uuid=key_uuid,
             category=self.category.value,

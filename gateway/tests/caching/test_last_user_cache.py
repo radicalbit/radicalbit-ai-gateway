@@ -1,22 +1,36 @@
-import datetime
-from unittest.mock import MagicMock, patch
+import datetime as dt
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from freezegun import freeze_time
+from openai.types.create_embedding_response import CreateEmbeddingResponse, Usage
+from openai.types.embedding import Embedding
 import pytest
+from typing_extensions import override
 
+from tests.common.cache_keys import chat_key
 from tests.common.db_mock import GROUP_UUID
+from tests.common.limits import request_limits
 from tests.common.mocked_build_openai_chat_completion import (
     to_mock_openai_chat_completion,
 )
 from tests.common.resolve_route_models import resolve_route_models
+from tests.common.scope import scope_of
 
-from radicalbit_ai_gateway.ai_gateway import GatewayRoute
 from radicalbit_ai_gateway.caching.gateway_cache import GatewayCache
 from radicalbit_ai_gateway.caching.in_memory_cache import CacheToolsInMemory
-from radicalbit_ai_gateway.guardrails.guardrail_engine import GuardrailEngine
+from radicalbit_ai_gateway.caching.route_cache import EnabledCache, RouteCache
+from radicalbit_ai_gateway.endpoints.chat_completions import pipeline as chat_pipeline
+from radicalbit_ai_gateway.endpoints.chat_completions.pipeline import ChatRequest
+from radicalbit_ai_gateway.gateway_route.route import GatewayRoute
+from radicalbit_ai_gateway.guardrails.guardrails import Guardrails
 from radicalbit_ai_gateway.guardrails.judges.judge_engine import JudgeEngine
 from radicalbit_ai_gateway.guardrails.presidio import PresidioEngine
-from radicalbit_ai_gateway.llm.messages import AIMessage, HumanMessage, SystemMessage
+from radicalbit_ai_gateway.llm.messages import (
+    AIMessage,
+    BaseMessage,
+    HumanMessage,
+    SystemMessage,
+)
 from radicalbit_ai_gateway.models.caching import CacheConfig, CacheType, SemanticCaching
 from radicalbit_ai_gateway.models.credentials import Credentials
 from radicalbit_ai_gateway.models.gateway_config import GatewayConfig
@@ -28,26 +42,32 @@ from radicalbit_ai_gateway.services.cost_service import CostService
 
 class FakeSemanticGatewayCache(GatewayCache):
     @property
+    @override
     def cache_type(self) -> CacheType:
         return CacheType.SEMANTIC
 
     # Avoid touching real client storage in this semantic unit test
+    @override
     async def get(self, cache_key: str, **kwargs) -> str | None:
         return None
 
+    @override
     async def set(self, cache_key: str, response: str, ttl: int | None, **kwargs):
         return None
 
 
 @patch('radicalbit_ai_gateway.invocation.chat_model_invoker.ChatModelInvoker.complete')
-@patch('radicalbit_ai_gateway.ai_gateway.emit_event', autospec=True)
-@patch('radicalbit_ai_gateway.invocation.model_invoker.emit_event', autospec=True)
+@patch(
+    'radicalbit_ai_gateway.endpoints.chat_like.model_selection.emit_event',
+    autospec=True,
+)
+@patch('radicalbit_ai_gateway.invocation.recorder.emit_event', autospec=True)
 @pytest.mark.asyncio
 async def test_exact_cache_hit_with_different_history(
-    mock_model_invoker_emit_event, mock_emit_event, mock_complete, test_data_dir_fixture
+    mock_model_invoker_emit_event, mock_emit_event, mock_complete
 ):
-    cost_service: CostService = MagicMock(spec_set=CostService)
-    prompt_manager: PromptManager = MagicMock(spec_set=PromptManager)
+    cost_service = MagicMock(spec_set=CostService)
+    prompt_manager = MagicMock(spec_set=PromptManager)
     chat_registry = [
         Model(
             model_id='openai-o4-mini',
@@ -82,7 +102,7 @@ async def test_exact_cache_hit_with_different_history(
     )
 
     mock_complete.return_value = to_mock_openai_chat_completion(content='Paris')
-    guardrail_engine = GuardrailEngine(
+    project_guardrails = Guardrails(
         presidio_engine=PresidioEngine(),
         judge_engine=JudgeEngine(prompt_manager=prompt_manager),
         cost_service=cost_service,
@@ -93,24 +113,24 @@ async def test_exact_cache_hit_with_different_history(
         gateway_route_config=resolved_route_cfg,
         chat_models=chat_models,
         embedding_models=embedding_models,
-        guardrail_engine=guardrail_engine,
+        guardrails=project_guardrails.for_route(resolved_route_cfg),
         gateway_cache=gateway_cache,
         cost_service=cost_service,
     )
 
-    initial_datetime = datetime.datetime(
+    initial_datetime = dt.datetime(
         year=2025, month=7, day=30, hour=10, minute=0, second=0
     )
     with freeze_time(initial_datetime):
         # History A + same last user question
-        messages_a = [
+        messages_a: list[BaseMessage] = [
             SystemMessage(content='You are helpful.'),
             HumanMessage(content='Hi'),
             AIMessage(content='Hello!'),
             HumanMessage(content='What is the capital of France?'),
         ]
         # History B different, but same last user question
-        messages_b = [
+        messages_b: list[BaseMessage] = [
             SystemMessage(content='Assist the user.'),
             HumanMessage(content='Hello there'),
             AIMessage(content='Hi!'),
@@ -118,39 +138,41 @@ async def test_exact_cache_hit_with_different_history(
         ]
 
         # First invocation => populate cache
-        await ai_gateway.invoke(
+        scope = scope_of(
+            ai_gateway,
+            request_limits(ai_gateway),
             request_uuid='req-1',
             api_key_uuid='key-1',
             api_key_name='rb-key',
-            group_name='test-group',
-            messages=messages_a,
-            route_name='rb-gateway',
-            tools=[],
-            tool_choice='auto',
             group_uuid=str(GROUP_UUID),
+            group_name='test-group',
+        )
+        await chat_pipeline.complete(
+            scope,
+            ChatRequest(messages=messages_a, tools=[], tool_choice='auto'),
         )
 
         # Second invocation with different history, same last user => should be a cache hit
-        invoke_response_cached = await ai_gateway.invoke(
+        scope = scope_of(
+            ai_gateway,
+            request_limits(ai_gateway),
             request_uuid='req-2',
             api_key_uuid='key-1',
             api_key_name='rb-key',
-            messages=messages_b,
-            route_name='rb-gateway',
-            tools=[],
-            tool_choice='auto',
             group_uuid=str(GROUP_UUID),
             group_name='test-group',
         )
-        assert invoke_response_cached.headers == {'X-RB-AIGATEWAY-CACHE-HIT': 'true'}
+        await chat_pipeline.complete(
+            scope,
+            ChatRequest(messages=messages_b, tools=[], tool_choice='auto'),
+        )
+        assert scope.headers() == {'X-RB-AIGATEWAY-CACHE-HIT': 'true'}
         # Ensure the model was called only once (second call served from cache)
         assert mock_complete.call_count == 1
 
 
 @pytest.mark.asyncio
-async def test_semantic_cache_uses_only_last_user_for_key_and_embedding(
-    test_data_dir_fixture,
-):
+async def test_semantic_cache_uses_only_last_user_for_key_and_embedding():
     # Build a route with semantic caching without YAML/!secret
     chat_registry = [
         Model(
@@ -181,9 +203,9 @@ async def test_semantic_cache_uses_only_last_user_for_key_and_embedding(
             dim=1536,
         ),
     )
-    cost_service: CostService = MagicMock(spec_set=CostService)
-    prompt_manager: PromptManager = MagicMock(spec_set=PromptManager)
-    guardrail_engine = GuardrailEngine(
+    cost_service = MagicMock(spec_set=CostService)
+    prompt_manager = MagicMock(spec_set=PromptManager)
+    project_guardrails = Guardrails(
         presidio_engine=PresidioEngine(),
         judge_engine=JudgeEngine(prompt_manager=prompt_manager),
         cost_service=cost_service,
@@ -201,72 +223,71 @@ async def test_semantic_cache_uses_only_last_user_for_key_and_embedding(
         gateway_config, 'rb-gateway'
     )
 
-    # Use in-memory client but force cache_type=SEMANTIC via subclass
-    gateway_cache = FakeSemanticGatewayCache(cache_client=CacheToolsInMemory())
     ai_gateway = GatewayRoute(
         gateway_route_config=resolved_route_cfg,
         chat_models=chat_models,
         embedding_models=embedding_models,
-        guardrail_engine=guardrail_engine,
-        gateway_cache=gateway_cache,
+        guardrails=project_guardrails.for_route(resolved_route_cfg),
+        gateway_cache=None,
         cost_service=cost_service,
     )
+    # An in-memory client, read as a semantic cache through the subclass.
+    backend = FakeSemanticGatewayCache(cache_client=CacheToolsInMemory())
+    backend.set = AsyncMock()
+    embedder = MagicMock()
+    embedder.embed_answered = AsyncMock(
+        return_value=(
+            CreateEmbeddingResponse(
+                object='list',
+                data=[Embedding(index=0, embedding=[0.1, 0.2], object='embedding')],
+                model='text-embedding-3-small',
+                usage=Usage(prompt_tokens=4, total_tokens=4),
+            ),
+            embedding_models[0],
+        )
+    )
+    ai_gateway.cache = RouteCache(
+        EnabledCache(
+            backend=backend,
+            cost_service=cost_service,
+            embedder=embedder,
+            embedding_model=embedding_models[0],
+        )
+    )
 
-    messages = [
+    messages: list[BaseMessage] = [
         SystemMessage(content='Sys'),
         HumanMessage(content='Earlier question'),
         AIMessage(content='Earlier answer'),
         HumanMessage(content='Final question to cache'),
     ]
-
-    # Spy generate_cache_key to assert only last user is passed
-    captured_messages = {}
-
-    def spy_generate_cache_key(
-        route_name, key_uuid, messages, tools, tool_choice, **kwargs
+    with patch(
+        'radicalbit_ai_gateway.invocation.chat_model_invoker.ChatModelInvoker.complete',
+        AsyncMock(return_value=to_mock_openai_chat_completion(content='Paris')),
     ):
-        captured_messages['messages'] = messages
-        return 'fake-cache-key'
+        scope = scope_of(
+            ai_gateway,
+            request_limits(ai_gateway),
+            request_uuid='req-1',
+            api_key_uuid='key-1',
+            api_key_name='rb-key',
+            group_uuid=str(GROUP_UUID),
+            group_name='test-group',
+        )
+        await chat_pipeline.complete(
+            scope,
+            ChatRequest(messages=messages, tools=[], tool_choice='auto'),
+        )
 
-    ai_gateway.gateway_cache.generate_cache_key = spy_generate_cache_key  # type: ignore
-
-    # Patch embedding generation to capture text used
-    captured_text = {}
-
-    async def spy_generate_embedding(
-        text,
-        route_name,
-        request_uuid,
-        api_key_uuid,
-        group_uuid,
-        api_key_name,
-        group_name,
-        model_id_selected,
-    ):
-        captured_text['text'] = text
-        # no explicit return to avoid linter warnings
-
-    ai_gateway._get_first_embedding_model = lambda: MagicMock(
-        model_id='text-embedding-3-small'
-    )  # type: ignore
-    ai_gateway._generate_embedding_for_semantic_cache = spy_generate_embedding  # type: ignore
-
-    # Call private method to avoid external HTTP and Redis
-    await ai_gateway._handle_cache(
-        request_uuid='req-1',
-        api_key_uuid='key-1',
-        api_key_name='rb-key',
-        group_name='test-group',
-        route_name='rb-gateway',
-        messages=messages,
-        tools=[],
-        tool_choice='auto',
-        group_uuid=str(GROUP_UUID),
+    # Only the last human message keys the entry and is embedded.
+    assert embedder.embed_answered.call_args.kwargs['input_texts'] == [
+        'Final question to cache'
+    ]
+    assert backend.set.call_args.args[0] == chat_key(
+        '',
+        'rb-gateway',
+        'key-1',
+        [HumanMessage(content='Final question to cache')],
+        [],
+        'auto',
     )
-
-    # Assert only the last human message was used to build the key and embedding text
-    assert 'messages' in captured_messages
-    assert len(captured_messages['messages']) == 1
-    assert isinstance(captured_messages['messages'][0], HumanMessage)
-    assert captured_messages['messages'][0].content == 'Final question to cache'
-    assert captured_text['text'] == 'Final question to cache'

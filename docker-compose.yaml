@@ -21,7 +21,6 @@ services:
         - path: ./ui/src
           action: rebuild
     environment:
-      DB_TYPE: "postgresql"
       DB_HOST: "postgres"
       DB_PORT: 5432
       DB_USER: "postgres"
@@ -36,7 +35,7 @@ services:
       CELERY_BROKER_URL: 'redis://valkey:6379/0'
       # ClickHouse configuration
       CLICKHOUSE_DB_HOST: "${CLICKHOUSE_DB_HOST:-clickhouse}"
-      CLICKHOUSE_DB_PORT: "${CLICKHOUSE_DB_PORT:-9000}"
+      CLICKHOUSE_DB_HTTP_PORT: "${CLICKHOUSE_DB_HTTP_PORT:-8123}"
       CLICKHOUSE_DB_USER: "${CLICKHOUSE_DB_USER:-default}"
       CLICKHOUSE_DB_PWD: "${CLICKHOUSE_DB_PWD:-default}"
       CLICKHOUSE_DB_NAME: "${CLICKHOUSE_DB_NAME:-default}"
@@ -99,7 +98,6 @@ services:
       context: ./gateway
       dockerfile: ./migrations.Dockerfile
     environment:
-      DB_TYPE: "postgresql"
       DB_HOST: "postgres"
       DB_PORT: 5432
       DB_USER: "postgres"

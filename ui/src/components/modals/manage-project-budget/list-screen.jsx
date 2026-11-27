@@ -16,12 +16,6 @@ import BudgetMenu from './budget-menu';
 import Conflicts from './conflicts';
 import { ScreenEnum } from './schema';
 
-const NO_BUDGET_TITLE = 'This project has no budget';
-
-const NO_BUDGET_DESCRIPTION = 'Spending is capped only by route and credential budgets, if any.';
-
-const BLOCKED_TOOLTIP = 'Routes of the published configuration have their own budget';
-
 const getRowKey = ({ uuid }) => uuid;
 
 const getRowClassName = () => DataTable.ROW_NOT_CLICKABLE;
@@ -66,7 +60,7 @@ function IsEmpty() {
       <Conflicts />
 
       <Board
-        main={<Void actions={<AddBudget />} description={NO_BUDGET_DESCRIPTION} size="small" title={NO_BUDGET_TITLE} />}
+        main={<Void actions={<AddBudget />} description="Spending is capped only by route and credential budgets, if any." size="small" title="This project has no budget" />}
         width="100%"
       />
     </div>
@@ -87,7 +81,7 @@ function IsSuccess() {
     <div className="flex flex-col gap-6">
       <Conflicts />
 
-      <div className="flex flex-col gap-2">
+      <div className="flex flex-col gap-4">
         <div className="flex items-center justify-between">
           <strong>{count}</strong>
 
@@ -97,7 +91,6 @@ function IsSuccess() {
         <DataTable
           columns={columns}
           dataSource={sortedLimits}
-          noPadding
           pagination={false}
           rowClassName={getRowClassName}
           rowKey={getRowKey}
@@ -124,7 +117,7 @@ function AddBudget() {
 
   if (isBlocked) {
     return (
-      <Tooltip title={BLOCKED_TOOLTIP}>
+      <Tooltip title="Routes of the published configuration have their own budget">
         <span>
           <Button disabled icon={<Lucide icon={Plus} />}>Add budgets</Button>
         </span>

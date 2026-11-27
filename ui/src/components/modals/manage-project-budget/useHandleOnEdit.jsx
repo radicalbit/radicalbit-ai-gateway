@@ -1,7 +1,7 @@
 import { DUPLICATE_BUDGET_ERROR } from '@Components/limits/constants';
 import focusConfirmQuestion from '@Components/limits/focus-confirm-question';
 import focusLimitMenu from '@Components/limits/focus-limit-menu';
-import { asBudgets, getNewLimitsErrors, isLimitComplete } from '@Components/limits/helpers';
+import { asBudgets, getNewLimitsErrors } from '@Components/limits/helpers';
 import SuccessMessage from '@Components/success-message';
 import useModals from '@Hooks/use-modals';
 import { useGetProjectBudgetQuery, useUpdateProjectBudgetLimitValueMutation } from '@State/projects/api';
@@ -14,7 +14,7 @@ export default () => {
   const { modalPayload } = useModals();
   const uuid = modalPayload?.data?.uuid;
 
-  const { form, initialize, isFormInvalid, write } = useFormbitContext();
+  const { form, initialize, isFormInvalid, submitForm, write } = useFormbitContext();
   const limitUuid = form?.__metadata?.limitUuid;
   const row = form?.limits?.[0];
 
@@ -29,11 +29,19 @@ export default () => {
   const [duplicateError] = getNewLimitsErrors({ duplicateError: DUPLICATE_BUDGET_ERROR, limits: otherLimits, rows: row ? [row] : [] });
   const isWindowChanged = row?.algorithm !== limit?.algorithm || row?.windowSize !== limit?.windowSize;
   const isMaxChanged = row?.value !== limit?.value;
-  const isSaveDisabled = !row || !isLimitComplete(row) || isFormInvalid() || !!duplicateError || (!isMaxChanged && !isWindowChanged) || args.isLoading;
+  const isSaveDisabled = !row || isFormInvalid() || (!isMaxChanged && !isWindowChanged) || args.isLoading;
   const errorMessage = args.isError ? getErrorMessage(args.error) : undefined;
 
-  const handleOnSave = async () => {
+  const handleOnSave = () => {
     if (isSaveDisabled) {
+      return;
+    }
+
+    submitForm(handleOnValidSave);
+  };
+
+  const handleOnValidSave = async () => {
+    if (duplicateError) {
       return;
     }
 

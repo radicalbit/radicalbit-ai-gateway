@@ -1,9 +1,12 @@
 import asyncio
 from decimal import Decimal
+import functools
 import json
 import logging
 import time
-from typing import Any, Literal
+from typing import Any, Generic, Literal
+
+from typing_extensions import override
 
 try:
     from typing import Self
@@ -22,7 +25,7 @@ from pydantic import (
 from radicalbit_ai_gateway.llm.chat_model import ChatModel
 from radicalbit_ai_gateway.llm.embeddings import Embeddings
 from radicalbit_ai_gateway.llm.messages import AIMessage, AIMessageChunk, BaseMessage
-from radicalbit_ai_gateway.models.credentials import Credentials
+from radicalbit_ai_gateway.models.credentials import CredentialsOut, CredentialsT
 from radicalbit_ai_gateway.prompt_manager import PromptManager
 from radicalbit_ai_gateway.utils.app_config import get_app_config
 
@@ -30,11 +33,29 @@ app_config = get_app_config()
 logging_config_dict = app_config.log_config.model_dump()
 logger = logging.getLogger(app_config.log_config.logger_name)
 
+
+@functools.cache
+def _model_prices() -> dict[str, Any] | None:
+    """Read the model prices file once per process: it is a few megabytes,
+    and every model of every route reads its prices from it.
+    """
+    try:
+        with open('radicalbit_ai_gateway/resources/model_prices.json') as f:
+            return json.load(f)
+    except FileNotFoundError:
+        logger.error('Model prices file not found. Skipping cost assignment.')
+    except json.JSONDecodeError:
+        logger.error(
+            'Error decoding JSON from model prices file. Skipping cost assignment.'
+        )
+    return None
+
+
 # Gateway-specific param keys intercepted before forwarding params to the provider
 ENABLE_PROMPT_CACHE_PARAM = 'enable_prompt_cache'
 
 
-class Model(BaseModel):
+class Model(BaseModel, Generic[CredentialsT]):
     model_config = ConfigDict(extra='forbid')
 
     model_id: str = Field(
@@ -47,11 +68,11 @@ class Model(BaseModel):
         description='Model identifier, provider/type',
         examples=['openai/gpt-3.5-turbo'],
     )
-    credentials: Credentials | None = Field(
+    credentials: CredentialsT | None = Field(
         default=None,
         description='Credentials for accessing the model API.',
     )
-    params: dict | None = Field(
+    params: dict[str, Any] | None = Field(
         default=None,
         description='Parameters for the model, such as temperature and max tokens.',
     )
@@ -159,6 +180,12 @@ class Model(BaseModel):
             return pm.get_model_prompt(self.prompt_ref)
         return self.prompt
 
+    def to_json(self) -> dict[str, Any]:
+        """Return what tracing records for the model: everything but its
+        credentials, so a span never carries a provider's API key.
+        """
+        return self.model_dump(exclude={'credentials'})
+
     @model_validator(mode='before')
     @classmethod
     def validate_prompt_and_role(cls, data: Any) -> Any:
@@ -184,16 +211,8 @@ class Model(BaseModel):
 
     @model_validator(mode='after')
     def set_costs(self) -> Self:
-        try:
-            with open('radicalbit_ai_gateway/resources/model_prices.json') as f:
-                costs = json.load(f)
-        except FileNotFoundError:
-            logger.error('Model prices file not found. Skipping cost assignment.')
-            return self
-        except json.JSONDecodeError:
-            logger.error(
-                'Error decoding JSON from model prices file. Skipping cost assignment.'
-            )
+        costs = _model_prices()
+        if costs is None:
             return self
         model = self.model
         if self.model not in costs and '/' in self.model:
@@ -251,10 +270,13 @@ class Model(BaseModel):
     def check_api_key_openai(self) -> Self:
         if not self.model.startswith('openai'):
             return self
-        if self.credentials is None:
+        credentials = self.credentials
+        # A response's credentials come from a validated model: the dummy key
+        # is already there.
+        if credentials is None or isinstance(credentials, CredentialsOut):
             return self
-        if self.credentials.base_url and not self.credentials.api_key:
-            self.credentials.api_key = 'dummy-api-key'
+        if credentials.base_url and not credentials.api_key:
+            credentials.api_key = 'dummy-api-key'
         return self
 
     @model_validator(mode='after')
@@ -288,6 +310,7 @@ class MockGatewayChatModel(ChatModel):
         self._latency_ms = latency_ms
         self._response_text = response_text
 
+    @override
     async def _agenerate(self, messages: list[BaseMessage], **kwargs: Any) -> AIMessage:
         """Generate a mock response with configurable latency."""
         await asyncio.sleep(self._latency_ms / 1000.0)
@@ -305,6 +328,7 @@ class MockGatewayChatModel(ChatModel):
             },
         )
 
+    @override
     async def _astream(self, messages: list[BaseMessage], **kwargs: Any):
         """Mock behavior for streaming by yielding words."""
         await asyncio.sleep(self._latency_ms / 1000.0)
@@ -331,6 +355,7 @@ class MockGatewayEmbeddings(Embeddings):
         self._latency_ms = latency_ms
         self._vector_size = vector_size
 
+    @override
     def embed_documents(self, texts: list[str]) -> list[list[float]]:
         """Generate mock embeddings for a list of documents with configurable latency."""
         time.sleep(self._latency_ms / 1000.0)
@@ -339,6 +364,7 @@ class MockGatewayEmbeddings(Embeddings):
             for t in texts
         ]
 
+    @override
     def embed_query(self, text: str) -> list[float]:
         """Generate mock embedding for a single query with configurable latency."""
         time.sleep(self._latency_ms / 1000.0)

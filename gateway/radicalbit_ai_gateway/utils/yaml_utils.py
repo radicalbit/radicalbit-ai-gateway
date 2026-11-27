@@ -3,7 +3,7 @@ from dataclasses import dataclass
 import difflib
 from importlib.resources import files
 import re
-from typing import get_args
+from typing import Any, get_args
 
 from pydantic import BaseModel, ValidationError
 from pydantic_core import ErrorDetails
@@ -22,7 +22,7 @@ def _config_field_names(
     if model in seen:
         return set()
     seen.add(model)
-    names = set(model.model_fields)
+    names: set[str] = set(model.model_fields)
     for field in model.model_fields.values():
         for tp in _nested_types(field.annotation):
             if isinstance(tp, type) and issubclass(tp, BaseModel):
@@ -30,7 +30,7 @@ def _config_field_names(
     return names
 
 
-def _nested_types(tp) -> Iterator:
+def _nested_types(tp) -> Iterator[Any]:
     yield tp
     for arg in get_args(tp):
         yield from _nested_types(arg)
@@ -77,8 +77,12 @@ def _format_validation_error(err: ErrorDetails, yaml_str: str) -> str:
     return f"'{loc}'{location}: {msg}"
 
 
+# [ \t]* rather than \s* before the key, and \S to start the value: with \s*
+# on both sides of what follows, a run of newlines after "api_key:" made the
+# match time grow with the square of its length (a crafted config could hold
+# a worker). Same violations: a value that is only whitespace never was one.
 SENSITIVE_FIELD_PATTERN = re.compile(
-    r'^\s*(?:api_key|azure_ad_token):\s*(.+)$',
+    r'^[ \t]*(?:api_key|azure_ad_token):\s*(\S.*)$',
     re.MULTILINE,
 )
 SECRET_REF_PATTERN = re.compile(r'^!secret\s+\S+$')
@@ -102,7 +106,9 @@ def check_no_literal_secrets(yaml_content: str) -> list[str]:
     return violations
 
 
-def check_no_literal_secrets_in_mcp_servers(parsed: dict, yaml_str: str) -> list[str]:
+def check_no_literal_secrets_in_mcp_servers(
+    parsed: dict[str, Any], yaml_str: str
+) -> list[str]:
     """Reject literal values for sensitive-looking keys under
     ``mcp_servers[].headers`` and ``mcp_servers[].env``.
 
@@ -139,10 +145,11 @@ def check_no_literal_secrets_in_mcp_servers(parsed: dict, yaml_str: str) -> list
 
 def _parse_yaml_with_secrets(
     yaml_content: str,
-) -> tuple[dict, list[tuple[str, int | None]]]:
+) -> tuple[object, list[tuple[str, int | None]]]:
     """Parse *yaml_content*, replacing ``!secret`` tags with placeholders.
 
-    Returns ``(parsed_dict, secret_refs)`` where *secret_refs* is a list of
+    Returns ``(parsed, secret_refs)`` where *parsed* is whatever the YAML
+    holds (not always a mapping) and *secret_refs* is a list of
     ``(key, line_number)`` for every ``!secret`` reference found.
     """
     refs: list[tuple[str, int | None]] = []
@@ -195,9 +202,14 @@ def check_secret_references(
     return violations
 
 
-def parse_yaml_with_secret_placeholders(yaml_content: str) -> dict:
+def parse_yaml_with_secret_placeholders(yaml_content: str) -> object:
     data, _ = _parse_yaml_with_secrets(yaml_content)
     return data
+
+
+def _detail(loc: list[str | int], msg: str, type_: str) -> dict[str, Any]:
+    """One entry of ProjectConfigValidationError.details."""
+    return {'loc': loc, 'msg': msg, 'type': type_}
 
 
 def validate_gateway_config(yaml_str: str, *, check_secrets: bool) -> str:
@@ -207,20 +219,28 @@ def validate_gateway_config(yaml_str: str, *, check_secrets: bool) -> str:
         mark = getattr(e, 'problem_mark', None)
         location = f' (line {mark.line + 1}, column {mark.column + 1})' if mark else ''
         problem = getattr(e, 'problem', None) or str(e)
-        raise ProjectConfigValidationError(f'Invalid YAML{location}: {problem}') from e
+        message = f'Invalid YAML{location}: {problem}'
+        raise ProjectConfigValidationError(
+            message, details=[_detail([], message, 'yaml_syntax_error')]
+        ) from e
     if check_secrets:
         violations = check_no_literal_secrets(yaml_str)
         if isinstance(parsed, dict):
             violations += check_no_literal_secrets_in_mcp_servers(parsed, yaml_str)
         if violations:
             raise ProjectConfigValidationError(
-                f'Config contains literal secrets: {violations}. Use !secret references instead.'
+                f'Config contains literal secrets: {violations}. Use !secret references instead.',
+                details=[_detail([], v, 'literal_secret') for v in violations],
             )
         secret_violations = check_secret_references(yaml_str, _refs=secret_refs)
         if secret_violations:
             raise ProjectConfigValidationError(
                 f'Config references invalid secrets: {"; ".join(secret_violations)}. '
-                'Ensure all !secret keys exist and have non-empty values.'
+                'Ensure all !secret keys exist and have non-empty values.',
+                details=[
+                    _detail([], v, 'invalid_secret_reference')
+                    for v in secret_violations
+                ],
             )
     try:
         GatewayConfig.model_validate(parsed)
@@ -230,9 +250,16 @@ def validate_gateway_config(yaml_str: str, *, check_secrets: bool) -> str:
                 _format_validation_error(err, yaml_str) for err in e.errors()
             )
             raise ProjectConfigValidationError(
-                f'Invalid gateway configuration - {len(e.errors())} error(s): {details}'
+                f'Invalid gateway configuration - {len(e.errors())} error(s): {details}',
+                details=[
+                    _detail(list(err['loc']), err['msg'], err['type'])
+                    for err in e.errors()
+                ],
             ) from e
-        raise ProjectConfigValidationError(f'Invalid gateway configuration: {e}') from e
+        message = f'Invalid gateway configuration: {e}'
+        raise ProjectConfigValidationError(
+            message, details=[_detail([], message, 'invalid_config')]
+        ) from e
     return yaml_str
 
 

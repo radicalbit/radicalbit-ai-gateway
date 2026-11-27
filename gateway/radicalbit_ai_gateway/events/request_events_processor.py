@@ -17,9 +17,9 @@ _request_events_buffer.register_atexit()
 def _create_request_event_dict(
     request_uuid: str,
     route_name: str,
-    api_key_uuid: str,
+    api_key_uuid: str | None,
     api_key_name: str,
-    group_uuid: str,
+    group_uuid: str | None,
     group_name: str,
     project_uuid: str,
     project_name: str,

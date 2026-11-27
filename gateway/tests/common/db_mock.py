@@ -1,4 +1,5 @@
-import datetime
+import datetime as dt
+from decimal import Decimal
 import uuid
 from uuid import UUID, uuid4
 
@@ -66,7 +67,7 @@ ROTATED_HASHED_KEY = (
 ROTATED_PLAIN_KEY = (
     'sk-rb-Rt8kWq2ZpLm4NxVc7HjY3bGd9FsA6eTu1oKiQ5wXyRnB0MvJ'  # gitleaks:allow
 )
-UTC = getattr(datetime, 'UTC', datetime.timezone.utc)
+UTC = getattr(dt, 'UTC', dt.timezone.utc)
 REQUEST_UUID = uuid.UUID(int=0)
 API_KEY_UUID = uuid.UUID(int=0)
 GROUP_UUID = uuid.UUID(int=0)
@@ -78,9 +79,9 @@ def get_sample_key(
     hashed_key: str = HASHED_KEY,
     obscured_key: str = OBSCURED_KEY,
     group_uuid: uuid.UUID | None = None,
-    expires_on: datetime.date | None = None,
+    expires_on: dt.date | None = None,
 ) -> Key:
-    now = datetime.datetime.now(tz=UTC)
+    now = dt.datetime.now(tz=UTC)
     return Key(
         uuid=uuid,
         name=name,
@@ -107,7 +108,7 @@ def get_sample_key_with_group(
     obscured_key: str = OBSCURED_KEY,
     group_uuid: uuid.UUID = RANDOM_UUID,
 ) -> Key:
-    now = datetime.datetime.now(tz=UTC)
+    now = dt.datetime.now(tz=UTC)
     return Key(
         uuid=uuid,
         name=name,
@@ -133,9 +134,9 @@ def get_sample_key_limit(
     category: str = CredentialLimitCategory.BUDGET.value,
     algorithm: str = 'FIXED_WINDOW',
     window_size: str = '1 day',
-    max_value: float = 10.0,
+    max_value: float | Decimal = 10.0,
 ) -> KeyLimit:
-    now = datetime.datetime.now(tz=UTC)
+    now = dt.datetime.now(tz=UTC)
     return KeyLimit(
         uuid=uuid,
         key_uuid=key_uuid,
@@ -173,9 +174,9 @@ def get_sample_project_budget_limit(
     project_uuid: uuid.UUID = RANDOM_UUID,
     algorithm: str = 'FIXED_WINDOW',
     window_size: str = '1 day',
-    max_value: float = 10.0,
+    max_value: float | Decimal = 10.0,
 ) -> ProjectBudgetLimit:
-    now = datetime.datetime.now(tz=UTC)
+    now = dt.datetime.now(tz=UTC)
     return ProjectBudgetLimit(
         uuid=uuid,
         project_uuid=project_uuid,
@@ -211,7 +212,7 @@ def get_sample_group_plain(
     uuid: uuid.UUID = RANDOM_UUID,
     name: str = 'group',
 ) -> Group:
-    now = datetime.datetime.now(tz=UTC)
+    now = dt.datetime.now(tz=UTC)
     return Group(
         uuid=uuid,
         name=name,
@@ -228,7 +229,7 @@ def get_sample_group(
     group_routes: list[GroupRoute] = [],
     keys: list[Key] = [],
 ) -> Group:
-    now = datetime.datetime.now(tz=UTC)
+    now = dt.datetime.now(tz=UTC)
     return Group(
         uuid=uuid,
         name=name,
@@ -260,8 +261,8 @@ def get_sample_group_route_plain(
         project=Project(
             uuid=project_uuid,
             name=project_name,
-            created_at=datetime.datetime.now(tz=UTC),
-            updated_at=datetime.datetime.now(tz=UTC),
+            created_at=dt.datetime.now(tz=UTC),
+            updated_at=dt.datetime.now(tz=UTC),
             deleted_at=None,
         ),
     )
@@ -289,8 +290,8 @@ def get_sample_group_route(
         project=Project(
             uuid=project_uuid,
             name=project_name,
-            created_at=datetime.datetime.now(tz=UTC),
-            updated_at=datetime.datetime.now(tz=UTC),
+            created_at=dt.datetime.now(tz=UTC),
+            updated_at=dt.datetime.now(tz=UTC),
             deleted_at=None,
         ),
     )
@@ -340,7 +341,7 @@ def get_sample_key_out(
     hashed_key: str = 'hashed-key',
     api_key: str = 'sk-dummy-key',
 ) -> KeyOut:
-    now = datetime.datetime.now(tz=UTC)
+    now = dt.datetime.now(tz=UTC)
     return KeyOut(
         uuid=uuid,
         name=name,
@@ -356,7 +357,7 @@ def get_sample_key_out(
 def get_sample_group_out(
     uuid: uuid.UUID = uuid.uuid4(), name: str = 'group'
 ) -> GroupOut:
-    now = datetime.datetime.now(tz=UTC)
+    now = dt.datetime.now(tz=UTC)
     return GroupOut(
         uuid=uuid,
         name=name,
@@ -373,7 +374,7 @@ def get_sample_key_full_out(
     api_key: str = 'api-key',
     hashed_key: str = 'hashed-key',
 ) -> KeyFullOut:
-    now = datetime.datetime.now(tz=UTC)
+    now = dt.datetime.now(tz=UTC)
     return KeyFullOut(
         uuid=uuid,
         name=name,
@@ -408,10 +409,10 @@ def get_sample_project(
     name: str = 'my-project',
     description: str | None = None,
     served_config_uuid: uuid.UUID | None = None,
-    first_served_at: datetime.datetime | None = None,
-    deleted_at: datetime.datetime | None = None,
+    first_served_at: dt.datetime | None = None,
+    deleted_at: dt.datetime | None = None,
 ) -> Project:
-    now = datetime.datetime.now(tz=UTC)
+    now = dt.datetime.now(tz=UTC)
     return Project(
         uuid=uuid,
         name=name,
@@ -433,10 +434,10 @@ def get_sample_project_config(
     config_file: str | None = None,
     config_status: ConfigStatus = ConfigStatus.DRAFT,
     uuid: uuid.UUID | None = None,
-    deleted_at: datetime.datetime | None = None,
+    deleted_at: dt.datetime | None = None,
     updated_at=_UNSET,
 ) -> ProjectConfig:
-    now = datetime.datetime.now(tz=UTC)
+    now = dt.datetime.now(tz=UTC)
     return ProjectConfig(
         uuid=uuid or uuid4(),
         project_uuid=project_uuid,
@@ -465,7 +466,7 @@ def get_sample_config_slot_out(
     config_file: str | None = None,
     config_status: ConfigStatus = ConfigStatus.DRAFT,
 ) -> ConfigSlotOut:
-    now = datetime.datetime.now(tz=UTC)
+    now = dt.datetime.now(tz=UTC)
     return ConfigSlotOut(
         uuid=uuid,
         slot=slot.value,
@@ -484,7 +485,7 @@ def get_sample_project_out(
     configs: list[ConfigSlotOut] | None = None,
     limits: list[ProjectBudgetLimitOut] | None = None,
 ) -> ProjectOut:
-    now = datetime.datetime.now(tz=UTC)
+    now = dt.datetime.now(tz=UTC)
     if configs is None:
         configs = [
             get_sample_config_slot_out(uuid=uuid4(), slot=Slot.A),
@@ -528,8 +529,8 @@ def get_sample_project_config_file_in(
 def get_sample_event(
     request_uuid: uuid.UUID | None = None,
     route_name: str = 'rb-gateway',
-    timestamp: datetime.datetime = datetime.datetime(
-        2025, 10, 14, 12, 58, 36, 931873, tzinfo=datetime.timezone.utc
+    timestamp: dt.datetime = dt.datetime(
+        2025, 10, 14, 12, 58, 36, 931873, tzinfo=dt.timezone.utc
     ),
     value: int = 1,
     event_type: str = 'RATE_LIMIT',
@@ -560,6 +561,9 @@ def get_sample_event(
     guardrail_where = kwargs.get('where', kwargs.get('guardrail_where', ''))
     guardrail_params = kwargs.get('parameters', kwargs.get('guardrail_params', ''))
     guardrail_behavior = kwargs.get('behavior', kwargs.get('guardrail_behavior', ''))
+    # Same keys the events processor promotes to the routing columns.
+    routing_name = kwargs.get('routing_name', '')
+    routing_selected_model_id = kwargs.get('selected_model_id', '')
 
     return Event(
         request_uuid=request_uuid if request_uuid else uuid.uuid4(),
@@ -588,6 +592,8 @@ def get_sample_event(
         guardrail_params=guardrail_params,
         guardrail_behavior=guardrail_behavior,
         is_judge=is_judge,
+        routing_name=routing_name,
+        routing_selected_model_id=routing_selected_model_id,
         mcp_method=mcp_method,
         mcp_alias=mcp_alias,
         mcp_target=mcp_target,
@@ -595,8 +601,8 @@ def get_sample_event(
 
 
 def get_event_detail(
-    timestamp: datetime.datetime = datetime.datetime(
-        2025, 10, 14, 12, 58, 36, 931873, tzinfo=datetime.timezone.utc
+    timestamp: dt.datetime = dt.datetime(
+        2025, 10, 14, 12, 58, 36, 931873, tzinfo=dt.timezone.utc
     ),
     api_key_uuid: uuid.UUID = uuid.UUID('00000000-0000-0000-0000-000000000000'),
     route_name: str = 'route-A',
@@ -629,8 +635,8 @@ def get_event_detail(
 def get_sample_request_event(
     request_uuid: uuid.UUID | None = None,
     route_name: str = 'rb-gateway',
-    timestamp: datetime.datetime = datetime.datetime(
-        2025, 10, 14, 12, 58, 36, 931873, tzinfo=datetime.timezone.utc
+    timestamp: dt.datetime = dt.datetime(
+        2025, 10, 14, 12, 58, 36, 931873, tzinfo=dt.timezone.utc
     ),
     api_key_uuid: uuid.UUID | None = None,
     api_key_name: str = 'fake',
@@ -668,7 +674,7 @@ def get_sample_request_event(
 
 
 def get_sample_otel_span(
-    timestamp: datetime.datetime,
+    timestamp: dt.datetime,
     trace_id: str = 'abc123',
     span_id: str = 'span001',
     span_name: str = 'invoke',
@@ -683,9 +689,9 @@ def get_sample_otel_span(
     resource_attributes: dict[str, str] | None = None,
     scope_name: str = '',
     scope_version: str = '',
-    events_timestamp: list | None = None,
-    events_name: list | None = None,
-    events_attributes: list | None = None,
+    events_timestamp: list[dt.datetime] | None = None,
+    events_name: list[str] | None = None,
+    events_attributes: list[dict[str, str]] | None = None,
 ):
     """Create a sample OtelTraces instance for testing."""
     attrs = {_TEST_PROJECT_UUID_KEY: str(TEST_PROJECT_UUID)}
@@ -707,7 +713,11 @@ def get_sample_otel_span(
         resource_attributes=resource_attributes or {},
         scope_name=scope_name,
         scope_version=scope_version,
-        events_timestamp=events_timestamp,
-        events_name=events_name,
-        events_attributes=events_attributes,
+        events_timestamp=events_timestamp or [],
+        events_name=events_name or [],
+        events_attributes=events_attributes or [],
+        links_trace_id=[],
+        links_span_id=[],
+        links_trace_state=[],
+        links_attributes=[],
     )

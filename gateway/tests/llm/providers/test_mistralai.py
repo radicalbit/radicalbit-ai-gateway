@@ -1,6 +1,7 @@
 """Tests for the native Mistral chat and embedding models."""
 
-from unittest.mock import AsyncMock, patch
+from typing import Any
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
 from pydantic import BaseModel
@@ -16,6 +17,7 @@ from radicalbit_ai_gateway.llm.messages import (
     HumanMessage,
     SystemMessage,
     ToolMessage,
+    invalid_tool_call,
 )
 from radicalbit_ai_gateway.llm.providers.mistralai import (
     ChatMistralAI,
@@ -37,7 +39,11 @@ WEATHER_TOOL = {
 
 
 def model(**kwargs) -> ChatMistralAI:
-    return init_chat_model('mistralai:mistral-small-latest', api_key='sk', **kwargs)
+    chat_model = init_chat_model(
+        'mistralai:mistral-small-latest', api_key='sk', **kwargs
+    )
+    assert isinstance(chat_model, ChatMistralAI)
+    return chat_model
 
 
 async def invoke(chat_model, responses, messages=MESSAGES, **kwargs):
@@ -234,6 +240,64 @@ async def test_raw_tool_calls_in_additional_kwargs_are_parsed():
     assert call['id'] == _mistral_tool_call_id('q')
 
 
+@pytest.mark.parametrize(
+    ('message', 'expected'),
+    [
+        (
+            AIMessage(
+                'ignored',
+                invalid_tool_calls=[
+                    invalid_tool_call(name='f', args='{bad', id='q', error=None)
+                ],
+            ),
+            {'tool_calls': [{'function': {'name': 'f', 'arguments': '{bad'}, 'id': 'Q'}]},
+        ),
+        (
+            AIMessage(
+                '',
+                additional_kwargs={
+                    'tool_calls': [
+                        {'id': 'skipped'},
+                        {'id': 'q', 'function': {'name': 'f', 'arguments': '{bad'}},
+                    ]
+                },
+            ),
+            {'tool_calls': [{'function': {'name': 'f', 'arguments': '{bad'}, 'id': 'Q'}]},
+        ),
+        (
+            AIMessage(
+                [
+                    {
+                        'type': 'thinking',
+                        'thinking': [{'type': 'text', 'text': 'hm', 'index': 0}, 'raw'],
+                        'index': 0,
+                    },
+                    {'type': 'text', 'text': 'ok', 'index': 1},
+                ]
+            ),
+            {
+                'content': [
+                    {'type': 'thinking', 'thinking': [{'type': 'text', 'text': 'hm'}, 'raw']},
+                    {'type': 'text', 'text': 'ok'},
+                ]
+            },
+        ),
+        (
+            AIMessage('Sure,', additional_kwargs={'prefix': True}),
+            {'content': 'Sure,', 'prefix': True},
+        ),
+    ],
+    ids=['invalid_tool_call', 'raw_invalid_tool_call', 'thinking_blocks', 'prefix'],
+)  # fmt: skip
+async def test_assistant_history_variants_on_the_wire(message, expected):
+    _, [request] = await invoke(model(), [canned.mistral_completion()], [message])
+
+    wire: dict[str, Any] = {'role': 'assistant', 'content': '', **expected}
+    for call in wire.get('tool_calls', []):
+        call['id'] = _mistral_tool_call_id('q')
+    assert request['body']['messages'] == [wire]
+
+
 def test_tool_call_ids_are_mistral_compatible():
     assert _mistral_tool_call_id('Wx1Abc2De') == 'Wx1Abc2De'
     converted = _mistral_tool_call_id('call_weather_1')
@@ -298,6 +362,7 @@ async def test_tool_call_parsing():
             canned.MISTRAL_WEATHER_TOOL_CALL,
             {'function': {'name': 'bad', 'arguments': '{nope'}},
             {'function': {'name': 'noargs', 'arguments': ''}},
+            {'id': 'nofunc', 'type': 'custom'},
         ],
     )
     message, _ = await invoke(model(), [reply])
@@ -312,9 +377,12 @@ async def test_tool_call_parsing():
     # A missing id is filled with a random one.
     assert noargs['args'] == {}
     assert len(noargs['id']) == 32
-    [invalid] = message.invalid_tool_calls
+    [invalid, nofunc] = message.invalid_tool_calls
     assert invalid['name'] == 'bad'
     assert invalid['error'].startswith('Function bad arguments:')
+    # A call without a function is kept as invalid, not raised as a KeyError.
+    assert nofunc['id'] == 'nofunc'
+    assert nofunc['error'] == 'Unsupported tool call: it has no function.'
     assert (
         message.additional_kwargs['tool_calls'][0] == canned.MISTRAL_WEATHER_TOOL_CALL
     )
@@ -390,6 +458,37 @@ async def test_stream_tool_call_chunks():
         },
         {'name': 'f', 'args': '{"a', 'id': None, 'index': 1, 'type': 'tool_call_chunk'},
     ]
+
+
+async def test_stream_numbers_content_blocks_so_pieces_merge():
+    def chunk(delta, choices=True):
+        choice = {'index': 0, 'delta': delta, 'finish_reason': None}
+        return {'type': 'chunk', 'model': 'm', 'choices': [choice] if choices else []}
+
+    def thinking(text):
+        return {'type': 'thinking', 'thinking': [{'type': 'text', 'text': text}]}
+
+    events = [
+        chunk({'role': 'assistant', 'content': ''}),
+        chunk({'content': [thinking('hm')]}),
+        chunk({'content': [thinking('m')]}),
+        chunk({'content': [{'type': 'text', 'text': 'ok'}]}),
+        chunk(
+            {'content': [{'type': 'reference', 'text': 'see', 'reference_ids': [1]}]}
+        ),
+        chunk({}, choices=False),
+    ]
+
+    chunks, _ = await stream(
+        model(), [CannedResponse(sse_events=events, sse_format='anthropic')]
+    )
+
+    assert [c.content for c in chunks[1:5]] == [
+        [{'type': 'thinking', 'thinking': [{'type': 'text', 'text': 'hm', 'index': 0}], 'index': 0}],
+        [{'type': 'thinking', 'thinking': [{'type': 'text', 'text': 'm', 'index': 0}], 'index': 0}],
+        [{'type': 'text', 'text': 'ok', 'index': 1}],
+        [{'type': 'text', 'text': 'see', 'reference': {'reference_ids': [1]}, 'index': 2}],
+    ]  # fmt: skip
 
 
 async def test_stream_rejects_non_sse_reply():
@@ -577,17 +676,21 @@ def test_embeddings_reject_unknown_params():
         MistralEmbeddings('mistral-embed', dimensions=4)
 
 
-async def test_embeddings_retry_rate_limits_then_raise():
+@pytest.mark.parametrize('sync', [False, True], ids=['async', 'sync'])
+async def test_embeddings_retry_rate_limits_then_raise(sync):
     embeddings = MistralEmbeddings(
         'mistral-embed', api_key='sk', max_retries=3, wait_time=7
     )
-    sleep = AsyncMock()
+    sleep = MagicMock() if sync else AsyncMock()
     with (
-        patch('asyncio.sleep', sleep),
+        patch('time.sleep' if sync else 'asyncio.sleep', sleep),
         ProviderRecorder([canned.error(429)] * 3) as recorder,
         pytest.raises(httpx.HTTPStatusError),
     ):
-        await embeddings.aembed_documents(['a'])
+        if sync:
+            embeddings.embed_documents(['a'])
+        else:
+            await embeddings.aembed_documents(['a'])
     assert len(recorder.requests) == 3
     assert [c.args[0] for c in sleep.call_args_list] == [7, 7]
 

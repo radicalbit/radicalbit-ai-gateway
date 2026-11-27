@@ -1,13 +1,46 @@
+from collections.abc import Callable, Coroutine
+from contextlib import AbstractAsyncContextManager
 import logging
+from typing import Any, TypeVar, TypeVarTuple
 
-from sqlalchemy import MetaData, create_engine
+import anyio
+from sqlalchemy import ColumnElement, Delete, MetaData, Select, Update
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.ext.declarative import DeferredReflection
-from sqlalchemy.orm import Session, declarative_base, sessionmaker
+from sqlalchemy.orm import declarative_base
 
-from radicalbit_ai_gateway.db.custom_query import CustomQuery
 from radicalbit_ai_gateway.utils.app_config import DBConfig, get_app_config
 
 logger = logging.getLogger(get_app_config().log_config.logger_name)
+
+
+Stmt = TypeVar('Stmt', bound=Select[Any] | Update | Delete)
+
+
+def filter_if(stmt: Stmt, condition: bool, *clauses: ColumnElement[bool]) -> Stmt:
+    """Add the clauses to the statement's WHERE only when the condition holds."""
+    return stmt.where(*clauses) if condition else stmt
+
+
+R = TypeVar('R')
+Args = TypeVarTuple('Args')
+
+
+def run_from_worker(
+    async_fn: Callable[[*Args], Coroutine[Any, Any, R]], *args: *Args
+) -> R:
+    """Run an async DB call on the event loop from sync code in a worker thread,
+    and wait for its result.
+
+    For sync routes that stay sync (their ClickHouse work runs in FastAPI's
+    thread pool) but read a Postgres DAO: the pooled connections belong to the
+    event loop, so the query must run there.
+    Raises RuntimeError when called from the event loop itself.
+    """
+    return anyio.from_thread.run(async_fn, *args)
+
+
+_POOL = {'pool_pre_ping': True, 'pool_size': 20, 'max_overflow': 40}
 
 
 class Reflected(DeferredReflection):
@@ -40,46 +73,52 @@ class Database:
     def __init__(self, conf: DBConfig):
         self._conf = conf
         self._db_url = self._build_db_url()
-        self._engine = None
-        self._SessionFactory = None
+        self._async_engine = None
+        self._AsyncSessionFactory = None
         self._connected = False
 
     def _build_db_url(self) -> str:
-        if self._conf.db_type == 'postgresql':
-            return f'postgresql+psycopg2://{self._conf.db_user}:{self._conf.db_pwd}@{self._conf.db_host}:{self._conf.db_port}/{self._conf.db_name}'
-        if self._conf.db_type == 'sqlite':
-            return f'sqlite:///{self._conf.db_name}'
-        raise ValueError(f'Unsupported database type: {self._conf.db_type}')
+        c = self._conf
+        return f'postgresql+psycopg://{c.db_user}:{c.db_pwd}@{c.db_host}:{c.db_port}/{c.db_name}'
 
     def connect(self):
-        logger.info('Trying to connect to %s DB', self._conf.db_type)
+        """Build the engine. It opens no connection yet."""
+        logger.info('Trying to connect to Postgres DB')
         if not self._connected:
-            logger.info('Connecting to %s DB', self._conf.db_type)
-            self._engine = create_engine(
-                self._db_url, pool_pre_ping=True, pool_size=20, max_overflow=40
-            )
-            self._SessionFactory = sessionmaker(
-                bind=self._engine,
-                future=True,
-                expire_on_commit=False,
-                query_cls=CustomQuery,
+            logger.info('Connecting to Postgres DB')
+            self._async_engine = create_async_engine(self._db_url, **_POOL)
+            self._AsyncSessionFactory = async_sessionmaker(
+                bind=self._async_engine, expire_on_commit=False
             )
             self._connected = True
         else:
             logger.warning('Not connecting. Connection with the DB already established')
 
+    async def dispose(self):
+        """Close the pooled connections."""
+        if self._async_engine is not None:
+            await self._async_engine.dispose()
+
     def reset_connection(self):
         logger.info('Resetting DB connection')
-        self._engine = None
-        self._SessionFactory = None
+        self._async_engine = None
+        self._AsyncSessionFactory = None
         self._connected = False
 
-    def init_mappings(self):
+    async def init_mappings(self):
         logger.info('Initiating DB orm mappings')
-        Reflected.prepare(self._engine, views=True)
+        if self._async_engine is None:
+            raise RuntimeError('Not connected to the DB: call connect() first')
+        async with self._async_engine.connect() as conn:
+            await conn.run_sync(Reflected.prepare, views=True)
 
-    def begin_session(self) -> Session:
-        return self._SessionFactory.begin()
+    def begin_session(self) -> AbstractAsyncContextManager[AsyncSession]:
+        """One transaction, opened with ``async with``: it yields an
+        ``AsyncSession``, commits on success and rolls back on error.
+        """
+        if self._AsyncSessionFactory is None:
+            raise RuntimeError('Not connected to the DB: call connect() first')
+        return self._AsyncSessionFactory.begin()
 
     @property
     def db_url(self):

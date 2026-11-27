@@ -1,9 +1,10 @@
-import datetime
+import datetime as dt
 from enum import Enum
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict
 from pydantic.alias_generators import to_camel
+from typing_extensions import override
 
 from radicalbit_ai_gateway.db.tables.project_config_table import ProjectConfig
 from radicalbit_ai_gateway.db.tables.project_table import Project
@@ -21,6 +22,7 @@ class ProjectFilter(str, Enum):
     DEV = 'dev'
     PROD = 'prod'
 
+    @override
     @classmethod
     def _missing_(cls, value: object):
         if isinstance(value, str):
@@ -36,6 +38,7 @@ class ConfigListFilter(str, Enum):
     REQUEST_TO_PUBLISH = 'request_to_publish'
     DRAFT = 'draft'
 
+    @override
     @classmethod
     def _missing_(cls, value: object):
         if isinstance(value, str):
@@ -64,8 +67,8 @@ class ProjectIn(BaseModel, validate_assignment=True):
     )
 
     def to_project(self) -> Project:
-        UTC = getattr(datetime, 'UTC', datetime.timezone.utc)
-        now = datetime.datetime.now(tz=UTC)
+        UTC = getattr(dt, 'UTC', dt.timezone.utc)
+        now = dt.datetime.now(tz=UTC)
 
         return Project(
             name=self.name,
@@ -81,6 +84,10 @@ class ProjectConfigFileIn(BaseModel):
     model_config = ConfigDict(
         populate_by_name=True, alias_generator=to_camel, protected_namespaces=()
     )
+
+
+class ConfigValidationOut(BaseModel):
+    valid: bool
 
 
 class GenerateConfigIn(BaseModel):

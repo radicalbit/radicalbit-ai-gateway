@@ -4,8 +4,10 @@ Every case asserts on the buckets the alert history view would show: which
 rule, which hour, how many alerts were sent and how many failed.
 """
 
-import datetime
+import datetime as dt
 import uuid
+
+from typing_extensions import override
 
 from tests.common.db_integration_ch import DatabaseIntegrationClickhouse
 
@@ -16,17 +18,17 @@ from radicalbit_ai_gateway.db.tables.alert_table import Alert
 RULE_A = uuid.UUID('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa')
 RULE_B = uuid.UUID('bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb')
 
-UTC = datetime.timezone.utc
-TEN = datetime.datetime(2025, 1, 8, 10, 0, 0, tzinfo=UTC)
-ELEVEN = TEN + datetime.timedelta(hours=1)
-DAY_START = datetime.datetime(2025, 1, 8, 0, 0, 0, tzinfo=UTC)
-DAY_END = datetime.datetime(2025, 1, 9, 0, 0, 0, tzinfo=UTC)
+UTC = dt.timezone.utc
+TEN = dt.datetime(2025, 1, 8, 10, 0, 0, tzinfo=UTC)
+ELEVEN = TEN + dt.timedelta(hours=1)
+DAY_START = dt.datetime(2025, 1, 8, 0, 0, 0, tzinfo=UTC)
+DAY_END = dt.datetime(2025, 1, 9, 0, 0, 0, tzinfo=UTC)
 
 
 def alert(
     rule_uuid: uuid.UUID = RULE_A,
     rule_name: str = 'rule-a',
-    timestamp: datetime.datetime = TEN,
+    timestamp: dt.datetime = TEN,
     status: str = 'sent',
     count: int = 1,
 ) -> Alert:
@@ -50,7 +52,7 @@ def alert(
 
 
 def bucket(
-    start: datetime.datetime,
+    start: dt.datetime,
     sent: int = 0,
     failed: int = 0,
     rule_uuid: uuid.UUID = RULE_A,
@@ -66,6 +68,7 @@ def bucket(
 
 
 class AlertDAOHistoryTest(DatabaseIntegrationClickhouse):
+    @override
     @classmethod
     def setUpClass(cls):
         super().setUpClass()
@@ -79,9 +82,9 @@ class AlertDAOHistoryTest(DatabaseIntegrationClickhouse):
     def test_alerts_in_the_same_hour_share_a_bucket_split_by_outcome(self):
         self.insert(
             [
-                alert(timestamp=TEN + datetime.timedelta(minutes=5)),
-                alert(timestamp=TEN + datetime.timedelta(minutes=40)),
-                alert(timestamp=TEN + datetime.timedelta(minutes=59), status='failed'),
+                alert(timestamp=TEN + dt.timedelta(minutes=5)),
+                alert(timestamp=TEN + dt.timedelta(minutes=40)),
+                alert(timestamp=TEN + dt.timedelta(minutes=59), status='failed'),
             ]
         )
 
@@ -110,7 +113,7 @@ class AlertDAOHistoryTest(DatabaseIntegrationClickhouse):
     def test_the_range_includes_its_start_and_excludes_its_end(self):
         self.insert(
             [
-                alert(timestamp=TEN - datetime.timedelta(microseconds=1)),
+                alert(timestamp=TEN - dt.timedelta(microseconds=1)),
                 alert(timestamp=TEN),
                 alert(timestamp=ELEVEN),
             ]
@@ -134,9 +137,7 @@ class AlertDAOHistoryTest(DatabaseIntegrationClickhouse):
         self.insert(
             [
                 alert(timestamp=TEN, rule_name='old name'),
-                alert(
-                    timestamp=TEN + datetime.timedelta(minutes=30), rule_name='new name'
-                ),
+                alert(timestamp=TEN + dt.timedelta(minutes=30), rule_name='new name'),
             ]
         )
 

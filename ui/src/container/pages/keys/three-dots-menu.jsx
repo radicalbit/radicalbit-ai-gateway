@@ -21,22 +21,41 @@ const MENU_TRIGGER = ['click'];
 function ThreeDotsMenu() {
   const buttonRef = useRef(null);
 
+  const [isOpen, setIsOpen] = useState(false);
   const [isOpenedByKeyboard, setIsOpenedByKeyboard] = useState(false);
 
   const { uuid } = useParams();
   const items = useGetThreeDotsMenuItems(uuid);
 
-  const handleOnOpenChange = (isOpen) => {
+  const updateIsOpen = (nextIsOpen) => {
     const { activeElement } = document;
     const isFocusLost = activeElement === document.body || activeElement?.closest('.ant-dropdown');
 
-    if (!isOpen) {
+    setIsOpen(nextIsOpen);
+
+    if (!nextIsOpen) {
       setIsOpenedByKeyboard(false);
     }
 
-    if (!isOpen && isFocusLost) {
+    if (!nextIsOpen && isFocusLost) {
       buttonRef.current?.focus();
     }
+  };
+
+  const handleOnOpenChange = (nextIsOpen, { source }) => {
+    if (source === 'menu') {
+      return;
+    }
+
+    updateIsOpen(nextIsOpen);
+  };
+
+  const handleOnMenuClick = ({ domEvent }) => {
+    if (domEvent.target.closest('.c-popconfirm__trigger')) {
+      return;
+    }
+
+    updateIsOpen(false);
   };
 
   const handleOnKeyDown = (event) => {
@@ -47,7 +66,7 @@ function ThreeDotsMenu() {
 
   return (
     <Tooltip title="More actions">
-      <Dropdown autoFocus={isOpenedByKeyboard} destroyOnHidden menu={{ items }} onOpenChange={handleOnOpenChange} trigger={MENU_TRIGGER}>
+      <Dropdown autoFocus={isOpenedByKeyboard} destroyOnHidden menu={{ items, onClick: handleOnMenuClick }} onOpenChange={handleOnOpenChange} open={isOpen} trigger={MENU_TRIGGER}>
         <Button aria-label="More actions" onKeyDown={handleOnKeyDown} ref={buttonRef} type="text">
           <Lucide icon={EllipsisVertical} />
         </Button>
@@ -56,14 +75,6 @@ function ThreeDotsMenu() {
 
   );
 }
-
-const DISABLED_CREDENTIALS_TOOLTIP = 'This credential is managed externally and cannot be modified';
-
-const EXPIRED_CREDENTIALS_TOOLTIP = 'This credential has expired: it can only be deleted or removed from its group';
-
-const UNAVAILABLE_TOOLTIP = 'Unable to load the latest data, please retry later';
-
-const IN_GRACE_TOOLTIP = 'A grace period is running: end it before rotating again';
 
 export const useGetThreeDotsMenuItems = (uuid) => {
   const { showModal } = useModals();
@@ -102,7 +113,7 @@ export const useGetThreeDotsMenuItems = (uuid) => {
   if (isError) {
     return [
       {
-        label: <Tooltip title={UNAVAILABLE_TOOLTIP}>Unable to load credential</Tooltip>,
+        label: <Tooltip title="Unable to load the latest data, please retry later">Unable to load credential</Tooltip>,
         disabled: true,
       },
     ];
@@ -117,18 +128,18 @@ export const useGetThreeDotsMenuItems = (uuid) => {
   if (isExternallyManaged) {
     return [
       {
-        label: <Tooltip title={DISABLED_CREDENTIALS_TOOLTIP}>Edit credential</Tooltip>,
+        label: <Tooltip title="This credential is managed externally and cannot be modified">Edit credential</Tooltip>,
         disabled: true,
       },
       {
-        label: <Tooltip title={DISABLED_CREDENTIALS_TOOLTIP}>Rotate credential</Tooltip>,
+        label: <Tooltip title="This credential is managed externally and cannot be modified">Rotate credential</Tooltip>,
         disabled: true,
       },
       {
         type: 'divider',
       },
       {
-        label: <Tooltip title={DISABLED_CREDENTIALS_TOOLTIP}>Associate group</Tooltip>,
+        label: <Tooltip title="This credential is managed externally and cannot be modified">Associate group</Tooltip>,
         disabled: true,
       },
       manageLimitsItem,
@@ -136,7 +147,7 @@ export const useGetThreeDotsMenuItems = (uuid) => {
         type: 'divider',
       },
       {
-        label: <Tooltip title={DISABLED_CREDENTIALS_TOOLTIP}><div className="is-error">Delete credential</div></Tooltip>,
+        label: <Tooltip title="This credential is managed externally and cannot be modified"><div className="is-error">Delete credential</div></Tooltip>,
         disabled: true,
       },
     ];
@@ -149,25 +160,25 @@ export const useGetThreeDotsMenuItems = (uuid) => {
 
   // A credential holds at most two values: no new rotation while the previous value still works
   const rotateItem = isGraceRunning
-    ? { label: <Tooltip title={IN_GRACE_TOOLTIP}>Rotate credential</Tooltip>, disabled: true }
+    ? { label: <Tooltip title="A grace period is running: end it before rotating again">Rotate credential</Tooltip>, disabled: true }
     : { label: 'Rotate credential', onClick: handleOnRotateKey };
 
   // Only while a grace period is running
   const endGraceItem = isGraceRunning ? endGracePeriodItem : false;
   // An expired credential can still leave its group (cleanup), but can't join one
   const expiredGroupItem = group ? removeGroupItem : {
-    label: <Tooltip title={EXPIRED_CREDENTIALS_TOOLTIP}>Associate group</Tooltip>,
+    label: <Tooltip title="This credential has expired: it can only be deleted or removed from its group">Associate group</Tooltip>,
     disabled: true,
   };
 
   if (state === CredentialStateEnum.EXPIRED) {
     return [
       {
-        label: <Tooltip title={EXPIRED_CREDENTIALS_TOOLTIP}>Edit credential</Tooltip>,
+        label: <Tooltip title="This credential has expired: it can only be deleted or removed from its group">Edit credential</Tooltip>,
         disabled: true,
       },
       {
-        label: <Tooltip title={EXPIRED_CREDENTIALS_TOOLTIP}>Rotate credential</Tooltip>,
+        label: <Tooltip title="This credential has expired: it can only be deleted or removed from its group">Rotate credential</Tooltip>,
         disabled: true,
       },
       {

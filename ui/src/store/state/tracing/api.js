@@ -90,49 +90,9 @@ export const tracingApiSlice = apiService.injectEndpoints({
         method: 'get',
       }),
     }),
-
-    getTraces: builder.query({
-      providesTags: () => [API_TAGS.TRACING],
-      query: ({
-        projectUuid, from, to, routes, tags, requestTypes, page, limit,
-      }) => {
-        const init = {};
-
-        const params = timeFiltersQueryParamFactory({ from, to, init });
-
-        if (routes && routes.length > 0) {
-          routes.forEach((route) => {
-            params.append('routes', route);
-          });
-        }
-
-        if (requestTypes && requestTypes.length > 0) {
-          requestTypes.forEach((requestType) => {
-            params.append('requestType', requestType);
-          });
-        }
-
-        appendTagsToParams(params, tags);
-
-        if (page !== undefined) {
-          params.append('_page', page);
-        }
-
-        if (limit !== undefined) {
-          params.append('_limit', limit);
-        }
-
-        return ({
-          url: `/projects/${projectUuid}/traces?${params.toString()}`,
-          method: 'get',
-        });
-      },
-    }),
   }),
 });
 
-export const {
-  useGetTracesChartQuery, useGetTraceLatenciesQuery, useGetSpanLatenciesQuery, useGetTraceByIdQuery, useGetSpanByIdQuery, useGetTracesQuery,
-} = tracingApiSlice;
+export const { useGetTracesChartQuery, useGetTraceLatenciesQuery, useGetSpanLatenciesQuery, useGetTraceByIdQuery, useGetSpanByIdQuery } = tracingApiSlice;
 
 export const selectors = {};

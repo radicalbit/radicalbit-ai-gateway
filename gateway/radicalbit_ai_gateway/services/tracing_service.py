@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Literal
 from uuid import UUID
 
@@ -8,6 +8,8 @@ from radicalbit_ai_gateway.db.dao.otel_traces_dao import (
     OtelTracesDAO,
     request_type_of_root_span,
 )
+from radicalbit_ai_gateway.db.database import run_from_worker
+from radicalbit_ai_gateway.db.models.trace import SpanRecord
 from radicalbit_ai_gateway.models.request_event_type import RequestType
 from radicalbit_ai_gateway.models.trace_dto import (
     ErrorEvents,
@@ -17,6 +19,7 @@ from radicalbit_ai_gateway.models.trace_dto import (
     SpanDTO,
     SpanLatenciesDTO,
     SpanLatencyDTO,
+    SpanStatus,
     TraceDTO,
     TracesChartDataDTO,
     TracesChartDataSeriesDTO,
@@ -25,6 +28,7 @@ from radicalbit_ai_gateway.models.trace_dto import (
 )
 from radicalbit_ai_gateway.services.group_service import GroupService
 from radicalbit_ai_gateway.services.key_service import KeyService
+from radicalbit_ai_gateway.services.span_labels import span_label
 from radicalbit_ai_gateway.utils import NS_TO_MS
 from radicalbit_ai_gateway.utils.chart_utils import (
     generate_chart_timestamps,
@@ -71,6 +75,20 @@ def _compute_trace_status(root_has_error: bool, total_error_count: int) -> Trace
     if total_error_count > 0:
         return TraceStatus.WARNING
     return TraceStatus.SUCCESS
+
+
+def _compute_span_status(has_error: bool, fallback_triggered: bool) -> SpanStatus:
+    """Status of one span, from the span alone.
+
+    - Span in error: ERROR
+    - A fallback answered: WARNING
+    - Everything else: SUCCESS
+    """
+    if has_error:
+        return SpanStatus.ERROR
+    if fallback_triggered:
+        return SpanStatus.WARNING
+    return SpanStatus.SUCCESS
 
 
 class TracingService:
@@ -234,7 +252,7 @@ class TracingService:
         if not spans:
             raise GatewayNotFoundError(f"Trace '{trace_id}' not found")
 
-        children_map: dict[str, list] = {}
+        children_map: dict[str, list[SpanRecord]] = {}
         root_span = None
         total_duration = 0  # Spans always have positive duration
         error_count = 0
@@ -273,13 +291,21 @@ class TracingService:
             return TreeNodeDTO(
                 span_id=span.span_id,
                 span_name=span.span_name,
+                label=span_label(span.span_name, span.gen_ai_provider),
                 duration_ms=span.duration / NS_TO_MS,
                 status_code=span.status_code,
+                status=_compute_span_status(
+                    number_of_errors > 0, span.fallback_triggered
+                ),
                 output_tokens=output,
                 input_tokens=input_tokens,
                 total_tokens=total,
                 error_count=number_of_errors,
                 created_at=int(span.timestamp.timestamp()),
+                start_offset_ms=(span.timestamp - root_span.timestamp)
+                / timedelta(milliseconds=1),
+                operation_category=span.operation_category or None,
+                span_kind=span.span_kind or None,
                 children=[build_tree(child) for child in children],
             )
 
@@ -295,13 +321,17 @@ class TracingService:
         key_name = None
         group_name = None
         if resolved_key_uuid:
-            key_names = self.key_service.get_names_by_uuids([resolved_key_uuid])
+            key_names = run_from_worker(
+                self.key_service.get_names_by_uuids, [resolved_key_uuid]
+            )
             key_name = key_names.get(
                 resolved_key_uuid,
                 f'Deleted Key ({str(resolved_key_uuid)[:8]})',
             )
         if resolved_group_uuid:
-            group_names = self.group_service.get_names_by_uuids([resolved_group_uuid])
+            group_names = run_from_worker(
+                self.group_service.get_names_by_uuids, [resolved_group_uuid]
+            )
             group_name = group_names.get(
                 resolved_group_uuid,
                 f'Deleted Group ({str(resolved_group_uuid)[:8]})',
@@ -356,22 +386,35 @@ class TracingService:
         )
 
         if not traces_page.items:
-            return Page.create([], params, total=traces_page.total)
+            return Page[TraceDTO].create([], params, total=traces_page.total)
 
         # Enrich with span stats
         trace_ids = [row.trace_id for row in traces_page.items]
-        spans_stats = self.otel_traces_dao.get_spans_stats_by_trace_ids(trace_ids)
+        # The spans of the page's traces lie around their root spans: a day
+        # of margin each side covers a trace that crossed midnight.
+        root_dates = [row.created_at.date() for row in traces_page.items]
+        date_from = min(root_dates) - timedelta(days=1)
+        date_to = max(root_dates) + timedelta(days=1)
+        spans_stats = self.otel_traces_dao.get_spans_stats_by_trace_ids(
+            trace_ids, date_from, date_to
+        )
         root_error_trace_ids = self.otel_traces_dao.get_root_span_error_by_trace_ids(
-            trace_ids
+            trace_ids, date_from, date_to
         )
 
         # TODO: Implement soft delete for keys/groups in Postgres (deleted_at column)
         # so that deleted keys still have resolvable names, removing the need for this fallback.
         key_uuids = [u for r in traces_page.items if (u := _parse_uuid(r.api_key_uuid))]
         group_uuids = [u for r in traces_page.items if (u := _parse_uuid(r.group_uuid))]
-        key_names = self.key_service.get_names_by_uuids(key_uuids) if key_uuids else {}
+        key_names = (
+            run_from_worker(self.key_service.get_names_by_uuids, key_uuids)
+            if key_uuids
+            else {}
+        )
         group_names = (
-            self.group_service.get_names_by_uuids(group_uuids) if group_uuids else {}
+            run_from_worker(self.group_service.get_names_by_uuids, group_uuids)
+            if group_uuids
+            else {}
         )
 
         # Transform rows to TraceDTO
@@ -424,7 +467,7 @@ class TracingService:
                 )
             )
 
-        return Page.create(items, params, total=traces_page.total)
+        return Page[TraceDTO].create(items, params, total=traces_page.total)
 
     def get_span_by_id(
         self, project_uuid: UUID, trace_id: str, span_id: str
@@ -462,13 +505,17 @@ class TracingService:
         resolved_key_name = None
         resolved_group_name = None
         if api_key_uuid:
-            key_names = self.key_service.get_names_by_uuids([api_key_uuid])
+            key_names = run_from_worker(
+                self.key_service.get_names_by_uuids, [api_key_uuid]
+            )
             resolved_key_name = key_names.get(
                 api_key_uuid,
                 f'Deleted Key ({str(api_key_uuid)[:8]})',
             )
         if group_uuid:
-            group_names = self.group_service.get_names_by_uuids([group_uuid])
+            group_names = run_from_worker(
+                self.group_service.get_names_by_uuids, [group_uuid]
+            )
             resolved_group_name = group_names.get(
                 group_uuid,
                 f'Deleted Group ({str(group_uuid)[:8]})',

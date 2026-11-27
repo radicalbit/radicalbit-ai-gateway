@@ -1,18 +1,16 @@
-from decimal import Decimal
-
 from radicalbit_ai_gateway.models.caching import CacheConfig, Caching
 from radicalbit_ai_gateway.models.credentials import Credentials
 from radicalbit_ai_gateway.models.fallback import Fallback, FallbackModelType
 from radicalbit_ai_gateway.models.gateway_config import GatewayConfig
 from radicalbit_ai_gateway.models.gateway_route_config import GatewayRouteConfig
 from radicalbit_ai_gateway.models.guardrails import (
+    CheckGuardrail,
     Guardrail,
     GuardrailBehaviorType,
     GuardrailType,
     GuardrailWhereType,
 )
 from radicalbit_ai_gateway.models.limiting import (
-    BudgetLimiting,
     Limiting,
     LimitingAlgorithmType,
     RateLimiting,
@@ -21,12 +19,15 @@ from radicalbit_ai_gateway.models.limiting import (
 from radicalbit_ai_gateway.models.model import Model
 from radicalbit_ai_gateway.models.routing import (
     DecisionOutputMappingEntry,
-    DeterministicRoutingConfig,
+    KeywordRoutingConfig,
     LLMRoutingConfig,
     OutputMappingEntry,
     RoutingRuleType,
     SemanticRoutingConfig,
     TextClassificationRoutingConfig,
+    TimeRoutingConfig,
+    TokenLengthConditions,
+    TokenLengthRoutingConfig,
 )
 
 
@@ -83,21 +84,21 @@ def make_embedding_model(model_id: str, model: str) -> Model:
 
 def _openai_guardrails() -> list[Guardrail]:
     return [
-        Guardrail(
+        CheckGuardrail(
             name='starts_with_check',
             type=GuardrailType.STARTS_WITH,
             where=GuardrailWhereType.INPUT,
             behavior=GuardrailBehaviorType.WARN,
             parameters={'values': ['buonasera']},
         ),
-        Guardrail(
+        CheckGuardrail(
             name='keyword_block',
             type=GuardrailType.CONTAINS,
             where=GuardrailWhereType.INPUT,
             behavior=GuardrailBehaviorType.BLOCK,
             parameters={'values': ['ciao']},
         ),
-        Guardrail(
+        CheckGuardrail(
             name='email_address_redaction',
             type=GuardrailType.REGEX,
             where=GuardrailWhereType.OUTPUT,
@@ -107,7 +108,7 @@ def _openai_guardrails() -> list[Guardrail]:
             },
             response_message='Email addresses are not allowed.',
         ),
-        Guardrail(
+        CheckGuardrail(
             name='uuid_block',
             type=GuardrailType.REGEX,
             where=GuardrailWhereType.INPUT,
@@ -129,33 +130,6 @@ def _openai_route_guardrail_names() -> list[str]:
         'email_address_redaction',
         'uuid_block',
     ]
-
-
-def get_gateway_openai_with_guardrails() -> GatewayConfig:
-    chat_models = [
-        make_chat_model(
-            'openai-o4-mini', 'openai/gpt-4o-mini', temperature=0.9, max_tokens=150
-        ),
-        make_chat_model(
-            'openai-o3-mini', 'openai/o3-mini', temperature=0.9, max_tokens=150
-        ),
-    ]
-    embedding_models = [
-        make_embedding_model('text-embedding-3-small', 'openai/text-embedding-3-small'),
-    ]
-    guardrails = _openai_guardrails()
-    route = GatewayRouteConfig(
-        route_name='rb-gateway',
-        chat_models=[m.model_id for m in chat_models],
-        embedding_models=[m.model_id for m in embedding_models],
-        guardrails=_openai_route_guardrail_names(),
-    )
-    return GatewayConfig(
-        chat_models=chat_models,
-        embedding_models=embedding_models,
-        routes={'rb-gateway': route},
-        guardrails=guardrails,
-    )
 
 
 def get_gateway_openai_cached() -> GatewayConfig:
@@ -205,44 +179,6 @@ def get_gateway_embedded_cached() -> GatewayConfig:
     )
 
 
-def get_gateway_embedded_limiting() -> GatewayConfig:
-    chat_models = [
-        make_chat_model(
-            'openai-o4-mini', 'openai/gpt-4o-mini', temperature=0.9, max_tokens=150
-        ),
-    ]
-    embedding_models = [
-        Model(
-            model_id='text-embedding-3-small',
-            model='openai/text-embedding-3-small',
-            credentials=Credentials(api_key='sk-123'),
-            input_cost_per_million_tokens=Decimal('0.25'),
-        ),
-    ]
-    route = GatewayRouteConfig(
-        route_name='rb-gateway',
-        chat_models=[m.model_id for m in chat_models],
-        embedding_models=[m.model_id for m in embedding_models],
-        token_limiting=TokenLimiting(
-            input=Limiting(
-                algorithm=LimitingAlgorithmType.FIXED_WINDOW,
-                window_size='10 seconds',
-                max_token=5,
-            ),
-        ),
-        budget_limiting=BudgetLimiting(
-            algorithm=LimitingAlgorithmType.FIXED_WINDOW,
-            window_size='10 seconds',
-            max_budget=10,
-        ),
-    )
-    return GatewayConfig(
-        chat_models=chat_models,
-        embedding_models=embedding_models,
-        routes={'rb-gateway': route},
-    )
-
-
 def get_gateway_ollama_no_api_key() -> GatewayConfig:
     chat_models = [
         Model(
@@ -280,7 +216,7 @@ def get_gateway_routing_keyword() -> GatewayConfig:
         _make_model('tech_support_model', 'openai/gpt-4o-mini'),
         _make_model('general_queue', 'openai/gpt-4o'),
     ]
-    routing = DeterministicRoutingConfig(
+    routing = KeywordRoutingConfig(
         name='keyword_routing',
         type='deterministic',
         default_model_id='general_queue',
@@ -312,14 +248,18 @@ def get_gateway_routing_context_length() -> GatewayConfig:
         _make_model('gpt-4o-mini', 'openai/gpt-4o-mini'),
         _make_model('gpt-4.1', 'openai/gpt-4.1'),
     ]
-    routing = DeterministicRoutingConfig(
+    routing = TokenLengthRoutingConfig(
         name='context_routing',
         type='deterministic',
         default_model_id='gpt-4o',
         rule=RoutingRuleType.CONTEXT_LENGTH,
         output_mapping=[
-            OutputMappingEntry(model_id='gpt-4o-mini', conditions={'gte': 200}),
-            OutputMappingEntry(model_id='gpt-4.1', conditions={'gte': 400}),
+            OutputMappingEntry(
+                model_id='gpt-4o-mini', conditions=TokenLengthConditions(gte=200)
+            ),
+            OutputMappingEntry(
+                model_id='gpt-4.1', conditions=TokenLengthConditions(gte=400)
+            ),
         ],
     )
     route = GatewayRouteConfig(
@@ -340,7 +280,7 @@ def get_gateway_routing_time() -> GatewayConfig:
         _make_model('night_model', 'openai/gpt-4o-mini'),
         _make_model('default_model', 'openai/gpt-4o'),
     ]
-    routing = DeterministicRoutingConfig(
+    routing = TimeRoutingConfig(
         name='time_routing',
         type='deterministic',
         default_model_id='default_model',
@@ -370,14 +310,18 @@ def get_gateway_routing_token_length() -> GatewayConfig:
         _make_model('gpt-4o-mini', 'openai/gpt-4o-mini'),
         _make_model('gpt-4.1', 'openai/gpt-4.1'),
     ]
-    routing = DeterministicRoutingConfig(
+    routing = TokenLengthRoutingConfig(
         name='token_routing',
         type='deterministic',
         default_model_id='gpt-4o',
         rule=RoutingRuleType.TOKEN_LENGTH,
         output_mapping=[
-            OutputMappingEntry(model_id='gpt-4o-mini', conditions={'lte': 199}),
-            OutputMappingEntry(model_id='gpt-4.1', conditions={'between': [200, 799]}),
+            OutputMappingEntry(
+                model_id='gpt-4o-mini', conditions=TokenLengthConditions(lte=199)
+            ),
+            OutputMappingEntry(
+                model_id='gpt-4.1', conditions=TokenLengthConditions(between=[200, 799])
+            ),
         ],
     )
     route = GatewayRouteConfig(
@@ -556,21 +500,21 @@ def get_gateway_dashboard_test_config() -> GatewayConfig:
         ),
     ]
     guardrails = [
-        Guardrail(
+        CheckGuardrail(
             name='starts_with_check',
             type=GuardrailType.STARTS_WITH,
             where=GuardrailWhereType.INPUT,
             behavior=GuardrailBehaviorType.WARN,
             parameters={'values': ['ciao', 'buonasera']},
         ),
-        Guardrail(
+        CheckGuardrail(
             name='keyword_block',
             type=GuardrailType.CONTAINS,
             where=GuardrailWhereType.OUTPUT,
             behavior=GuardrailBehaviorType.BLOCK,
             parameters={'values': ['ciao']},
         ),
-        Guardrail(
+        CheckGuardrail(
             name='email_address_redaction',
             type=GuardrailType.REGEX,
             where=GuardrailWhereType.IO,
@@ -580,7 +524,7 @@ def get_gateway_dashboard_test_config() -> GatewayConfig:
             },
             response_message='Email addresses are not allowed.',
         ),
-        Guardrail(
+        CheckGuardrail(
             name='uuid_block',
             type=GuardrailType.REGEX,
             where=GuardrailWhereType.INPUT,

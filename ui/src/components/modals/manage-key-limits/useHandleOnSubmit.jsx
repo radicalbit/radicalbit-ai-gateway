@@ -1,5 +1,5 @@
 import { EXPIRED_LIMITS_MESSAGE } from '@Components/limits/constants';
-import { formatCount, getNewLimitsErrors, isLimitComplete } from '@Components/limits/helpers';
+import { formatCount, getNewLimitsErrors } from '@Components/limits/helpers';
 import SuccessMessage from '@Components/success-message';
 import { getMessageFromQueryError } from '@Helpers/errors';
 import useModals from '@Hooks/use-modals';
@@ -48,7 +48,7 @@ export default () => {
   const [trigger, args] = useCreateKeyLimitsMutation({ fixedCacheKey: `${FCK_CREATE_KEY_LIMITS}-${uuid}` });
 
   const hasRowErrors = getNewLimitsErrors({ limits, rows }).some(Boolean);
-  const isSubmitDisabled = isFormInvalid() || hasRowErrors || !rows.every(isLimitComplete) || args.isLoading;
+  const isSubmitDisabled = isFormInvalid() || args.isLoading;
 
   const handleOnSubmit = () => {
     if (isSubmitDisabled) {
@@ -56,6 +56,10 @@ export default () => {
     }
 
     submitForm(async ({ form: formData }, setError) => {
+      if (hasRowErrors) {
+        return;
+      }
+
       const payload = formData.limits.map(({ algorithm, category, value, windowSize }) => ({
         algorithm, category, value, windowSize,
       }));

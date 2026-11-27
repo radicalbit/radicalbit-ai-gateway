@@ -1,14 +1,17 @@
 import copy
-import datetime
+import datetime as dt
 import os
+from typing import Any
 import unittest
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 import uuid
 from uuid import UUID
 
 from fastapi import FastAPI
 from fastapi.encoders import jsonable_encoder
+import pytest
 from starlette.testclient import TestClient
+from typing_extensions import override
 
 from tests.common import db_mock
 from tests.common.mocked_gateway_config_openai import (
@@ -22,6 +25,7 @@ from radicalbit_ai_gateway.db.models.event import (
     LastEventFallback,
     LastEventGuardrail,
 )
+from radicalbit_ai_gateway.middleware.exception_handlers import add_exception_handler
 from radicalbit_ai_gateway.models.event_dto import (
     CacheHitEventDetailDTO,
     ChartDataSeriesDTO,
@@ -43,16 +47,21 @@ from radicalbit_ai_gateway.models.event_dto import (
     TokenChartDataSeriesDTO,
 )
 from radicalbit_ai_gateway.models.gateway_config import GatewayConfig
-from radicalbit_ai_gateway.models.gateway_config_out import GatewayRouteConfigOut
+from radicalbit_ai_gateway.models.gateway_config_out import (
+    GatewayRouteConfigOut,
+    McpHttpServerOut,
+    McpStdioServerOut,
+)
 from radicalbit_ai_gateway.models.gateway_route_out import GatewayRouteOut
 from radicalbit_ai_gateway.models.guardrails import (
-    Guardrail as GuardrailConfig,
     GuardrailType,
+    JudgeGuardrail,
     JudgeParameter,
 )
+from radicalbit_ai_gateway.models.project_entry import ProjectEntry
 from radicalbit_ai_gateway.models.prompt_dto import PromptCategory
 from radicalbit_ai_gateway.models.routing import (
-    DeterministicRoutingConfig,
+    KeywordRoutingConfig,
     RoutingRuleType,
     TextClassificationRoutingConfig,
 )
@@ -73,6 +82,7 @@ PROJECT_NAME = 'test-project'
 
 
 class TestDashboardRoute(unittest.TestCase):
+    @override
     @classmethod
     def setUpClass(cls):
         cls.prefix = '/public/api/v1'
@@ -90,25 +100,28 @@ class TestDashboardRoute(unittest.TestCase):
             mcp_usage_service=cls.mcp_usage_service,
         )
         app = FastAPI(title='AI Gateway', debug=True)
-        app.add_exception_handler(GatewayError, gateway_exception_handler)
+        add_exception_handler(app, GatewayError, gateway_exception_handler)
         app.include_router(router, prefix=cls.prefix)
 
         cls.gateway_config = get_gateway_dashboard_test_config()
 
-        cls.project_entry_mock = MagicMock()
-        cls.project_entry_mock.config = cls.gateway_config
-
-        app.state.project_configs = {PROJECT_NAME: cls.project_entry_mock}
+        app.state.project_configs = {
+            PROJECT_NAME: ProjectEntry(uuid=PROJECT_UUID, config=cls.gateway_config)
+        }
         app.state.routes = {}
 
+        cls.app = app
         cls.client = TestClient(app)
         cls.project_path = f'{cls.prefix}/projects/{PROJECT_UUID}'
 
+    @override
     def setUp(self):
         project_mock = MagicMock()
         project_mock.name = PROJECT_NAME
-        self.project_service.get_by_uuid = MagicMock(return_value=project_mock)
-        self.project_entry_mock.config = self.gateway_config
+        self.project_service.get_by_uuid = AsyncMock(return_value=project_mock)
+        self.app.state.project_configs[PROJECT_NAME] = ProjectEntry(
+            uuid=PROJECT_UUID, config=self.gateway_config
+        )
 
     def test_metrics_endpoint(self):
         mock_metric_dto = EventsDTO(
@@ -116,8 +129,8 @@ class TestDashboardRoute(unittest.TestCase):
                 value=1,
                 last_event=LastEventFallback(
                     route_name='route-A',
-                    timestamp=datetime.datetime(
-                        2025, 10, 14, 12, 58, 36, 931873, tzinfo=datetime.timezone.utc
+                    timestamp=dt.datetime(
+                        2025, 10, 14, 12, 58, 36, 931873, tzinfo=dt.timezone.utc
                     ),
                     api_key_uuid=uuid.UUID('a45cbeeb-acbe-485b-b619-1b70361bddc6'),
                     target='gpt-4.1',
@@ -129,8 +142,8 @@ class TestDashboardRoute(unittest.TestCase):
                 value=4,
                 last_event=LastEventGuardrail(
                     route_name='route-A',
-                    timestamp=datetime.datetime(
-                        2025, 10, 14, 12, 58, 36, 931873, tzinfo=datetime.timezone.utc
+                    timestamp=dt.datetime(
+                        2025, 10, 14, 12, 58, 36, 931873, tzinfo=dt.timezone.utc
                     ),
                     api_key_uuid=uuid.UUID('28f5ede1-3d66-40c2-ac78-7aeedb5a5c92'),
                     name='PRESIDIO',
@@ -145,70 +158,20 @@ class TestDashboardRoute(unittest.TestCase):
             rate_limit_triggered=2,
             token_input_limit_triggered=0,
             token_output_limit_triggered=0,
-            cache_triggered=3,
-            cache_saved_tokens_input=47,
-            cache_saved_tokens_output=60,
-            saved_amount_input=1.4099999999999999e-05,
-            saved_amount_output=0.0,
-            input_cost=7.5e-05,
-            output_cost=0.0,
         )
         self.event_service.get_total_counter = MagicMock(return_value=mock_metric_dto)
-        response = self.client.get(f'{self.project_path}/metrics')
-        assert response.status_code == 200
-        assert response.json() == jsonable_encoder(mock_metric_dto, exclude_none=True)
-
-    def test_metrics_endpoint_with_tags(self):
-        self.event_service.get_total_counter = MagicMock(
-            return_value=EventsDTO(request_error_percentage=0.0)
-        )
         response = self.client.get(
             f'{self.project_path}/metrics'
             '?tags=env=prod&tags=env=staging&tags=cost_center=retail'
         )
         assert response.status_code == 200
-
+        assert response.json() == jsonable_encoder(mock_metric_dto, exclude_none=True)
         call_kwargs = self.event_service.get_total_counter.call_args.kwargs
         assert call_kwargs['tags'] == ['env=prod', 'env=staging', 'cost_center=retail']
 
     def test_metrics_endpoint_with_malformed_tag_returns_400(self):
         response = self.client.get(f'{self.project_path}/metrics?tags=not-a-tag')
         assert response.status_code == 400
-
-    def test_routes_endpoint(self):
-        metrics = EventsDTO(
-            fallbacks=None,
-            guardrails=None,
-            total_input_token_processed=10,
-            total_output_token_processed=45,
-            rate_limit_triggered=4,
-            token_input_limit_triggered=5,
-            token_output_limit_triggered=76,
-            cache_triggered=20,
-            input_cost=0.66326,
-            output_cost=0.66326,
-            cache_saved_tokens_input=None,
-            cache_saved_tokens_output=None,
-            saved_amount_input=None,
-            saved_amount_output=None,
-        )
-        expected_response: list[GatewayRouteOut] = []
-        for route_name, route_config in self.gateway_config.routes.items():
-            configuration = self._build_route_config_out(route_config)
-            expected_response.append(
-                GatewayRouteOut(
-                    route_name=route_name,
-                    configuration=configuration,
-                    metrics=metrics,
-                    groups=None,
-                )
-            )
-        self.event_service.get_total_counter_per_route = MagicMock(
-            return_value=expected_response
-        )
-        response = self.client.get(f'{self.project_path}/routes')
-        assert response.status_code == 200
-        assert response.json() == jsonable_encoder(expected_response, exclude_none=True)
 
     def test_get_routes_include_groups(self):
         metrics = EventsDTO(
@@ -219,13 +182,6 @@ class TestDashboardRoute(unittest.TestCase):
             rate_limit_triggered=4,
             token_input_limit_triggered=5,
             token_output_limit_triggered=76,
-            cache_triggered=20,
-            input_cost=0.66326,
-            output_cost=0.66326,
-            cache_saved_tokens_input=None,
-            cache_saved_tokens_output=None,
-            saved_amount_input=None,
-            saved_amount_output=None,
         )
         expected_response: list[GatewayRouteOut] = []
         groups = [
@@ -249,6 +205,9 @@ class TestDashboardRoute(unittest.TestCase):
 
         assert response.status_code == 200
         assert response.json() == jsonable_encoder(expected_response, exclude_none=True)
+        call_kwargs = self.event_service.get_total_counter_per_route.call_args.kwargs
+        assert call_kwargs['include_groups'] is True
+        assert call_kwargs['project_name'] == PROJECT_NAME
 
     def test_get_single_route(self):
         metrics = EventsDTO(
@@ -259,13 +218,6 @@ class TestDashboardRoute(unittest.TestCase):
             rate_limit_triggered=4,
             token_input_limit_triggered=5,
             token_output_limit_triggered=76,
-            cache_triggered=20,
-            input_cost=0.66326,
-            output_cost=0.66326,
-            cache_saved_tokens_input=None,
-            cache_saved_tokens_output=None,
-            saved_amount_input=None,
-            saved_amount_output=None,
         )
         route_name = 'rb-gateway'
         route_config = [
@@ -290,8 +242,8 @@ class TestDashboardRoute(unittest.TestCase):
         expected_response = LastNEvents(
             fallbacks=[
                 FallbackEventDetailDTO(
-                    timestamp=datetime.datetime(
-                        2025, 10, 14, 12, 58, 36, 931873, tzinfo=datetime.timezone.utc
+                    timestamp=dt.datetime(
+                        2025, 10, 14, 12, 58, 36, 931873, tzinfo=dt.timezone.utc
                     ),
                     api_key_uuid=api_key_uuid,
                     route_name='route-A',
@@ -301,8 +253,8 @@ class TestDashboardRoute(unittest.TestCase):
                     fallback='llama3.1',
                 ),
                 FallbackEventDetailDTO(
-                    timestamp=datetime.datetime(
-                        2025, 10, 13, 12, 58, 36, 931873, tzinfo=datetime.timezone.utc
+                    timestamp=dt.datetime(
+                        2025, 10, 13, 12, 58, 36, 931873, tzinfo=dt.timezone.utc
                     ),
                     api_key_uuid=api_key_uuid,
                     route_name='route-A',
@@ -314,8 +266,8 @@ class TestDashboardRoute(unittest.TestCase):
             ],
             guardrails=[
                 GuardrailEventDetailDTO(
-                    timestamp=datetime.datetime(
-                        2025, 10, 14, 12, 58, 36, 931873, tzinfo=datetime.timezone.utc
+                    timestamp=dt.datetime(
+                        2025, 10, 14, 12, 58, 36, 931873, tzinfo=dt.timezone.utc
                     ),
                     api_key_uuid=api_key_uuid,
                     route_name='route-A',
@@ -330,8 +282,8 @@ class TestDashboardRoute(unittest.TestCase):
             ],
             cache_triggered=[
                 CacheHitEventDetailDTO(
-                    timestamp=datetime.datetime(
-                        2025, 10, 13, 12, 58, 36, 931873, tzinfo=datetime.timezone.utc
+                    timestamp=dt.datetime(
+                        2025, 10, 13, 12, 58, 36, 931873, tzinfo=dt.timezone.utc
                     ),
                     api_key_uuid=api_key_uuid,
                     route_name='route-A',
@@ -342,8 +294,8 @@ class TestDashboardRoute(unittest.TestCase):
             ],
             rate_limit=[
                 RateLimitEventDetailDTO(
-                    timestamp=datetime.datetime(
-                        2025, 10, 13, 12, 58, 36, 931873, tzinfo=datetime.timezone.utc
+                    timestamp=dt.datetime(
+                        2025, 10, 13, 12, 58, 36, 931873, tzinfo=dt.timezone.utc
                     ),
                     api_key_uuid=api_key_uuid,
                     route_name='route-A',
@@ -363,294 +315,6 @@ class TestDashboardRoute(unittest.TestCase):
         )
         assert response.status_code == 200
         assert response.json() == jsonable_encoder(expected_response, exclude_none=True)
-
-    def test_get_chart_data_hourly(self):
-        route_name = 'rb-gateway'
-        _from = '2025-01-08T00:00:00Z'
-        _to = '2025-01-09T00:00:00Z'
-        expected_response = CostChartDataDTO(
-            granularity='hours',
-            timestamp=[1736330400, 1736334000, 1736337600],
-            data=[
-                CostChartDataSeriesDTO(name='group-1', data=[100.5, 150.0, 200.25]),
-                CostChartDataSeriesDTO(name='group-2', data=[50.0, 75.5, 100.0]),
-            ],
-            total=676.25,
-        )
-        self.event_service.get_costs_chart_data = MagicMock(
-            return_value=expected_response
-        )
-        response = self.client.get(
-            f'{self.project_path}/routes/{route_name}/costs/chart?_from={_from}&_to={_to}&group_by=groups'
-        )
-        assert response.status_code == 200
-        assert response.json() == jsonable_encoder(expected_response, exclude_none=True)
-
-    def test_get_chart_data_daily(self):
-        route_name = 'rb-gateway'
-        _from = '2025-01-06T00:00:00Z'
-        _to = '2025-01-16T00:00:00Z'
-        expected_response = CostChartDataDTO(
-            granularity='days',
-            timestamp=[1736208000, 1736294400, 1736380800],
-            data=[
-                CostChartDataSeriesDTO(name='api-key-1', data=[500.0, 600.0, 700.0]),
-                CostChartDataSeriesDTO(name='api-key-2', data=[300.0, 400.0, 500.0]),
-            ],
-            total=3000.0,
-        )
-        self.event_service.get_costs_chart_data = MagicMock(
-            return_value=expected_response
-        )
-        response = self.client.get(
-            f'{self.project_path}/routes/{route_name}/costs/chart?_from={_from}&_to={_to}&group_by=keys'
-        )
-        assert response.status_code == 200
-        assert response.json() == jsonable_encoder(expected_response, exclude_none=True)
-
-    def test_get_chart_data_weekly(self):
-        route_name = 'rb-gateway'
-        _from = '2025-01-01T00:00:00Z'
-        _to = '2025-03-02T00:00:00Z'
-        expected_response = CostChartDataDTO(
-            granularity='weeks',
-            timestamp=[1735603200, 1736208000],
-            data=[
-                CostChartDataSeriesDTO(name='group-1', data=[1500.0, 2000.0]),
-            ],
-            total=3500.0,
-        )
-        self.event_service.get_costs_chart_data = MagicMock(
-            return_value=expected_response
-        )
-        response = self.client.get(
-            f'{self.project_path}/routes/{route_name}/costs/chart?_from={_from}&_to={_to}&group_by=groups'
-        )
-        assert response.status_code == 200
-        assert response.json() == jsonable_encoder(expected_response, exclude_none=True)
-
-    def test_get_chart_data_monthly(self):
-        route_name = 'rb-gateway'
-        _from = '2025-01-01T00:00:00Z'
-        _to = '2026-02-15T00:00:00Z'
-        expected_response = CostChartDataDTO(
-            granularity='months',
-            timestamp=[1735603200, 1738195200],
-            data=[
-                CostChartDataSeriesDTO(name='group-1', data=[5000.0, 6000.0]),
-            ],
-            total=11000.0,
-        )
-        self.event_service.get_costs_chart_data = MagicMock(
-            return_value=expected_response
-        )
-        response = self.client.get(
-            f'{self.project_path}/routes/{route_name}/costs/chart?_from={_from}&_to={_to}&group_by=groups'
-        )
-        assert response.status_code == 200
-        assert response.json() == jsonable_encoder(expected_response, exclude_none=True)
-
-    def test_get_chart_data_route_not_found(self):
-        route_name = 'non-existent-route'
-        response = self.client.get(
-            f'{self.project_path}/routes/{route_name}/costs/chart?_from=2025-01-06T00:00:00Z&_to=2025-01-08T00:00:00Z&group_by=groups'
-        )
-        assert response.status_code == 404
-
-    def test_get_chart_data_monthly_timezone_aware(self):
-        """Test that monthly buckets respect user's timezone."""
-        route_name = 'rb-gateway'
-        _from = '2026-01-01T00:00:00%2B01:00'
-        _to = '2026-02-01T00:00:00%2B01:00'
-        expected_response = CostChartDataDTO(
-            granularity='months',
-            timestamp=[1735689600, 1738368000],
-            data=[
-                CostChartDataSeriesDTO(name='group-1', data=[5000.0, 6000.0]),
-            ],
-            total=11000.0,
-        )
-        self.event_service.get_costs_chart_data = MagicMock(
-            return_value=expected_response
-        )
-        response = self.client.get(
-            f'{self.project_path}/routes/{route_name}/costs/chart?_from={_from}&_to={_to}&group_by=groups'
-        )
-        assert response.status_code == 200
-        assert response.json() == jsonable_encoder(expected_response, exclude_none=True)
-
-    def test_get_chart_data_daily_timezone_aware(self):
-        """Test that daily buckets respect user's timezone."""
-        route_name = 'rb-gateway'
-        _from = '2026-01-01T00:00:00%2B05:00'
-        _to = '2026-01-03T00:00:00%2B05:00'
-        expected_response = CostChartDataDTO(
-            granularity='days',
-            timestamp=[1735660800, 1735747200, 1735833600],
-            data=[
-                CostChartDataSeriesDTO(name='group-1', data=[100.0, 200.0, 300.0]),
-            ],
-            total=600.0,
-        )
-        self.event_service.get_costs_chart_data = MagicMock(
-            return_value=expected_response
-        )
-        response = self.client.get(
-            f'{self.project_path}/routes/{route_name}/costs/chart?_from={_from}&_to={_to}&group_by=groups'
-        )
-        assert response.status_code == 200
-        assert response.json() == jsonable_encoder(expected_response, exclude_none=True)
-
-    def test_get_chart_data_weekly_timezone_aware(self):
-        """Test that weekly buckets respect user's timezone."""
-        route_name = 'rb-gateway'
-        _from = '2026-01-08T00:00:00-08:00'
-        _to = '2026-01-22T00:00:00-08:00'
-        expected_response = CostChartDataDTO(
-            granularity='weeks',
-            timestamp=[1736078400, 1736683200],
-            data=[
-                CostChartDataSeriesDTO(name='group-1', data=[1500.0, 2000.0]),
-            ],
-            total=3500.0,
-        )
-        self.event_service.get_costs_chart_data = MagicMock(
-            return_value=expected_response
-        )
-        response = self.client.get(
-            f'{self.project_path}/routes/{route_name}/costs/chart?_from={_from}&_to={_to}&group_by=groups'
-        )
-        assert response.status_code == 200
-        assert response.json() == jsonable_encoder(expected_response, exclude_none=True)
-
-    def test_get_chart_data_hourly_with_models(self):
-        route_name = 'rb-gateway'
-        _from = '2025-01-08T00:00:00Z'
-        _to = '2025-01-09T00:00:00Z'
-        expected_response = CostChartDataDTO(
-            granularity='hours',
-            timestamp=[1736330400, 1736334000, 1736337600],
-            data=[
-                CostChartDataSeriesDTO(name='gpt-4', data=[100.5, 150.0, 200.25]),
-                CostChartDataSeriesDTO(name='gpt-3.5-turbo', data=[50.0, 75.5, 100.0]),
-            ],
-            total=676.25,
-        )
-        self.event_service.get_costs_chart_data = MagicMock(
-            return_value=expected_response
-        )
-        response = self.client.get(
-            f'{self.project_path}/routes/{route_name}/costs/chart?_from={_from}&_to={_to}&group_by=models'
-        )
-        assert response.status_code == 200
-        assert response.json() == jsonable_encoder(expected_response, exclude_none=True)
-
-    def test_get_chart_data_daily_with_models(self):
-        route_name = 'rb-gateway'
-        _from = '2025-01-07T00:00:00Z'
-        _to = '2025-01-17T00:00:00Z'
-        expected_response = CostChartDataDTO(
-            granularity='days',
-            timestamp=[1736208000, 1736294400, 1736380800],
-            data=[
-                CostChartDataSeriesDTO(name='gpt-4', data=[500.0, 600.0, 700.0]),
-                CostChartDataSeriesDTO(
-                    name='gpt-3.5-turbo', data=[300.0, 400.0, 500.0]
-                ),
-            ],
-            total=3000.0,
-        )
-        self.event_service.get_costs_chart_data = MagicMock(
-            return_value=expected_response
-        )
-        response = self.client.get(
-            f'{self.project_path}/routes/{route_name}/costs/chart?_from={_from}&_to={_to}&group_by=models'
-        )
-        assert response.status_code == 200
-        assert response.json() == jsonable_encoder(expected_response, exclude_none=True)
-
-    def test_get_chart_data_weekly_with_models(self):
-        route_name = 'rb-gateway'
-        _from = '2025-01-01T00:00:00Z'
-        _to = '2025-03-02T00:00:00Z'
-        expected_response = CostChartDataDTO(
-            granularity='weeks',
-            timestamp=[1735603200, 1736208000],
-            data=[
-                CostChartDataSeriesDTO(name='gpt-4', data=[1500.0, 2000.0]),
-                CostChartDataSeriesDTO(name='gpt-3.5-turbo', data=[1000.0, 1500.0]),
-            ],
-            total=6000.0,
-        )
-        self.event_service.get_costs_chart_data = MagicMock(
-            return_value=expected_response
-        )
-        response = self.client.get(
-            f'{self.project_path}/routes/{route_name}/costs/chart?_from={_from}&_to={_to}&group_by=models'
-        )
-        assert response.status_code == 200
-        assert response.json() == jsonable_encoder(expected_response, exclude_none=True)
-
-    def test_get_summary_costs_without_saved_tokens(self):
-        route_name = 'rb-gateway'
-        _from = 1736208000
-        _to = 1736380800
-        expected_response = CostData(
-            input_cost=10.5,
-            output_cost=20.3,
-            total_cost=30.8,
-        )
-        self.event_service.get_summary_costs = MagicMock(return_value=expected_response)
-        response = self.client.get(
-            f'{self.project_path}/routes/{route_name}/costs/summary?_from={_from}&_to={_to}&_with_saved_tokens=false'
-        )
-        assert response.status_code == 200
-        assert response.json() == jsonable_encoder(expected_response, exclude_none=True)
-        self.event_service.get_summary_costs.assert_called_once()
-
-    def test_get_summary_costs_with_saved_tokens(self):
-        route_name = 'rb-gateway'
-        _from = 1736208000
-        _to = 1736380800
-        expected_response = CostData(
-            input_cost=10.5,
-            output_cost=20.3,
-            total_cost=30.8,
-            cache_saved_tokens_input=100,
-            cache_saved_tokens_output=200,
-            saved_amount_input=0.05,
-            saved_amount_output=0.10,
-            total_cached_tokens=300,
-            total_saved_amount=0.15,
-        )
-        self.event_service.get_summary_costs = MagicMock(return_value=expected_response)
-        response = self.client.get(
-            f'{self.project_path}/routes/{route_name}/costs/summary?_from={_from}&_to={_to}&_with_saved_tokens=true'
-        )
-        assert response.status_code == 200
-        assert response.json() == jsonable_encoder(expected_response, exclude_none=True)
-        self.event_service.get_summary_costs.assert_called_once()
-
-    def test_get_summary_costs_without_timestamps(self):
-        route_name = 'rb-gateway'
-        expected_response = CostData(
-            input_cost=5.0,
-            output_cost=10.0,
-            total_cost=15.0,
-        )
-        self.event_service.get_summary_costs = MagicMock(return_value=expected_response)
-        response = self.client.get(
-            f'{self.project_path}/routes/{route_name}/costs/summary?_with_saved_tokens=false'
-        )
-        assert response.status_code == 200
-        assert response.json() == jsonable_encoder(expected_response, exclude_none=True)
-
-    def test_get_summary_costs_route_not_found(self):
-        route_name = 'non-existent-route'
-        response = self.client.get(
-            f'{self.project_path}/routes/{route_name}/costs/summary?_with_saved_tokens=false'
-        )
-        assert response.status_code == 404
 
     def test_get_summary_costs_with_detailed_breakdown(self):
         route_name = 'rb-gateway'
@@ -687,18 +351,14 @@ class TestDashboardRoute(unittest.TestCase):
         )
         assert response.status_code == 200
         data = response.json()
-        assert 'inputCost' in data
-        assert 'outputCost' in data
-        assert 'totalCost' in data
-        assert data['inputCost'] == 5.0
-        assert data['outputCost'] == 10.0
-        assert data['totalCost'] == 15.0
-        assert 'total' in data
-        assert 'totals' in data
-        assert 'chatModels' in data
-        assert 'embeddingModels' in data
-        assert data['totals']['input'] == 3.5
-        assert data['totals']['cachedInput'] == 1.2
+        # The breakdown only: the pre-breakdown totals are no longer served.
+        assert set(data) == {'total', 'totals', 'chatModels', 'embeddingModels'}
+        assert data['totals'] == {
+            'input': 3.5,
+            'cachedInput': 1.2,
+            'output': 12.0,
+            'saved': 2.5,
+        }
         assert data['chatModels']['input']['total'] == 2.5
         assert data['chatModels']['input']['direct'] == 2.0
         assert data['chatModels']['input']['judges'] == 0.5
@@ -712,7 +372,7 @@ class TestDashboardRoute(unittest.TestCase):
         assert data['embeddingModels']['input']['embedding'] == 0.7
         assert data['embeddingModels']['input']['semanticCache'] == 0.3
 
-    def test_get_summary_costs_backward_compatibility(self):
+    def test_get_summary_costs_without_a_breakdown_is_empty(self):
         route_name = 'rb-gateway'
         expected_response = CostData(
             input_cost=5.0,
@@ -726,18 +386,7 @@ class TestDashboardRoute(unittest.TestCase):
             f'{self.project_path}/routes/{route_name}/costs/summary?_with_saved_tokens=false'
         )
         assert response.status_code == 200
-        data = response.json()
-        assert 'inputCost' in data
-        assert 'outputCost' in data
-        assert 'totalCost' in data
-        assert data['inputCost'] == 5.0
-        assert data['outputCost'] == 10.0
-        assert data['totalCost'] == 15.0
-        assert 'input' not in data
-        assert 'output' not in data
-        assert 'savings' not in data
-        assert 'chatModels' not in data
-        assert 'embeddingModels' not in data
+        assert response.json() == {}
 
     def _build_route_config_out(self, route_config) -> GatewayRouteConfigOut:
         route_dict = route_config.model_dump()
@@ -756,11 +405,9 @@ class TestDashboardRoute(unittest.TestCase):
             route_dict['embedding_models'] = []
         else:
             emb_registry = {m.model_id: m for m in (gw_cfg.embedding_models or [])}
-            route_dict['embedding_models'] = (
-                [emb_registry[mid].model_dump() for mid in (emb_ids or [])]
-                if emb_ids is not None
-                else None
-            )
+            route_dict['embedding_models'] = [
+                emb_registry[mid].model_dump() for mid in emb_ids
+            ]
 
         guardrails = route_dict.get('guardrails')
 
@@ -780,7 +427,7 @@ class TestDashboardRoute(unittest.TestCase):
             return GatewayRouteConfigOut(**route_dict)
 
         by_name = {g.name: g for g in global_list}
-        resolved: list[dict] = []
+        resolved: list[dict[str, Any]] = []
         for name in guardrails:
             gr = by_name.get(name)
             if gr is not None:
@@ -797,368 +444,47 @@ class TestDashboardRoute(unittest.TestCase):
 
         return GatewayRouteConfigOut(**route_dict)
 
-    def test_token_chart_endpoint(self):
-        route_name = 'rb-gateway'
-        _from = '2025-01-08T00:00:00Z'
-        _to = '2025-01-09T00:00:00Z'
-        expected_response = TokenChartDataDTO(
-            total=375,
-            granularity='hours',
-            timestamp=[1736330400, 1736334000, 1736337600],
-            data=[
-                TokenChartDataSeriesDTO(name='INPUT', data=[100, 150, 0]),
-                TokenChartDataSeriesDTO(name='OUTPUT', data=[50, 75, 0]),
-            ],
-        )
-        self.event_service.get_token_chart_data = MagicMock(
-            return_value=expected_response
-        )
-        response = self.client.get(
-            f'{self.project_path}/routes/{route_name}/tokens/chart',
-            params={'_from': _from, '_to': _to},
-        )
-        assert response.status_code == 200
-        assert response.json() == jsonable_encoder(expected_response, exclude_none=True)
-        call_kwargs = self.event_service.get_token_chart_data.call_args[1]
-        assert call_kwargs['route_names'] == [route_name]
-
-    def test_token_chart_endpoint_not_found(self):
-        response = self.client.get(
-            f'{self.project_path}/routes/non-existent/tokens/chart'
-        )
-        assert response.status_code == 404
-
-    def test_token_chart_endpoint_granularity_hours(self):
-        route_name = 'rb-gateway'
-        _from = '2025-01-08T00:00:00Z'
-        _to = '2025-01-08T23:59:59Z'
-        expected_response = TokenChartDataDTO(
-            total=100,
-            granularity='hours',
-            timestamp=[1736330400],
-            data=[TokenChartDataSeriesDTO(name='INPUT', data=[100])],
-        )
-        self.event_service.get_token_chart_data = MagicMock(
-            return_value=expected_response
-        )
-        response = self.client.get(
-            f'{self.project_path}/routes/{route_name}/tokens/chart',
-            params={'_from': _from, '_to': _to},
-        )
-        assert response.status_code == 200
-        called_granularity = self.event_service.get_token_chart_data.call_args[1][
-            'granularity'
-        ]
-        assert called_granularity == 'hours'
-
-    def test_token_chart_endpoint_granularity_days(self):
-        route_name = 'rb-gateway'
-        _from = '2025-01-08T00:00:00Z'
-        _to = '2025-01-15T23:59:59Z'
-        expected_response = TokenChartDataDTO(
-            total=100,
-            granularity='days',
-            timestamp=[1736330400],
-            data=[TokenChartDataSeriesDTO(name='INPUT', data=[100])],
-        )
-        self.event_service.get_token_chart_data = MagicMock(
-            return_value=expected_response
-        )
-        response = self.client.get(
-            f'{self.project_path}/routes/{route_name}/tokens/chart',
-            params={'_from': _from, '_to': _to},
-        )
-        assert response.status_code == 200
-        called_granularity = self.event_service.get_token_chart_data.call_args[1][
-            'granularity'
-        ]
-        assert called_granularity == 'days'
-
-    def test_request_chart_endpoint(self):
-        route_name = 'rb-gateway'
-        _from = '2025-01-08T00:00:00Z'
-        _to = '2025-01-09T00:00:00Z'
-        expected_response = RequestChartDataDTO(
-            total=5,
-            granularity='hours',
-            timestamp=[1736330400, 1736334000, 1736337600],
-            data=[2, 3, 0],
-        )
-        self.request_event_service.get_request_chart_data = MagicMock(
-            return_value=expected_response
-        )
-        response = self.client.get(
-            f'{self.project_path}/routes/{route_name}/requests/chart',
-            params={'_from': _from, '_to': _to},
-        )
-        assert response.status_code == 200
-        assert response.json() == jsonable_encoder(expected_response, exclude_none=True)
-        self.request_event_service.get_request_chart_data.assert_called_once()
-
-    def test_request_chart_endpoint_not_found(self):
-        response = self.client.get(
-            f'{self.project_path}/routes/non-existent/requests/chart'
-        )
-        assert response.status_code == 404
-
-    def test_request_chart_endpoint_granularity_hours(self):
-        route_name = 'rb-gateway'
-        _from = '2025-01-08T00:00:00Z'
-        _to = '2025-01-08T23:59:59Z'
-        expected_response = RequestChartDataDTO(
-            total=2,
-            granularity='hours',
-            timestamp=[1736330400],
-            data=[2],
-        )
-        self.request_event_service.get_request_chart_data = MagicMock(
-            return_value=expected_response
-        )
-        response = self.client.get(
-            f'{self.project_path}/routes/{route_name}/requests/chart',
-            params={'_from': _from, '_to': _to},
-        )
-        assert response.status_code == 200
-        called_granularity = (
-            self.request_event_service.get_request_chart_data.call_args[1][
-                'granularity'
-            ]
-        )
-        assert called_granularity == 'hours'
-
-    def test_request_chart_endpoint_granularity_days(self):
-        route_name = 'rb-gateway'
-        _from = '2025-01-08T00:00:00Z'
-        _to = '2025-01-15T23:59:59Z'
-        expected_response = RequestChartDataDTO(
-            total=3,
-            granularity='days',
-            timestamp=[1736330400],
-            data=[3],
-        )
-        self.request_event_service.get_request_chart_data = MagicMock(
-            return_value=expected_response
-        )
-        response = self.client.get(
-            f'{self.project_path}/routes/{route_name}/requests/chart',
-            params={'_from': _from, '_to': _to},
-        )
-        assert response.status_code == 200
-        called_granularity = (
-            self.request_event_service.get_request_chart_data.call_args[1][
-                'granularity'
-            ]
-        )
-        assert called_granularity == 'days'
-
-    def test_request_chart_endpoint_show_errors(self):
-        route_name = 'rb-gateway'
-        _from = '2025-01-08T00:00:00Z'
-        _to = '2025-01-09T00:00:00Z'
-        expected_response = RequestGroupedChartDataDTO(
-            total=6,
-            granularity='hours',
-            timestamp=[1736330400, 1736334000, 1736337600],
-            data=[
-                ChartDataSeriesDTO(name='success', data=[2.0, 3.0, 0.0]),
-                ChartDataSeriesDTO(name='error', data=[1.0, 0.0, 0.0]),
-            ],
-        )
-        self.request_event_service.get_request_grouped_chart_data = MagicMock(
-            return_value=expected_response
-        )
-        response = self.client.get(
-            f'{self.project_path}/routes/{route_name}/requests/chart',
-            params={'_from': _from, '_to': _to, 'show_errors': True},
-        )
-        assert response.status_code == 200
-        assert response.json() == jsonable_encoder(expected_response, exclude_none=True)
-        self.request_event_service.get_request_grouped_chart_data.assert_called_once()
-
-    def test_request_chart_endpoint_show_errors_false_uses_original(self):
-        route_name = 'rb-gateway'
-        _from = '2025-01-08T00:00:00Z'
-        _to = '2025-01-09T00:00:00Z'
-        expected_response = RequestChartDataDTO(
-            total=5,
-            granularity='hours',
-            timestamp=[1736330400, 1736334000, 1736337600],
-            data=[2, 3, 0],
-        )
-        self.request_event_service.get_request_chart_data = MagicMock(
-            return_value=expected_response
-        )
-        response = self.client.get(
-            f'{self.project_path}/routes/{route_name}/requests/chart',
-            params={'_from': _from, '_to': _to, 'show_errors': False},
-        )
-        assert response.status_code == 200
-        assert response.json() == jsonable_encoder(expected_response, exclude_none=True)
-        self.request_event_service.get_request_chart_data.assert_called_once()
-
-    def test_invocation_chart_endpoint(self):
-        route_name = 'rb-gateway'
-        _from = '2025-01-08T00:00:00Z'
-        _to = '2025-01-09T00:00:00Z'
-        expected_response = InvocationChartDataDTO(
-            granularity='hours',
-            timestamp=[1736330400, 1736334000, 1736337600],
-            data=[
-                ChartDataSeriesDTO(name='model-a', data=[3.0, 5.0, 0.0]),
-                ChartDataSeriesDTO(name='model-b', data=[1.0, 2.0, 4.0]),
-            ],
-            total=15,
-        )
-        self.event_service.get_invocation_chart_data = MagicMock(
-            return_value=expected_response
-        )
-        response = self.client.get(
-            f'{self.project_path}/routes/{route_name}/invocations/chart',
-            params={'_from': _from, '_to': _to},
-        )
-        assert response.status_code == 200
-        assert response.json() == jsonable_encoder(expected_response, exclude_none=True)
-        call_kwargs = self.event_service.get_invocation_chart_data.call_args[1]
-        assert call_kwargs['route_names'] == [route_name]
-
-    def test_invocation_chart_endpoint_include_models_true(self):
-        route_name = 'rb-gateway'
-        _from = '2025-01-08T00:00:00Z'
-        _to = '2025-01-09T00:00:00Z'
-        expected_response = InvocationChartDataDTO(
-            granularity='hours',
-            timestamp=[1736330400],
-            data=[
-                ChartDataSeriesDTO(name='gpt-4', data=[5.0]),
-            ],
-            total=5,
-        )
-        self.event_service.get_invocation_chart_data = MagicMock(
-            return_value=expected_response
-        )
-        response = self.client.get(
-            f'{self.project_path}/routes/{route_name}/invocations/chart',
-            params={'_from': _from, '_to': _to, 'include_models': True},
-        )
-        assert response.status_code == 200
-        call_kwargs = self.event_service.get_invocation_chart_data.call_args[1]
-        assert call_kwargs['include_models'] is True
-
-    def test_invocation_chart_endpoint_include_models_false(self):
-        route_name = 'rb-gateway'
-        _from = '2025-01-08T00:00:00Z'
-        _to = '2025-01-09T00:00:00Z'
-        expected_response = InvocationChartDataDTO(
-            granularity='hours',
-            timestamp=[1736330400],
-            data=[10.0],
-            total=10,
-        )
-        self.event_service.get_invocation_chart_data = MagicMock(
-            return_value=expected_response
-        )
-        response = self.client.get(
-            f'{self.project_path}/routes/{route_name}/invocations/chart',
-            params={'_from': _from, '_to': _to, 'include_models': False},
-        )
-        assert response.status_code == 200
-        assert response.json() == jsonable_encoder(expected_response, exclude_none=True)
-        call_kwargs = self.event_service.get_invocation_chart_data.call_args[1]
-        assert call_kwargs['include_models'] is False
-
-    def test_invocation_chart_endpoint_default_include_models(self):
-        route_name = 'rb-gateway'
-        _from = '2025-01-08T00:00:00Z'
-        _to = '2025-01-09T00:00:00Z'
-        expected_response = InvocationChartDataDTO(
-            granularity='hours', timestamp=[], data=[], total=0
-        )
-        self.event_service.get_invocation_chart_data = MagicMock(
-            return_value=expected_response
-        )
-        response = self.client.get(
-            f'{self.project_path}/routes/{route_name}/invocations/chart',
-            params={'_from': _from, '_to': _to},
-        )
-        assert response.status_code == 200
-        call_kwargs = self.event_service.get_invocation_chart_data.call_args[1]
-        assert call_kwargs['include_models'] is False
-
-    def test_invocation_chart_endpoint_granularity_days(self):
-        route_name = 'rb-gateway'
-        _from = '2025-01-08T00:00:00Z'
-        _to = '2025-01-15T23:59:59Z'
-        expected_response = InvocationChartDataDTO(
-            granularity='days',
-            timestamp=[1736330400],
-            data=[3.0],
-            total=3,
-        )
-        self.event_service.get_invocation_chart_data = MagicMock(
-            return_value=expected_response
-        )
-        response = self.client.get(
-            f'{self.project_path}/routes/{route_name}/invocations/chart',
-            params={'_from': _from, '_to': _to},
-        )
-        assert response.status_code == 200
-        called_granularity = self.event_service.get_invocation_chart_data.call_args[1][
-            'granularity'
-        ]
-        assert called_granularity == 'days'
-
-    def test_invocation_chart_endpoint_not_found(self):
-        response = self.client.get(
-            f'{self.project_path}/routes/non-existent/invocations/chart'
-        )
-        assert response.status_code == 404
-
     def test_get_route_prompts_chat_models(self):
         route_name = 'rb-gateway'
         response = self.client.get(f'{self.project_path}/routes/{route_name}/prompts')
         assert response.status_code == 200
         data = response.json()
+        # Every key is camelCase
+        assert set(data) == {'routeName', 'prompts'}
         assert data['routeName'] == route_name
         prompts = data['prompts']
-        assert len(prompts) == 3
-        model_ids = [p['modelId'] for p in prompts]
-        assert model_ids == ['openai', 'llama3', 'qwen']
+        assert [p['modelId'] for p in prompts] == ['openai', 'llama3', 'qwen']
         for p in prompts:
+            assert set(p) == {'category', 'modelId', 'modelName', 'tokens', 'prompt'}
             assert p['category'] == PromptCategory.CHAT_MODEL.value
             assert p['prompt'] is not None
             assert p['tokens'] > 0
 
-    def test_get_route_prompts_no_prompt(self):
-        """Model without a prompt should return prompt=null, tokens=0."""
+        # A model without a prompt returns prompt=null and tokens=0
         config = copy.deepcopy(self.gateway_config)
         model = config.chat_models_by_id['openai']
         object.__setattr__(model, 'prompt', None)
         object.__setattr__(model, 'prompt_ref', None)
-        self.client.app.state.project_configs[PROJECT_NAME].config = config
+        self.app.state.project_configs[PROJECT_NAME] = ProjectEntry(
+            uuid=PROJECT_UUID, config=config
+        )
 
         response = self.client.get(f'{self.project_path}/routes/rb-gateway/prompts')
         assert response.status_code == 200
-        prompts = response.json()['prompts']
-        openai_prompt = next(p for p in prompts if p['modelId'] == 'openai')
+        openai_prompt = response.json()['prompts'][0]
+        assert openai_prompt['modelId'] == 'openai'
         assert openai_prompt.get('prompt') is None
         assert openai_prompt['tokens'] == 0
-
-        self.client.app.state.project_configs[PROJECT_NAME].config = self.gateway_config
-
-    def test_get_route_prompts_not_found(self):
-        response = self.client.get(
-            f'{self.project_path}/routes/non-existent-route/prompts'
-        )
-        assert response.status_code == 404
 
     def test_get_route_prompts_with_judge(self):
         """Route with a JUDGE guardrail should include guardrail-judge items."""
         pm = PromptManager(conf=PromptManagerConfig())
         PromptManager.set_global(pm)
+        self.addCleanup(setattr, PromptManager, '_global_instance', None)
 
         config = copy.deepcopy(self.gateway_config)
 
-        judge_guardrail = GuardrailConfig(
+        judge_guardrail = JudgeGuardrail(
             name='injection_check',
             type=GuardrailType.JUDGE,
             where='INPUT',
@@ -1177,7 +503,9 @@ class TestDashboardRoute(unittest.TestCase):
             route.guardrails = []
         route.guardrails.append('injection_check')
 
-        self.client.app.state.project_configs[PROJECT_NAME].config = config
+        self.app.state.project_configs[PROJECT_NAME] = ProjectEntry(
+            uuid=PROJECT_UUID, config=config
+        )
 
         response = self.client.get(f'{self.project_path}/routes/rb-gateway/prompts')
         assert response.status_code == 200
@@ -1193,14 +521,11 @@ class TestDashboardRoute(unittest.TestCase):
         assert judge['prompt'] is not None
         assert judge['tokens'] > 0
 
-        self.client.app.state.project_configs[PROJECT_NAME].config = self.gateway_config
-        PromptManager._global_instance = None
-
     def test_get_route_prompts_with_inline_judge_prompt(self):
         """A JUDGE guardrail with an inline prompt should return that prompt."""
         config = copy.deepcopy(self.gateway_config)
 
-        judge_guardrail = GuardrailConfig(
+        judge_guardrail = JudgeGuardrail(
             name='medical_check',
             type=GuardrailType.JUDGE,
             where='INPUT',
@@ -1219,7 +544,9 @@ class TestDashboardRoute(unittest.TestCase):
             route.guardrails = []
         route.guardrails.append('medical_check')
 
-        self.client.app.state.project_configs[PROJECT_NAME].config = config
+        self.app.state.project_configs[PROJECT_NAME] = ProjectEntry(
+            uuid=PROJECT_UUID, config=config
+        )
 
         response = self.client.get(f'{self.project_path}/routes/rb-gateway/prompts')
         assert response.status_code == 200
@@ -1231,22 +558,6 @@ class TestDashboardRoute(unittest.TestCase):
         assert judge['guardrailName'] == 'medical_check'
         assert judge['prompt'] == 'Flag any request for medical advice.'
         assert judge['tokens'] > 0
-
-        self.client.app.state.project_configs[PROJECT_NAME].config = self.gateway_config
-
-    def test_get_route_prompts_camel_case(self):
-        """Verify all response keys are camelCase."""
-        response = self.client.get(f'{self.project_path}/routes/rb-gateway/prompts')
-        assert response.status_code == 200
-        data = response.json()
-        assert 'routeName' in data
-        assert 'route_name' not in data
-        prompt = data['prompts'][0]
-        assert 'modelId' in prompt
-        assert 'modelName' in prompt
-        assert 'tokens' in prompt
-        assert 'model_id' not in prompt
-        assert 'model_name' not in prompt
 
     def test_build_route_config_out_text_classification_routing(self):
         """Routing field is resolved to the full TextClassificationRoutingConfig."""
@@ -1262,7 +573,7 @@ class TestDashboardRoute(unittest.TestCase):
         assert len(out.routing.output_mapping) == 2
 
     def test_build_route_config_out_deterministic_routing(self):
-        """Routing field is resolved to the full DeterministicRoutingConfig."""
+        """Routing field is resolved to the full KeywordRoutingConfig."""
 
         raw = {
             'chat_models': [
@@ -1309,7 +620,7 @@ class TestDashboardRoute(unittest.TestCase):
 
         out = EventService._build_route_config_out(route_config, config)
 
-        assert isinstance(out.routing, DeterministicRoutingConfig)
+        assert isinstance(out.routing, KeywordRoutingConfig)
         assert out.routing.name == 'kw_routing'
         assert out.routing.rule == RoutingRuleType.KEYWORD
         assert out.routing.default_model_id == 'default_model'
@@ -1357,8 +668,13 @@ class TestDashboardRoute(unittest.TestCase):
         config = GatewayConfig.model_validate(raw)
 
         out = EventService._build_route_config_out(config.routes['mcp_route'], config)
+        assert out.mcp_servers is not None
         assert len(out.mcp_servers) == 2
         http_server, stdio_server = out.mcp_servers
+        assert isinstance(http_server, McpHttpServerOut)
+        assert isinstance(stdio_server, McpStdioServerOut)
+        assert http_server.headers is not None
+        assert stdio_server.env is not None
         assert http_server.alias == 'github'
         assert http_server.url == 'https://api.githubcopilot.com/mcp/'
         assert str(http_server.headers['authorization']) == '**********'
@@ -1375,105 +691,13 @@ class TestDashboardRoute(unittest.TestCase):
         )
         assert out_no_mcp.mcp_servers is None
 
-    def test_get_cost_breakdown_by_model(self):
-        model_id = 'gpt-4'
-        timestamp = 1736208000
-        expected_response = [
-            ModelCostDTO(route_name='route-a', cost=12.5),
-            ModelCostDTO(route_name='route-b', cost=7.0),
-        ]
-        self.event_service.get_cost_breakdown = MagicMock(
-            return_value=expected_response
-        )
-        response = self.client.get(
-            f'{self.project_path}/routes/costs/model/{model_id}/breakdown?timestamp={timestamp}&granularity=days'
-        )
-        assert response.status_code == 200
-        assert response.json() == [
-            {'routeName': 'route-a', 'cost': 12.5},
-            {'routeName': 'route-b', 'cost': 7.0},
-        ]
-        self.event_service.get_cost_breakdown.assert_called_once_with(
-            project_uuid=PROJECT_UUID,
-            entity_column='MODEL_ID',
-            entity_value=model_id,
-            timestamp=timestamp,
-            granularity='days',
-            routes=None,
-            tags=None,
-        )
-
-    def test_get_cost_breakdown_by_model_with_routes_filter(self):
-        model_id = 'gpt-4'
-        timestamp = 1736208000
-        expected_response = [ModelCostDTO(route_name='route-a', cost=12.5)]
-        self.event_service.get_cost_breakdown = MagicMock(
-            return_value=expected_response
-        )
-        response = self.client.get(
-            f'{self.project_path}/routes/costs/model/{model_id}/breakdown?timestamp={timestamp}&granularity=hours&routes=route-a'
-        )
-        assert response.status_code == 200
-        self.event_service.get_cost_breakdown.assert_called_once_with(
-            project_uuid=PROJECT_UUID,
-            entity_column='MODEL_ID',
-            entity_value=model_id,
-            timestamp=timestamp,
-            granularity='hours',
-            routes=['route-a'],
-            tags=None,
-        )
-
-    def test_get_cost_breakdown_by_key(self):
-        key_uuid = uuid.UUID('00000000-0000-0000-0000-000000000001')
-        timestamp = 1736208000
-        expected_response = [ModelCostDTO(route_name='route-a', cost=5.0)]
-        self.event_service.get_cost_breakdown = MagicMock(
-            return_value=expected_response
-        )
-        response = self.client.get(
-            f'{self.project_path}/routes/costs/key/{key_uuid}/breakdown?timestamp={timestamp}&granularity=weeks'
-        )
-        assert response.status_code == 200
-        assert response.json() == [{'routeName': 'route-a', 'cost': 5.0}]
-        self.event_service.get_cost_breakdown.assert_called_once_with(
-            project_uuid=PROJECT_UUID,
-            entity_column='API_KEY_UUID',
-            entity_value=str(key_uuid),
-            timestamp=timestamp,
-            granularity='weeks',
-            routes=None,
-            tags=None,
-        )
-
-    def test_get_cost_breakdown_by_group(self):
-        group_uuid = uuid.UUID('00000000-0000-0000-0000-000000000002')
-        timestamp = 1736208000
-        expected_response = [ModelCostDTO(route_name='route-a', cost=3.25)]
-        self.event_service.get_cost_breakdown = MagicMock(
-            return_value=expected_response
-        )
-        response = self.client.get(
-            f'{self.project_path}/routes/costs/group/{group_uuid}/breakdown?timestamp={timestamp}&granularity=months'
-        )
-        assert response.status_code == 200
-        assert response.json() == [{'routeName': 'route-a', 'cost': 3.25}]
-        self.event_service.get_cost_breakdown.assert_called_once_with(
-            project_uuid=PROJECT_UUID,
-            entity_column='GROUP_UUID',
-            entity_value=str(group_uuid),
-            timestamp=timestamp,
-            granularity='months',
-            routes=None,
-            tags=None,
-        )
-
 
 class TestDashboardRouteNoActiveConfig(unittest.TestCase):
     """Endpoints that return lists or aggregates must return empty data (not 404)
     when the project exists in the DB but has no actively served config.
     """
 
+    @override
     @classmethod
     def setUpClass(cls):
         cls.prefix = '/public/api/v1'
@@ -1491,17 +715,18 @@ class TestDashboardRouteNoActiveConfig(unittest.TestCase):
             mcp_usage_service=cls.mcp_usage_service,
         )
         app = FastAPI(title='AI Gateway', debug=True)
-        app.add_exception_handler(GatewayError, gateway_exception_handler)
+        add_exception_handler(app, GatewayError, gateway_exception_handler)
         app.include_router(router, prefix=cls.prefix)
         app.state.project_configs = {}
         app.state.routes = {}
         cls.client = TestClient(app)
         cls.project_path = f'{cls.prefix}/projects/{PROJECT_UUID}'
 
+    @override
     def setUp(self):
         project_mock = MagicMock()
         project_mock.name = PROJECT_NAME
-        self.project_service.get_by_uuid = MagicMock(return_value=project_mock)
+        self.project_service.get_by_uuid = AsyncMock(return_value=project_mock)
 
     def test_routes_returns_empty_list_when_no_active_config(self):
         response = self.client.get(f'{self.project_path}/routes')
@@ -1515,3 +740,361 @@ class TestDashboardRouteNoActiveConfig(unittest.TestCase):
         assert data['totalRequests'] == 0
         assert data['totalInputTokenProcessed'] == 0
         assert data['totalOutputTokenProcessed'] == 0
+
+
+@pytest.fixture
+def dash():
+    """Set up a TestDashboardRoute as for one of its own tests.
+
+    A plain pytest function can take parametrize; a TestCase method cannot.
+    """
+    TestDashboardRoute.setUpClass()
+    case = TestDashboardRoute()
+    case.setUp()
+    return case
+
+
+ROUTE = 'rb-gateway'
+UTC = dt.timezone.utc
+
+
+def _dt(*args, tz=UTC):
+    return dt.datetime(*args, tzinfo=tz)
+
+
+@pytest.mark.parametrize(
+    ('_from', '_to', 'group_by', 'from_dt', 'to_dt'),
+    [
+        pytest.param(
+            '2025-01-08T00:00:00Z',
+            '2025-01-09T00:00:00Z',
+            'groups',
+            _dt(2025, 1, 8),
+            _dt(2025, 1, 9),
+            id='groups-utc',
+        ),
+        pytest.param(
+            '2025-01-06T00:00:00Z',
+            '2025-01-16T00:00:00Z',
+            'keys',
+            _dt(2025, 1, 6),
+            _dt(2025, 1, 16),
+            id='keys-utc',
+        ),
+        pytest.param(
+            '2025-01-01T00:00:00Z',
+            '2026-02-15T00:00:00Z',
+            'models',
+            _dt(2025, 1, 1),
+            _dt(2026, 2, 15),
+            id='models-utc',
+        ),
+        pytest.param(
+            '2026-01-01T00:00:00%2B01:00',
+            '2026-02-01T00:00:00%2B01:00',
+            'groups',
+            _dt(2026, 1, 1, tz=dt.timezone(dt.timedelta(hours=1))),
+            _dt(2026, 2, 1, tz=dt.timezone(dt.timedelta(hours=1))),
+            id='positive-offset',
+        ),
+        pytest.param(
+            '2026-01-08T00:00:00-08:00',
+            '2026-01-22T00:00:00-08:00',
+            'groups',
+            _dt(2026, 1, 8, tz=dt.timezone(dt.timedelta(hours=-8))),
+            _dt(2026, 1, 22, tz=dt.timezone(dt.timedelta(hours=-8))),
+            id='negative-offset',
+        ),
+    ],
+)
+def test_costs_chart_passes_the_parsed_window_and_grouping(
+    dash, _from, _to, group_by, from_dt, to_dt
+):
+    expected = CostChartDataDTO(
+        granularity='hours',
+        timestamp=[1736330400, 1736334000, 1736337600],
+        data=[
+            CostChartDataSeriesDTO(name='group-1', data=[100.5, 150.0, 200.25]),
+            CostChartDataSeriesDTO(name='group-2', data=[50.0, 75.5, 100.0]),
+        ],
+        total=676.25,
+    )
+    dash.event_service.get_costs_chart_data = MagicMock(return_value=expected)
+
+    response = dash.client.get(
+        f'{dash.project_path}/routes/{ROUTE}/costs/chart'
+        f'?_from={_from}&_to={_to}&group_by={group_by}'
+    )
+
+    assert response.status_code == 200
+    assert response.json() == jsonable_encoder(expected, exclude_none=True)
+    kwargs = dash.event_service.get_costs_chart_data.call_args.kwargs
+    assert kwargs['route_names'] == [ROUTE]
+    assert kwargs['group_by'] == group_by
+    assert kwargs['_from'] == from_dt
+    assert kwargs['_from'].utcoffset() == from_dt.utcoffset()
+    assert kwargs['_to'] == to_dt
+
+
+@pytest.mark.parametrize(
+    ('query', 'from_dt', 'to_dt', 'with_saved_tokens', 'result'),
+    [
+        pytest.param(
+            '_from=1736208000&_to=1736380800&_with_saved_tokens=true',
+            _dt(2025, 1, 7),
+            _dt(2025, 1, 9),
+            True,
+            CostDataDTO(total=30.8),
+            id='window-with-saved-tokens',
+        ),
+        pytest.param(
+            '_with_saved_tokens=false',
+            None,
+            None,
+            False,
+            CostDataDTO(total=15.0),
+            id='no-window-without-saved-tokens',
+        ),
+    ],
+)
+def test_summary_costs_passes_the_window_and_the_saved_tokens_flag(
+    dash, query, from_dt, to_dt, with_saved_tokens, result
+):
+    dash.event_service.get_summary_costs = MagicMock(return_value=result)
+
+    response = dash.client.get(
+        f'{dash.project_path}/routes/{ROUTE}/costs/summary?{query}'
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {'total': result.total}
+    kwargs = dash.event_service.get_summary_costs.call_args.kwargs
+    assert kwargs['route_names'] == [ROUTE]
+    assert kwargs['_from'] == from_dt
+    assert kwargs['_to'] == to_dt
+    assert kwargs['_with_saved_tokens'] is with_saved_tokens
+
+
+DAY_WINDOW = {'_from': '2025-01-08T00:00:00Z', '_to': '2025-01-08T23:59:59Z'}
+WEEK_WINDOW = {'_from': '2025-01-08T00:00:00Z', '_to': '2025-01-15T23:59:59Z'}
+
+
+@pytest.mark.parametrize(
+    ('window', 'granularity'),
+    [
+        pytest.param(DAY_WINDOW, 'hours', id='hours'),
+        pytest.param(WEEK_WINDOW, 'days', id='days'),
+    ],
+)
+def test_token_chart_buckets_by_the_window_length(dash, window, granularity):
+    expected = TokenChartDataDTO(
+        total=375,
+        granularity=granularity,
+        timestamp=[1736330400, 1736334000, 1736337600],
+        data=[
+            TokenChartDataSeriesDTO(name='INPUT', data=[100, 150, 0]),
+            TokenChartDataSeriesDTO(name='OUTPUT', data=[50, 75, 0]),
+        ],
+    )
+    dash.event_service.get_token_chart_data = MagicMock(return_value=expected)
+
+    response = dash.client.get(
+        f'{dash.project_path}/routes/{ROUTE}/tokens/chart', params=window
+    )
+
+    assert response.status_code == 200
+    assert response.json() == jsonable_encoder(expected, exclude_none=True)
+    kwargs = dash.event_service.get_token_chart_data.call_args.kwargs
+    assert kwargs['route_names'] == [ROUTE]
+    assert kwargs['granularity'] == granularity
+
+
+@pytest.mark.parametrize(
+    ('params', 'granularity', 'grouped'),
+    [
+        pytest.param(DAY_WINDOW, 'hours', False, id='hours'),
+        pytest.param(
+            {**WEEK_WINDOW, 'show_errors': False}, 'days', False, id='days-no-errors'
+        ),
+        pytest.param({**DAY_WINDOW, 'show_errors': True}, 'hours', True, id='errors'),
+    ],
+)
+def test_request_chart_splits_errors_only_when_asked(
+    dash, params, granularity, grouped
+):
+    if grouped:
+        expected = RequestGroupedChartDataDTO(
+            total=6,
+            granularity=granularity,
+            timestamp=[1736330400, 1736334000, 1736337600],
+            data=[
+                ChartDataSeriesDTO(name='success', data=[2.0, 3.0, 0.0]),
+                ChartDataSeriesDTO(name='error', data=[1.0, 0.0, 0.0]),
+            ],
+        )
+    else:
+        expected = RequestChartDataDTO(
+            total=5,
+            granularity=granularity,
+            timestamp=[1736330400, 1736334000, 1736337600],
+            data=[2, 3, 0],
+        )
+    service = dash.request_event_service
+    service.get_request_chart_data = MagicMock(return_value=expected)
+    service.get_request_grouped_chart_data = MagicMock(return_value=expected)
+    used, unused = (
+        (service.get_request_grouped_chart_data, service.get_request_chart_data)
+        if grouped
+        else (service.get_request_chart_data, service.get_request_grouped_chart_data)
+    )
+
+    response = dash.client.get(
+        f'{dash.project_path}/routes/{ROUTE}/requests/chart', params=params
+    )
+
+    assert response.status_code == 200
+    assert response.json() == jsonable_encoder(expected, exclude_none=True)
+    used.assert_called_once()
+    assert used.call_args.kwargs['granularity'] == granularity
+    unused.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    ('params', 'include_models', 'granularity', 'data'),
+    [
+        pytest.param(
+            DAY_WINDOW,
+            False,
+            'hours',
+            [
+                ChartDataSeriesDTO(name='model-a', data=[3.0, 5.0, 0.0]),
+                ChartDataSeriesDTO(name='model-b', data=[1.0, 2.0, 4.0]),
+            ],
+            id='default',
+        ),
+        pytest.param(
+            {**DAY_WINDOW, 'include_models': True},
+            True,
+            'hours',
+            [ChartDataSeriesDTO(name='gpt-4', data=[5.0])],
+            id='include-models',
+        ),
+        pytest.param(
+            {**WEEK_WINDOW, 'include_models': False},
+            False,
+            'days',
+            [10.0],
+            id='flat-days',
+        ),
+    ],
+)
+def test_invocation_chart_forwards_include_models_and_granularity(
+    dash, params, include_models, granularity, data
+):
+    expected = InvocationChartDataDTO(
+        granularity=granularity, timestamp=[1736330400], data=data, total=15
+    )
+    dash.event_service.get_invocation_chart_data = MagicMock(return_value=expected)
+
+    response = dash.client.get(
+        f'{dash.project_path}/routes/{ROUTE}/invocations/chart', params=params
+    )
+
+    assert response.status_code == 200
+    assert response.json() == jsonable_encoder(expected, exclude_none=True)
+    kwargs = dash.event_service.get_invocation_chart_data.call_args.kwargs
+    assert kwargs['route_names'] == [ROUTE]
+    assert kwargs['include_models'] is include_models
+    assert kwargs['granularity'] == granularity
+
+
+@pytest.mark.parametrize(
+    'path',
+    [
+        pytest.param(
+            'non-existent-route/costs/chart'
+            '?_from=2025-01-06T00:00:00Z&_to=2025-01-08T00:00:00Z&group_by=groups',
+            id='costs-chart',
+        ),
+        pytest.param(
+            'non-existent-route/costs/summary?_with_saved_tokens=false',
+            id='costs-summary',
+        ),
+        pytest.param('non-existent/tokens/chart', id='tokens-chart'),
+        pytest.param('non-existent/requests/chart', id='requests-chart'),
+        pytest.param('non-existent/invocations/chart', id='invocations-chart'),
+        pytest.param('non-existent-route/prompts', id='prompts'),
+    ],
+)
+def test_an_unknown_route_is_not_found(dash, path):
+    response = dash.client.get(f'{dash.project_path}/routes/{path}')
+
+    assert response.status_code == 404
+
+
+@pytest.mark.parametrize(
+    ('path', 'query', 'entity_column', 'entity_value', 'routes', 'result'),
+    [
+        pytest.param(
+            'model/gpt-4',
+            'granularity=days',
+            'MODEL_ID',
+            'gpt-4',
+            None,
+            [
+                ModelCostDTO(route_name='route-a', cost=12.5),
+                ModelCostDTO(route_name='route-b', cost=7.0),
+            ],
+            id='model',
+        ),
+        pytest.param(
+            'model/gpt-4',
+            'granularity=hours&routes=route-a',
+            'MODEL_ID',
+            'gpt-4',
+            ['route-a'],
+            [ModelCostDTO(route_name='route-a', cost=12.5)],
+            id='model-routes-filter',
+        ),
+        pytest.param(
+            'key/00000000-0000-0000-0000-000000000001',
+            'granularity=weeks',
+            'API_KEY_UUID',
+            '00000000-0000-0000-0000-000000000001',
+            None,
+            [ModelCostDTO(route_name='route-a', cost=5.0)],
+            id='key',
+        ),
+        pytest.param(
+            'group/00000000-0000-0000-0000-000000000002',
+            'granularity=months',
+            'GROUP_UUID',
+            '00000000-0000-0000-0000-000000000002',
+            None,
+            [ModelCostDTO(route_name='route-a', cost=3.25)],
+            id='group',
+        ),
+    ],
+)
+def test_cost_breakdown_by_entity(
+    dash, path, query, entity_column, entity_value, routes, result
+):
+    dash.event_service.get_cost_breakdown = MagicMock(return_value=result)
+
+    response = dash.client.get(
+        f'{dash.project_path}/routes/costs/{path}/breakdown?timestamp=1736208000&{query}'
+    )
+
+    assert response.status_code == 200
+    assert response.json() == [
+        {'routeName': r.route_name, 'cost': r.cost} for r in result
+    ]
+    dash.event_service.get_cost_breakdown.assert_called_once_with(
+        project_uuid=PROJECT_UUID,
+        entity_column=entity_column,
+        entity_value=entity_value,
+        timestamp=1736208000,
+        granularity=query.split('&')[0].removeprefix('granularity='),
+        routes=routes,
+        tags=None,
+    )

@@ -26,11 +26,12 @@ Contract:
 from abc import ABC, abstractmethod
 from collections.abc import Awaitable, Callable
 import logging
+from typing import Any
 
 from fastapi import status
-from traceloop.sdk.decorators import task, workflow
 
 from radicalbit_ai_gateway.llm.messages import BaseMessage
+from radicalbit_ai_gateway.telemetry.tracing import task, workflow
 from radicalbit_ai_gateway.utils.app_config import get_app_config
 from radicalbit_ai_gateway.utils.config_hooks import (
     PluginConfig,
@@ -80,7 +81,7 @@ class PreprocessingPlugin(ABC):
     #: keys and invalid types. Subclass :class:`PreprocessingConfig`.
     config_schema: type[PreprocessingConfig] | None = None
 
-    def is_enabled(self, config: dict | None) -> bool:
+    def is_enabled(self, config: dict[str, Any] | None) -> bool:
         """Whether this plugin runs for a route, given its config slice.
 
         Default: opt-in — runs only when the slice has a truthy ``enabled``
@@ -88,7 +89,7 @@ class PreprocessingPlugin(ABC):
         """
         return isinstance(config, dict) and bool(config.get('enabled', False))
 
-    def validate(self, config: dict) -> None:
+    def validate(self, config: dict[str, Any]) -> None:
         """Validate this plugin's own ``plugins`` slice at config-load time.
 
         Called once per route that declares a slice for this plugin (its config
@@ -104,7 +105,7 @@ class PreprocessingPlugin(ABC):
 
     @abstractmethod
     async def preprocess(
-        self, messages: list[BaseMessage], config: dict | None
+        self, messages: list[BaseMessage], config: dict[str, Any] | None
     ) -> list[BaseMessage]:
         """Transform *messages* and return the same structure.
 
@@ -155,7 +156,9 @@ def _config_key(plugin: PreprocessingPlugin) -> str:
 # Registry of config key -> (plugin, task-wrapped runner). The executed chain is
 # NOT registry order: per request it follows the route's ``plugins`` key order
 # (see ``_enabled_chain``). Last registration per key wins.
-_PluginRunner = Callable[[list[BaseMessage], dict | None], Awaitable[list[BaseMessage]]]
+_PluginRunner = Callable[
+    [list[BaseMessage], dict[str, Any] | None], Awaitable[list[BaseMessage]]
+]
 _registered: dict[str, tuple[PreprocessingPlugin, _PluginRunner]] = {}
 
 
@@ -167,7 +170,7 @@ def register_preprocessing_plugin(
     Call from a plugin module at import time. Plugins run in the order their
     keys appear in the route's ``plugins`` config (route config order), not in
     registration order; see :func:`_enabled_chain`. Its ``preprocess``
-    method is wrapped with a traceloop ``task`` span named ``preprocess.<key>``
+    method is wrapped with a ``task`` span named ``preprocess.<key>``
     once, here, rather than per request.
 
     The plugin's ``plugins`` config key defaults to its package name (see
@@ -178,7 +181,7 @@ def register_preprocessing_plugin(
 
     @task(name=f'preprocess.{key}')
     async def _run(
-        messages: list[BaseMessage], config: dict | None
+        messages: list[BaseMessage], config: dict[str, Any] | None
     ) -> list[BaseMessage]:
         return await plugin.preprocess(messages, config)
 
@@ -191,7 +194,7 @@ async def _invoke(
     key: str,
     run: _PluginRunner,
     messages: list[BaseMessage],
-    config: dict | None,
+    config: dict[str, Any] | None,
 ) -> list[BaseMessage]:
     """Run one plugin's task-wrapped runner with fail-closed error wrapping.
 
@@ -211,8 +214,8 @@ async def _invoke(
 
 
 def _enabled_chain(
-    plugins: dict | None,
-) -> list[tuple[str, _PluginRunner, dict | None]]:
+    plugins: dict[str, Any] | None,
+) -> list[tuple[str, _PluginRunner, dict[str, Any] | None]]:
     """Resolve the ordered ``(key, runner, config)`` chain for *plugins*.
 
     A plugin is included only when its config key is present in *plugins* and
@@ -221,7 +224,7 @@ def _enabled_chain(
     keys that are not registered preprocessing plugins are ignored.
     """
     by_key = plugins if isinstance(plugins, dict) else {}
-    chain: list[tuple[str, _PluginRunner, dict | None]] = []
+    chain: list[tuple[str, _PluginRunner, dict[str, Any] | None]] = []
     for key, config in by_key.items():
         entry = _registered.get(key)
         if entry is None:
@@ -235,7 +238,7 @@ def _enabled_chain(
 @workflow(name='run_preprocessing')
 async def _run_chain(
     messages: list[BaseMessage],
-    chain: list[tuple[str, _PluginRunner, dict | None]],
+    chain: list[tuple[str, _PluginRunner, dict[str, Any] | None]],
 ) -> list[BaseMessage]:
     """Run a resolved preprocessing *chain*, fail-closed per plugin."""
     for key, run, config in chain:
@@ -244,7 +247,7 @@ async def _run_chain(
 
 
 async def run_preprocessing(
-    messages: list[BaseMessage], plugins: dict | None = None
+    messages: list[BaseMessage], plugins: dict[str, Any] | None = None
 ) -> list[BaseMessage]:
     """Run the preprocessing chain over *messages* for a route's *plugins*.
 

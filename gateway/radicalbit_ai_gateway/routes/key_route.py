@@ -1,12 +1,12 @@
 import asyncio
+from collections.abc import AsyncIterator
 import logging
-from typing import Annotated
+from typing import Annotated, Any
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query
 from fastapi.exceptions import RequestValidationError
 from fastapi.sse import EventSourceResponse
-from starlette.responses import StreamingResponse
 
 from radicalbit_ai_gateway.models.auth_dto import (
     GroupFullOut,
@@ -24,11 +24,12 @@ from radicalbit_ai_gateway.models.credential_limiting import (
     CredentialLimitValueIn,
 )
 from radicalbit_ai_gateway.models.credential_rotation import GracePeriodOutOfBoundsError
+from radicalbit_ai_gateway.models.error_dto import error_responses
 from radicalbit_ai_gateway.models.gateway_route_config import GatewayRouteConfig
 from radicalbit_ai_gateway.route_meta import route_meta
+from radicalbit_ai_gateway.routes.dependencies import get_route_configs
 from radicalbit_ai_gateway.services.key_service import KeyService
 from radicalbit_ai_gateway.utils.app_config import get_app_config
-from radicalbit_ai_gateway.utils.dependencies import get_route_configs
 from radicalbit_ai_gateway.utils.exceptions import CredentialLimitValueError
 
 app_config = get_app_config()
@@ -39,25 +40,38 @@ logger = logging.getLogger(app_config.log_config.logger_name)
 class KeyRoute:
     @staticmethod
     def get_key_router(key_service: KeyService) -> APIRouter:
-        router = APIRouter(tags=['key_api'])
+        router = APIRouter(tags=['credentials'])
 
-        @router.post('/keys', status_code=201, response_model=KeyFullOut)
+        @router.post(
+            '/keys',
+            status_code=201,
+            response_model=KeyFullOut,
+            operation_id='credentials_create',
+            responses=error_responses(409),
+        )
         @route_meta(entity_type='KEY', response_uuid_field='uuid')
-        def create_key(
+        async def create_key(
             key_in: KeyCreateIn,
         ):
-            key = key_service.create_key(key_in)
+            """Create a credential. The response is the only one carrying its value."""
+            key = await key_service.create_key(key_in)
             logger.info('Created key %s', key.uuid)
             return key
 
-        @router.get('/keys', status_code=200, response_model=list[KeyFullOut])
-        def get_all(
+        @router.get(
+            '/keys',
+            status_code=200,
+            response_model=list[KeyFullOut],
+            operation_id='credentials_list',
+        )
+        async def get_all(
             include_groups: bool = False,
             only_unassigned: bool = Query(False),
             include_limits: bool = Query(False),
             route_configs: dict[str, GatewayRouteConfig] = Depends(get_route_configs),
         ):
-            return key_service.get_all(
+            """List the credentials."""
+            return await key_service.get_all(
                 include_groups, only_unassigned, include_limits, route_configs
             )
 
@@ -68,7 +82,7 @@ class KeyRoute:
         )
         async def stream_limits_consumption(
             keys: Annotated[list[UUID] | None, Query()] = None,
-        ) -> StreamingResponse:
+        ) -> AsyncIterator[dict[str, dict[str, Any]]]:
             while True:
                 consumption = await key_service.get_limits_consumption(keys or [])
                 yield {
@@ -77,34 +91,55 @@ class KeyRoute:
                 }
                 await asyncio.sleep(10)
 
-        @router.get('/keys/{key_uuid}', status_code=200, response_model=KeyFullOut)
-        def get_key_by_uuid(
+        @router.get(
+            '/keys/{key_uuid}',
+            status_code=200,
+            response_model=KeyFullOut,
+            operation_id='credentials_get',
+            responses=error_responses(404),
+        )
+        async def get_key_by_uuid(
             key_uuid: UUID,
             include_groups: bool = False,
             include_limits: bool = Query(False),
             route_configs: dict[str, GatewayRouteConfig] = Depends(get_route_configs),
         ):
-            return key_service.get_key_by_uuid(
+            """Get a credential."""
+            return await key_service.get_key_by_uuid(
                 key_uuid, include_groups, include_limits, route_configs
             )
 
         @router.patch('/keys/{key_uuid}', status_code=200, response_model=KeyFullOut)
         @route_meta(entity_type='KEY', entity_uuid_param='key_uuid')
-        def update_key(key_uuid: UUID, key_in: KeyUpdateIn):
-            return key_service.update_key_name(key_uuid, key_in)
+        async def update_key(key_uuid: UUID, key_in: KeyUpdateIn):
+            return await key_service.update_key_name(key_uuid, key_in)
 
-        @router.delete('/keys/{key_uuid}', status_code=200, response_model=KeyFullOut)
-        @route_meta(entity_type='KEY', entity_uuid_param='key_uuid')
-        def delete_key(key_uuid: UUID, include_groups: bool = Query(False)):
-            return key_service.delete_key(key_uuid, include_groups)
-
-        @router.post(
-            '/keys/{key_uuid}/rotation', status_code=200, response_model=KeyFullOut
+        @router.delete(
+            '/keys/{key_uuid}',
+            status_code=200,
+            response_model=KeyFullOut,
+            operation_id='credentials_delete',
+            responses=error_responses(404, 409),
         )
         @route_meta(entity_type='KEY', entity_uuid_param='key_uuid')
-        def rotate_key(key_uuid: UUID, rotation_in: KeyRotationIn):
+        async def delete_key(key_uuid: UUID, include_groups: bool = Query(False)):
+            """Delete a credential: it stops authenticating at once."""
+            return await key_service.delete_key(key_uuid, include_groups)
+
+        @router.post(
+            '/keys/{key_uuid}/rotation',
+            status_code=200,
+            response_model=KeyFullOut,
+            operation_id='credentials_rotate',
+            responses=error_responses(404, 405, 409),
+        )
+        @route_meta(entity_type='KEY', entity_uuid_param='key_uuid')
+        async def rotate_key(key_uuid: UUID, rotation_in: KeyRotationIn):
+            """Give a credential a new value. The previous value keeps
+            authenticating for the grace period; null ends it at once.
+            """
             try:
-                key = key_service.rotate_key(key_uuid, rotation_in)
+                key = await key_service.rotate_key(key_uuid, rotation_in)
             except GracePeriodOutOfBoundsError as e:
                 # Bounds that depend on the credential's expiry: same shape as the
                 # body's own validation errors
@@ -124,12 +159,17 @@ class KeyRoute:
             return key
 
         @router.delete(
-            '/keys/{key_uuid}/rotation', status_code=200, response_model=KeyFullOut
+            '/keys/{key_uuid}/rotation',
+            status_code=200,
+            response_model=KeyFullOut,
+            operation_id='credentials_end_grace_period',
+            responses=error_responses(404, 409),
         )
         # Ends the grace period: an update of the credential, not its deletion
         @route_meta(entity_type='KEY', entity_uuid_param='key_uuid', action='UPDATE')
-        def end_grace_period(key_uuid: UUID):
-            key = key_service.end_grace_period(key_uuid)
+        async def end_grace_period(key_uuid: UUID):
+            """End a rotation's grace period: the previous value stops authenticating."""
+            key = await key_service.end_grace_period(key_uuid)
             logger.info('Ended the grace period of key %s', key_uuid)
             return key
 
@@ -137,24 +177,26 @@ class KeyRoute:
             '/keys/{key_uuid}/group', status_code=200, response_model=KeyFullOut
         )
         @route_meta(entity_type='KEY', entity_uuid_param='key_uuid', action='ASSIGN')
-        def add_groups_to_key(
+        async def add_groups_to_key(
             key_uuid: UUID,
             key_group_in: KeyGroupIn,
             include_groups: bool = Query(False),
         ):
-            return key_service.add_group_to_key(key_uuid, key_group_in, include_groups)
+            return await key_service.add_group_to_key(
+                key_uuid, key_group_in, include_groups
+            )
 
         @router.get(
             '/keys/{key_uuid}/associable-groups',
             status_code=200,
             response_model=list[GroupFullOut],
         )
-        def get_associable_groups(
+        async def get_associable_groups(
             key_uuid: UUID,
             include_routes: bool = Query(False),
             include_keys: bool = Query(False),
         ):
-            return key_service.get_associable_groups(
+            return await key_service.get_associable_groups(
                 key_uuid, include_routes, include_keys
             )
 
@@ -164,13 +206,13 @@ class KeyRoute:
             response_model=KeyLimitsAddedOut,
         )
         @route_meta(entity_type='KEY', entity_uuid_param='key_uuid', action='ADD_LIMIT')
-        def add_limits_to_key(
+        async def add_limits_to_key(
             key_uuid: UUID,
             limits_in: CredentialLimitsIn,
             include_groups: bool = Query(False),
             route_configs: dict[str, GatewayRouteConfig] = Depends(get_route_configs),
         ):
-            result = key_service.add_limits_to_key(
+            result = await key_service.add_limits_to_key(
                 key_uuid, limits_in, include_groups, route_configs
             )
             logger.info('Added %s limit(s) to key %s', len(limits_in.limits), key_uuid)
@@ -181,8 +223,8 @@ class KeyRoute:
             status_code=200,
             response_model=list[CredentialLimitOut],
         )
-        def get_limits_for_key(key_uuid: UUID):
-            return key_service.get_limits_for_key(key_uuid)
+        async def get_limits_for_key(key_uuid: UUID):
+            return await key_service.get_limits_for_key(key_uuid)
 
         @router.patch(
             '/keys/{key_uuid}/limits/{limit_uuid}',
@@ -190,14 +232,14 @@ class KeyRoute:
             response_model=CredentialLimitUpdatedOut,
         )
         @route_meta(entity_type='KEY', entity_uuid_param='key_uuid')
-        def update_limit_value(
+        async def update_limit_value(
             key_uuid: UUID,
             limit_uuid: UUID,
             value_in: CredentialLimitValueIn,
             route_configs: dict[str, GatewayRouteConfig] = Depends(get_route_configs),
         ):
             try:
-                return key_service.update_limit_value(
+                return await key_service.update_limit_value(
                     key_uuid, limit_uuid, value_in, route_configs
                 )
             except CredentialLimitValueError as e:

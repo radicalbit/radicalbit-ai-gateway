@@ -9,6 +9,7 @@ import Subtitle from './subtitle';
 
 function GroupsListHeader() {
   const { data = [], isError } = useGetGroupsQuery();
+
   const count = data.length;
   const hasCreateButton = count !== 0 || isError;
 

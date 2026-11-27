@@ -1,12 +1,21 @@
 from datetime import datetime
+from typing import Generic
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, SecretStr
+from pydantic.alias_generators import to_camel
+
+# typing_extensions: a TypeVar default needs Python 3.13.
+from typing_extensions import TypeVar
+
+# A secret as the configuration holds it (str), or as a response shows it
+# (SecretStr, masked).
+SecretValue = TypeVar('SecretValue', str, SecretStr, default=str)
 
 
-class Credentials(BaseModel):
+class Credentials(BaseModel, Generic[SecretValue]):
     model_config = ConfigDict(extra='forbid')
 
-    api_key: str | None = Field(
+    api_key: SecretValue | None = Field(
         default=None,
         description='API key for authentication',
         examples=['sk-your_api_key'],
@@ -46,3 +55,15 @@ class Credentials(BaseModel):
         description='Base URL for self-hosted models like Ollama',
         examples=['http://localhost:11434/v1'],
     )
+
+
+class CredentialsOut(Credentials[SecretStr]):
+    api_key: SecretStr | None
+
+    model_config = ConfigDict(
+        populate_by_name=True, alias_generator=to_camel, protected_namespaces=()
+    )
+
+
+# The credentials a model holds: the configuration's, or a response's.
+CredentialsT = TypeVar('CredentialsT', Credentials, CredentialsOut, default=Credentials)

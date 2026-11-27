@@ -26,7 +26,7 @@ class ApiKeyValidator:
     async def validate_token(self, token: str) -> KeyDetails:
         hashed = hash_key(token)
         try:
-            key_record = self._key_service.get_key_by_hashed_key(hashed)
+            key_record = await self._key_service.get_key_by_hashed_key(hashed)
         except KeyNotFoundError as e:
             raise InvalidApiKey('Incorrect API key provided.') from e
 

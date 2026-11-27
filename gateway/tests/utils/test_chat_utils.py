@@ -1,5 +1,12 @@
+from openai.types.chat import ChatCompletionMessage
+
 from radicalbit_ai_gateway.llm.messages import AIMessage
 from radicalbit_ai_gateway.utils.chat_utils import ChatUtils
+
+
+def _reasoning_content(message: ChatCompletionMessage) -> object:
+    """Return the ``reasoning_content`` the gateway adds to the OpenAI message."""
+    return (message.model_extra or {}).get('reasoning_content')
 
 
 def test_to_openai_chat_completion_with_reasoning_content():
@@ -14,7 +21,7 @@ def test_to_openai_chat_completion_with_reasoning_content():
     )
     msg = result.choices[0].message
     assert msg.content == 'Paris is the capital of France.'
-    assert msg.reasoning_content == 'The user is asking about France...'
+    assert _reasoning_content(msg) == 'The user is asking about France...'
 
 
 def test_to_openai_chat_completion_without_reasoning_content():
@@ -28,7 +35,7 @@ def test_to_openai_chat_completion_without_reasoning_content():
     )
     msg = result.choices[0].message
     assert msg.content == 'Paris is the capital of France.'
-    assert not hasattr(msg, 'reasoning_content') or msg.reasoning_content is None
+    assert _reasoning_content(msg) is None
 
 
 def test_to_openai_chat_completion_reasoning_content_set_on_tool_calls():
@@ -54,4 +61,4 @@ def test_to_openai_chat_completion_reasoning_content_set_on_tool_calls():
     )
     msg = result.choices[0].message
     assert msg.tool_calls is not None
-    assert msg.reasoning_content == 'some reasoning'
+    assert _reasoning_content(msg) == 'some reasoning'

@@ -1,4 +1,5 @@
 from datetime import datetime, timezone
+from typing import TypedDict
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, computed_field
@@ -50,6 +51,16 @@ class LastEventGuardrail(Base):
     )
 
 
+class LastEvents(TypedDict, total=False):
+    """The latest guardrail and fallback event, keyed by event type.
+
+    A type with no event is absent.
+    """
+
+    GUARDRAIL: LastEventGuardrail
+    FALLBACK: LastEventFallback
+
+
 class ModelInvocationCounter(Base):
     model_id: str
     value: int
@@ -87,6 +98,11 @@ class EventDetails(Base):
     behavior: str | None = None
     api_key_name: str = 'fake-name'
     api_key_active: bool = True
+    limit_scope: str | None = None
+    category: str | None = None
+    window_seconds: int | None = None
+    maximum: float | None = None
+    consumption: float | None = None
 
     model_config = ConfigDict(
         populate_by_name=True, alias_generator=to_camel, protected_namespaces=()
@@ -274,3 +290,24 @@ class MostExpensiveRoute(Base):
 class RouteCostBreakdown(Base):
     route_name: str
     total_cost: float
+
+
+class EventsSummary(BaseModel):
+    """What one request's events add up to, for its row in the Requests list.
+
+    The lists hold the distinct promoted values of each icon's events, the
+    raw material of the icon tones and tooltips. Empty strings mean absent.
+    """
+
+    total_tokens: int = 0
+    cost: float = 0.0
+    # (name, behavior, where)
+    guardrails: list[tuple[str, str, str]] = []
+    # (cache_type,)
+    cache_hits: list[tuple[str]] = []
+    # (target, fallback)
+    fallbacks: list[tuple[str, str]] = []
+    # (routing_name, selected_model_id)
+    routings: list[tuple[str, str]] = []
+    # (event_type, limit_scope, category, threshold_percentage)
+    limits: list[tuple[str, str, str, str]] = []

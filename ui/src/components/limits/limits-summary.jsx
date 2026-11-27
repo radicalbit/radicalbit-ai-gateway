@@ -1,5 +1,5 @@
 import HtmlAnchor from '@Components/html-anchor';
-import { Popover } from '@radicalbit/radicalbit-design-system';
+import { Popover, SectionTitle } from '@radicalbit/radicalbit-design-system';
 import { useState } from 'react';
 import { LIMIT_CATEGORY_LABELS, LimitCategoryEnum, WINDOW_TYPE_LABELS } from './constants';
 import {
@@ -37,7 +37,6 @@ function LimitsSummary({
   const title = withCategory ? 'Limits' : 'Budgets';
   const contentOnManage = onManage ? handleOnManage : undefined;
   const neverReachedCount = limits.filter((limit) => getLimitWarnings(warnings, limit).length).length;
-  const neverReached = neverReachedCount ? <span className="text-[var(--coo-warning)]">{` · ${neverReachedCount} never reached`}</span> : false;
 
   return (
     <Popover
@@ -49,27 +48,45 @@ function LimitsSummary({
       title={<strong>{title}</strong>}
       trigger={TRIGGER}
     >
-      <span>
-        <HtmlAnchor onClick={handleOnClick}>{count}</HtmlAnchor>
-
-        <Used consumption={consumption} limits={limits} />
-
-        {neverReached}
+      <span className="inline-block">
+        <SectionTitle
+          size="small"
+          subtitle={<Details consumption={consumption} limits={limits} neverReachedCount={neverReachedCount} />}
+          title={<HtmlAnchor onClick={handleOnClick}>{count}</HtmlAnchor>}
+          titleWeight="normal"
+        />
       </span>
     </Popover>
   );
 }
 
-function Used({ consumption, limits }) {
+// The second line, like a subtitle: how much of the most consumed limit is used, and how many are never reached.
+function Details({ consumption, limits, neverReachedCount }) {
   const mostConsumed = getMostConsumed(limits, consumption);
   const percentage = mostConsumed?.percentage;
   const status = mostConsumed?.status;
 
-  if (!mostConsumed) {
-    return false;
+  const neverReached = `${neverReachedCount} never reached`;
+
+  if (mostConsumed && neverReachedCount) {
+    return (
+      <span>
+        <span className={STATUS_CLASS_NAMES[status]}>{`up to ${percentage}% used`}</span>
+
+        <span className="text-[var(--coo-warning)]">{` · ${neverReached}`}</span>
+      </span>
+    );
   }
 
-  return <span className={STATUS_CLASS_NAMES[status]}>{` · up to ${percentage}% used`}</span>;
+  if (mostConsumed) {
+    return <span className={STATUS_CLASS_NAMES[status]}>{`up to ${percentage}% used`}</span>;
+  }
+
+  if (neverReachedCount) {
+    return <span className="text-[var(--coo-warning)]">{neverReached}</span>;
+  }
+
+  return false;
 }
 
 function Content({ consumption, limits, onManage, warnings, withCategory }) {
@@ -80,7 +97,6 @@ function Content({ consumption, limits, onManage, warnings, withCategory }) {
 
   const lines = sortLimits(limits).map((limit) => <LimitLine key={limit.uuid} bar={consumption?.[limit.uuid]} limit={limit} warnings={getLimitWarnings(warnings, limit)} withCategory={withCategory} />);
   const manageLabel = withCategory ? 'Manage limits' : 'Manage budgets';
-  const manageLink = onManage ? <HtmlAnchor onClick={handleOnManage}>{manageLabel}</HtmlAnchor> : false;
 
   return (
     <div className="flex flex-col gap-4">
@@ -88,7 +104,7 @@ function Content({ consumption, limits, onManage, warnings, withCategory }) {
         {lines}
       </div>
 
-      {manageLink}
+      {onManage && <HtmlAnchor onClick={handleOnManage}>{manageLabel}</HtmlAnchor>}
     </div>
   );
 }
@@ -98,15 +114,13 @@ function LimitLine({ bar, limit, warnings, withCategory }) {
   const category = limit?.category ?? LimitCategoryEnum.BUDGET;
   const value = limit?.value;
   const windowSize = limit?.windowSize;
-
-  const categoryText = withCategory ? <strong>{`${LIMIT_CATEGORY_LABELS[category]} · `}</strong> : false;
   const maxText = `${formatLimitValue(category, value)} / ${formatLimitWindow(windowSize)}`;
   const windowTypeText = ` · ${WINDOW_TYPE_LABELS[algorithm]}`;
 
   return (
     <span className="flex flex-col gap-1">
       <span>
-        {categoryText}
+        {withCategory && <strong>{`${LIMIT_CATEGORY_LABELS[category]} · `}</strong>}
 
         {maxText}
 

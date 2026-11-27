@@ -52,28 +52,6 @@ function AssociatedKeys() {
   const keys = data?.keys || [];
   const associated = keys.map((i) => ({ label: i.name, value: i.uuid }));
 
-  const popoverContent = (
-    <div>
-      <strong>Credentials already associated</strong>
-
-      <div style={{ maxHeight: 200, overflowY: 'auto' }}>
-        {associated.map(({ label, value }) => {
-          const handleOnClick = () => {
-            navigate(`/${PathsEnum.CREDENTIALS}?${SEARCH_PARAMS.credentials}=${encodeURIComponent(label)}`);
-          };
-
-          return (
-            <div key={value}>
-              <HtmlAnchor onClick={handleOnClick}>
-                {label}
-              </HtmlAnchor>
-            </div>
-          );
-        })}
-      </div>
-    </div>
-  );
-
   if (associated.length === 0) {
     return <span>{`Credentials already associated: ${associated.length}`}</span>;
   }
@@ -82,7 +60,29 @@ function AssociatedKeys() {
     <div className="flex flex-row items-center gap-2">
       <span>{`Credentials already associated: ${associated.length}`}</span>
 
-      <InfoPopover content={popoverContent}>
+      <InfoPopover
+        content={(
+          <div>
+            <strong>Credentials already associated</strong>
+
+            <div style={{ maxHeight: 200, overflowY: 'auto' }}>
+              {associated.map(({ label, value }) => {
+                const handleOnClick = () => {
+                  navigate(`/${PathsEnum.CREDENTIALS}?${SEARCH_PARAMS.credentials}=${encodeURIComponent(label)}`);
+                };
+
+                return (
+                  <div key={value}>
+                    <HtmlAnchor onClick={handleOnClick}>
+                      {label}
+                    </HtmlAnchor>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+      >
         <Lucide icon={Info} />
       </InfoPopover>
     </div>

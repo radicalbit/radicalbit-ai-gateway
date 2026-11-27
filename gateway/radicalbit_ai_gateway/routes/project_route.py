@@ -1,13 +1,13 @@
 import asyncio
-from collections.abc import Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass, field
+from enum import Enum
 import logging
 from typing import Annotated, Any
 from uuid import UUID
 
 from fastapi import APIRouter, File, Query, Request, Response, UploadFile
 from fastapi.sse import EventSourceResponse
-from starlette.responses import StreamingResponse
 
 from radicalbit_ai_gateway.models.auth_dto import (
     GroupFullOut,
@@ -15,6 +15,7 @@ from radicalbit_ai_gateway.models.auth_dto import (
     RouteGroupsIn,
 )
 from radicalbit_ai_gateway.models.config_status import ConfigStatus
+from radicalbit_ai_gateway.models.error_dto import error_responses
 from radicalbit_ai_gateway.models.project_budget_limiting import (
     ProjectBudgetLimitConflictsOut,
     ProjectBudgetLimitOut,
@@ -49,10 +50,14 @@ _ALLOWED_IMPORT_SUFFIXES = ('.yaml', '.yml')
 
 @dataclass
 class ProjectRouteConfig:
-    get_projects_fn: Callable[[Request, ProjectFilter | None, bool], Any] | None = None
-    get_project_fn: Callable[[Request, UUID, bool], Any] | None = None
+    get_projects_fn: (
+        Callable[[Request, ProjectFilter | None, bool], Awaitable[Any]] | None
+    ) = None
+    get_project_fn: Callable[[Request, UUID, bool], Awaitable[Any]] | None = None
     # The projects among the requested ones the caller may read consumption of
-    filter_project_uuids_fn: Callable[[Request, list[UUID]], list[UUID]] | None = None
+    filter_project_uuids_fn: (
+        Callable[[Request, list[UUID]], Awaitable[list[UUID]]] | None
+    ) = None
     list_response_model: type = field(default_factory=lambda: list[ProjectOut])
     item_response_model: type = field(default_factory=lambda: ProjectOut)
 
@@ -69,58 +74,88 @@ class ProjectRoute:
         config_generator_service: ConfigGeneratorService | None = None,
     ) -> APIRouter:
         config = config or ProjectRouteConfig()
-        get_projects_fn = config.get_projects_fn or (
-            lambda _, f, include_limits: project_service.get_all_filtered(
-                f, include_limits
-            )
-        )
-        get_project_fn = config.get_project_fn or (
-            lambda _, u, include_limits: project_service.get_by_uuid(u, include_limits)
-        )
-        filter_project_uuids_fn = config.filter_project_uuids_fn or (
-            lambda _, uuids: uuids
-        )
-        router = APIRouter(tags=['project_api'])
 
-        @router.post('/projects', status_code=201, response_model=ProjectOut)
+        async def _get_projects(_, project_filter, include_limits):
+            return await project_service.get_all_filtered(
+                project_filter, include_limits
+            )
+
+        async def _get_project(_, project_uuid, include_limits):
+            if include_limits:
+                return await project_service.get_by_uuid_with_limits(project_uuid)
+            return await project_service.get_by_uuid(project_uuid)
+
+        get_projects_fn = config.get_projects_fn or _get_projects
+        get_project_fn = config.get_project_fn or _get_project
+
+        async def _all_project_uuids(_, project_uuids):
+            return project_uuids
+
+        filter_project_uuids_fn = config.filter_project_uuids_fn or _all_project_uuids
+        router = APIRouter()
+        projects: list[str | Enum] = ['projects']
+        configs: list[str | Enum] = ['configs']
+
+        @router.post(
+            '/projects',
+            status_code=201,
+            response_model=ProjectOut,
+            tags=projects,
+            operation_id='projects_create',
+            responses=error_responses(409),
+        )
         @route_meta(entity_type='PROJECT', response_uuid_field='uuid')
-        def create_project(project_in: ProjectIn):
-            project = project_service.create_project(project_in)
+        async def create_project(project_in: ProjectIn):
+            """Create a project, with two draft config slots (A and B)."""
+            project = await project_service.create_project(project_in)
             logger.info('Created project %s', project.uuid)
             return project
 
         @router.get(
-            '/projects', status_code=200, response_model=config.list_response_model
+            '/projects',
+            status_code=200,
+            response_model=config.list_response_model,
+            tags=projects,
+            operation_id='projects_list',
         )
-        def get_all(
+        async def get_all(
             request: Request,
             filter: ProjectFilter | None = Query(None),
             include_limits: bool = Query(False),
         ):
-            return get_projects_fn(request, filter, include_limits)
+            """List the projects, optionally filtered."""
+            return await get_projects_fn(request, filter, include_limits)
 
         @router.get(
             '/projects/{project_uuid}',
             status_code=200,
             response_model=config.item_response_model,
+            tags=projects,
+            operation_id='projects_get',
+            responses=error_responses(404),
         )
-        def get_project_by_uuid(
+        async def get_project_by_uuid(
             project_uuid: UUID,
             request: Request,
             include_limits: bool = Query(False),
         ):
-            return get_project_fn(request, project_uuid, include_limits)
+            """Get a project with its two config slots."""
+            return await get_project_fn(request, project_uuid, include_limits)
 
         @router.patch(
             '/projects/{project_uuid}/configs/{config_uuid}',
             status_code=200,
             response_model=ProjectOut,
+            tags=configs,
+            operation_id='configs_save',
+            responses=error_responses(400, 404, 409),
         )
         @route_meta(entity_type='PROJECT', entity_uuid_param='project_uuid')
-        def update_config(
+        async def update_config(
             project_uuid: UUID, config_uuid: UUID, config_in: ProjectConfigFileIn
         ):
-            project = project_service.update_config(
+            """Save a YAML configuration into a config slot that is not served."""
+            project = await project_service.update_config(
                 project_uuid, config_uuid, config_in
             )
             logger.info('Updated config %s for project %s', config_uuid, project_uuid)
@@ -130,10 +165,14 @@ class ProjectRoute:
             '/projects/{project_uuid}/configs/{config_uuid}/approve',
             status_code=200,
             response_model=ProjectOut,
+            tags=configs,
+            operation_id='configs_approve',
+            responses=error_responses(400, 404, 409),
         )
         @route_meta(entity_type='PROJECT', entity_uuid_param='project_uuid')
-        def approve_config(project_uuid: UUID, config_uuid: UUID):
-            project = project_service.approve_config(project_uuid, config_uuid)
+        async def approve_config(project_uuid: UUID, config_uuid: UUID):
+            """Request to publish a draft config: it becomes ready to serve."""
+            project = await project_service.approve_config(project_uuid, config_uuid)
             logger.info('Approved config %s for project %s', config_uuid, project_uuid)
             return project
 
@@ -141,10 +180,14 @@ class ProjectRoute:
             '/projects/{project_uuid}/configs/{config_uuid}/cancel-approval',
             status_code=200,
             response_model=ProjectOut,
+            tags=configs,
+            operation_id='configs_cancel_approval',
+            responses=error_responses(404, 409),
         )
         @route_meta(entity_type='PROJECT', entity_uuid_param='project_uuid')
-        def cancel_approval(project_uuid: UUID, config_uuid: UUID):
-            project = project_service.cancel_approval(project_uuid, config_uuid)
+        async def cancel_approval(project_uuid: UUID, config_uuid: UUID):
+            """Cancel a request to publish: the config goes back to draft."""
+            project = await project_service.cancel_approval(project_uuid, config_uuid)
             logger.info(
                 'Cancelled approval for config %s of project %s',
                 config_uuid,
@@ -156,10 +199,14 @@ class ProjectRoute:
             '/projects/{project_uuid}/configs/{config_uuid}/serve',
             status_code=200,
             response_model=ProjectOut,
+            tags=configs,
+            operation_id='configs_serve',
+            responses=error_responses(400, 404, 409),
         )
         @route_meta(entity_type='PROJECT', entity_uuid_param='project_uuid')
         async def serve_config(project_uuid: UUID, config_uuid: UUID):
-            project = project_service.serve_config(project_uuid, config_uuid)
+            """Publish an approved config: it replaces the one served, if any."""
+            project = await project_service.serve_config(project_uuid, config_uuid)
             # Swap: drop any routes from the previously served config, then
             # register the newly served one.
             if deregister_project_routes:
@@ -174,7 +221,7 @@ class ProjectRoute:
                 )
             # Auto-cleanup on swap: drop group↔route associations whose route_name
             # is no longer present in the newly served config.
-            removed = group_service.cleanup_orphaned_associations(
+            removed = await group_service.cleanup_orphaned_associations(
                 project_uuid, project.name
             )
             logger.info(
@@ -185,35 +232,47 @@ class ProjectRoute:
             )
             return project
 
-        @router.post(
-            '/projects/{project_uuid}/configs/{config_uuid}/generate-config',
-            status_code=200,
-            response_model=GenerateConfigOut,
-        )
-        @route_meta(entity_type='PROJECT', entity_uuid_param='project_uuid')
-        async def generate_config(
-            project_uuid: UUID, config_uuid: UUID, gen_in: GenerateConfigIn
-        ):
-            config_slot = project_service.get_config(project_uuid, config_uuid)
-            # A served slot is read-only: generating against it is pointless
-            # since the result could not be saved back (see update_config).
-            if config_slot.config_status == ConfigStatus.SERVED:
-                raise ProjectConfigValidationError(
-                    f'Config {config_uuid} is served and cannot be used to '
-                    'generate a new configuration'
-                )
-            yaml_str = await config_generator_service.generate_config(
-                gen_in.description, config_slot.config_file
+        # The endpoint exists only on a gateway given a config generator.
+        if config_generator_service is not None:
+            generator = config_generator_service
+
+            @router.post(
+                '/projects/{project_uuid}/configs/{config_uuid}/generate-config',
+                status_code=200,
+                response_model=GenerateConfigOut,
+                tags=configs,
             )
-            logger.info('Generated config %s for project %s', config_uuid, project_uuid)
-            return GenerateConfigOut(config_file=yaml_str)
+            @route_meta(entity_type='PROJECT', entity_uuid_param='project_uuid')
+            async def generate_config(
+                project_uuid: UUID, config_uuid: UUID, gen_in: GenerateConfigIn
+            ):
+                config_slot = await project_service.get_config(
+                    project_uuid, config_uuid
+                )
+                # A served slot is read-only: generating against it is pointless
+                # since the result could not be saved back (see update_config).
+                if config_slot.config_status == ConfigStatus.SERVED:
+                    raise ProjectConfigValidationError(
+                        f'Config {config_uuid} is served and cannot be used to '
+                        'generate a new configuration'
+                    )
+                yaml_str = await generator.generate_config(
+                    gen_in.description, config_slot.config_file
+                )
+                logger.info(
+                    'Generated config %s for project %s', config_uuid, project_uuid
+                )
+                return GenerateConfigOut(config_file=yaml_str)
 
         @router.get(
             '/projects/{project_uuid}/configs/{config_uuid}/export',
             status_code=200,
+            tags=configs,
         )
-        def export_config(project_uuid: UUID, config_uuid: UUID):
-            content, filename = project_service.export_config(project_uuid, config_uuid)
+        async def export_config(project_uuid: UUID, config_uuid: UUID):
+            content, filename = await project_service.export_config(
+                project_uuid, config_uuid
+            )
             logger.info('Exported config %s for project %s', config_uuid, project_uuid)
             return Response(
                 content=content,
@@ -224,9 +283,10 @@ class ProjectRoute:
         @router.get(
             '/projects/{project_uuid}/configs/export',
             status_code=200,
+            tags=configs,
         )
-        def export_all_configs(project_uuid: UUID):
-            content, filename = project_service.export_all_configs(project_uuid)
+        async def export_all_configs(project_uuid: UUID):
+            content, filename = await project_service.export_all_configs(project_uuid)
             logger.info('Exported all configs for project %s', project_uuid)
             return Response(
                 content=content,
@@ -238,11 +298,18 @@ class ProjectRoute:
             '/projects/{project_uuid}/configs/{config_uuid}/import',
             status_code=200,
             response_model=ProjectOut,
+            tags=configs,
+            operation_id='configs_upload',
+            responses=error_responses(400, 404, 409),
         )
         @route_meta(entity_type='PROJECT', entity_uuid_param='project_uuid')
         async def import_config(
-            project_uuid: UUID, config_uuid: UUID, file: UploadFile = File(...)
+            project_uuid: UUID,
+            config_uuid: UUID,
+            # format: binary, so that generated clients send it as a file
+            file: UploadFile = File(..., json_schema_extra={'format': 'binary'}),
         ):
+            """Upload a .yaml or .yml file (2 MB at most) into a config slot that is not served."""
             filename = file.filename or ''
             if not filename.lower().endswith(_ALLOWED_IMPORT_SUFFIXES):
                 raise ProjectConfigValidationError(
@@ -253,7 +320,9 @@ class ProjectRoute:
                     f'Uploaded file exceeds the {MAX_IMPORT_BYTES // (1024 * 1024)} MB limit'
                 )
             content = await file.read()
-            project = project_service.import_config(project_uuid, config_uuid, content)
+            project = await project_service.import_config(
+                project_uuid, config_uuid, content
+            )
             logger.info('Imported config %s for project %s', config_uuid, project_uuid)
             return project
 
@@ -261,10 +330,14 @@ class ProjectRoute:
             '/projects/{project_uuid}/configs/{config_uuid}/unserve',
             status_code=200,
             response_model=ProjectOut,
+            tags=configs,
+            operation_id='configs_unserve',
+            responses=error_responses(404, 409),
         )
         @route_meta(entity_type='PROJECT', entity_uuid_param='project_uuid')
         async def unserve_config(project_uuid: UUID, config_uuid: UUID):
-            project = project_service.unserve_config(project_uuid, config_uuid)
+            """Stop serving the served config: the project serves no routes."""
+            project = await project_service.unserve_config(project_uuid, config_uuid)
             if deregister_project_routes:
                 await deregister_project_routes(project_uuid)
             logger.info('Unserved config %s for project %s', config_uuid, project_uuid)
@@ -274,9 +347,13 @@ class ProjectRoute:
             '/projects/{project_uuid}',
             status_code=200,
             response_model=ProjectOut,
+            tags=projects,
+            operation_id='projects_delete',
+            responses=error_responses(404),
         )
         @route_meta(entity_type='PROJECT', entity_uuid_param='project_uuid')
         async def delete_project(project_uuid: UUID):
+            """Delete a project: its served configuration stops serving with it."""
             project = await project_service.delete_project(project_uuid)
             if deregister_project_routes and project.served_config_uuid:
                 await deregister_project_routes(project_uuid)
@@ -287,18 +364,19 @@ class ProjectRoute:
             '/projects/{project_uuid}/routes/{route_name}/groups',
             status_code=200,
             response_model=GroupsRouteOut,
+            tags=projects,
         )
         @route_meta(
             entity_type='PROJECT', entity_uuid_param='project_uuid', action='ASSIGN'
         )
-        def add_groups_to_project_route(
+        async def add_groups_to_project_route(
             project_uuid: UUID,
             route_name: str,
             route_groups_in: RouteGroupsIn,
             include_groups: bool = Query(False),
         ):
-            project = project_service.get_by_uuid(project_uuid)
-            return group_service.add_groups_to_project_route(
+            project = await project_service.get_by_uuid(project_uuid)
+            return await group_service.add_groups_to_project_route(
                 project_uuid, project.name, route_name, route_groups_in, include_groups
             )
 
@@ -306,15 +384,16 @@ class ProjectRoute:
             '/projects/{project_uuid}/routes/{route_name}/associable-groups',
             status_code=200,
             response_model=list[GroupFullOut],
+            tags=projects,
         )
-        def get_associable_groups_for_project_route(
+        async def get_associable_groups_for_project_route(
             project_uuid: UUID,
             route_name: str,
             include_routes: bool = Query(False),
             include_keys: bool = Query(False),
         ):
-            project = project_service.get_by_uuid(project_uuid)
-            return group_service.get_associable_groups_for_project_route(
+            project = await project_service.get_by_uuid(project_uuid)
+            return await group_service.get_associable_groups_for_project_route(
                 project.name, route_name, include_routes, include_keys
             )
 
@@ -322,13 +401,14 @@ class ProjectRoute:
             '/projects/budget-limits/stream',
             status_code=200,
             response_class=EventSourceResponse,
+            tags=projects,
         )
         async def stream_budget_limits_consumption(
             request: Request,
             projects: Annotated[list[UUID] | None, Query()] = None,
-        ) -> StreamingResponse:
+        ) -> AsyncIterator[dict[str, dict[str, Any]]]:
             while True:
-                visible = filter_project_uuids_fn(request, projects or [])
+                visible = await filter_project_uuids_fn(request, projects or [])
                 consumption = await project_service.get_budget_limits_consumption(
                     visible
                 )
@@ -342,16 +422,17 @@ class ProjectRoute:
             '/projects/{project_uuid}/budget-limits',
             status_code=201,
             response_model=list[ProjectBudgetLimitOut],
+            tags=projects,
         )
         @route_meta(
             entity_type='PROJECT',
             entity_uuid_param='project_uuid',
             action='ADD_BUDGET_LIMIT',
         )
-        def add_budget_limits_to_project(
+        async def add_budget_limits_to_project(
             project_uuid: UUID, limits_in: ProjectBudgetLimitsIn
         ):
-            limits = project_service.add_budget_limits_to_project(
+            limits = await project_service.add_budget_limits_to_project(
                 project_uuid, limits_in
             )
             logger.info(
@@ -365,28 +446,31 @@ class ProjectRoute:
             '/projects/{project_uuid}/budget-limits',
             status_code=200,
             response_model=list[ProjectBudgetLimitOut],
+            tags=projects,
         )
-        def get_budget_limits_for_project(project_uuid: UUID):
-            return project_service.get_budget_limits_for_project(project_uuid)
+        async def get_budget_limits_for_project(project_uuid: UUID):
+            return await project_service.get_budget_limits_for_project(project_uuid)
 
         @router.get(
             '/projects/{project_uuid}/budget-limits/conflicts',
             status_code=200,
             response_model=ProjectBudgetLimitConflictsOut,
+            tags=projects,
         )
-        def get_budget_limit_conflicts(project_uuid: UUID):
-            return project_service.get_budget_limit_conflicts(project_uuid)
+        async def get_budget_limit_conflicts(project_uuid: UUID):
+            return await project_service.get_budget_limit_conflicts(project_uuid)
 
         @router.patch(
             '/projects/{project_uuid}/budget-limits/{limit_uuid}',
             status_code=200,
             response_model=ProjectBudgetLimitUpdatedOut,
+            tags=projects,
         )
         @route_meta(entity_type='PROJECT', entity_uuid_param='project_uuid')
-        def update_budget_limit_value(
+        async def update_budget_limit_value(
             project_uuid: UUID, limit_uuid: UUID, value_in: ProjectBudgetLimitValueIn
         ):
-            return project_service.update_budget_limit_value(
+            return await project_service.update_budget_limit_value(
                 project_uuid, limit_uuid, value_in
             )
 
@@ -394,6 +478,7 @@ class ProjectRoute:
             '/projects/{project_uuid}/budget-limits/{limit_uuid}',
             status_code=200,
             response_model=ProjectBudgetLimitOut,
+            tags=projects,
         )
         @route_meta(entity_type='PROJECT', entity_uuid_param='project_uuid')
         async def delete_budget_limit_from_project(

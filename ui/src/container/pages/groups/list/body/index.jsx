@@ -2,6 +2,7 @@ import Lucide from '@Components/lucide';
 import { Popup, usePopup } from '@Components/popup';
 import { DETAIL_LAYOUT_CONFIGURATION, MAIN_LAYOUT_CONFIGURATION } from '@Container/layout/layout-provider/layout-provider-configuration';
 import { useGetThreeDotsMenuItems } from '@Container/pages/groups/detail/header/three-dots-menu';
+import { filterByName } from '@Container/pages/groups/list/helpers';
 import useModals, { modals } from '@Hooks/use-modals';
 import { PathsEnum, SEARCH_PARAMS } from '@Src/constants';
 import {
@@ -61,10 +62,8 @@ function GroupsList() {
 
 function GroupsCount({ searchValue }) {
   const { data = [], isSuccess } = useGetGroupsQuery();
-  const filteredData = searchValue
-    ? data.filter(({ name }) => name.toLowerCase().includes(searchValue.toLowerCase()))
-    : data;
-  const count = filteredData.length;
+
+  const count = filterByName(data, searchValue).length;
 
   if (!isSuccess) {
     return false;
@@ -117,9 +116,7 @@ function GroupsTable({ searchValue }) {
     );
   }
 
-  const filteredData = searchValue
-    ? data.filter(({ name }) => name.toLowerCase().includes(searchValue.toLowerCase()))
-    : data;
+  const filteredData = filterByName(data, searchValue);
 
   const handleOnRowClick = (record) => {
     const { search } = window.location;
@@ -173,8 +170,7 @@ function RowWithSpinner({ children, ...other }) {
   return isDeleting || isEditing || isAddingKeys || isAddingRoutes
     ? (
       <tr {...other}>
-        {/* IF scroll={{ y: 'calc(100vh - 10rem)' }} is defined, colSpan must be === columns.length */}
-        <td colSpan={7}>
+        <td colSpan={columns.length}>
           <Spin spinning />
         </td>
       </tr>

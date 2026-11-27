@@ -9,7 +9,8 @@ import { ChartLine } from 'lucide-react';
 function Analytics({ record }) {
   const { showModal } = useModals();
 
-  const handleOnClick = () => {
+  const handleOnClick = (e) => {
+    e.stopPropagation();
     showModal(modals.ROUTE_ANALYTICS, { routeName: record.routeName });
   };
 

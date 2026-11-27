@@ -1,14 +1,9 @@
 const GATEWAY_OWNER = 'gateway';
 const pageSize = 20;
-const tracesPageSize = 50;
+const requestsPageSize = 50;
 const mcpKeysPageSize = 20;
 const startPage = 1;
 const DEFAULT_POLLING_INTERVAL = 2000;
-
-// Hardcoded feature flags. Toggle to enable/disable a feature app-wide.
-const FEATURE_FLAGS = {
-  ALERTS: true,
-};
 
 const PathsEnum = {
   ALERTS: 'alerts',
@@ -17,6 +12,7 @@ const PathsEnum = {
   GROUPS: 'groups',
   CREDENTIALS: 'credentials',
   PROJECTS: 'projects',
+  OBSERVABILITY: 'observability',
   ROUTES: 'routes',
   SECRETS: 'secrets',
   TRACING: 'tracing',
@@ -59,14 +55,12 @@ const numberFormatterFloat = (number, options = {}) => {
   return new Intl.NumberFormat(userLocale, { maximumFractionDigits: 2, minimumFractionDigits: 2, ...options }).format(number);
 };
 
-// Categorical palette for echarts series — design-system "Visualization Colors"
 const CHART_COLORS = ['#00E6C7', '#B61CD4', '#00A35C', '#D16900', '#006FFA', '#F33D23', '#ED32B9', '#FF8C00'];
 
 const DATE_FORMAT = ' DD MMM YYYY, HH:mm:ss';
 
 const DATE_FORMAT_SHORT = ' DD MMM YYYY';
 
-// Rotation instants (grace end, last rotation) are timestamps: shown in the browser's local time
 const ROTATION_FORMAT = 'DD MMM YYYY, HH:mm';
 
 const ConfigStatusEnum = {
@@ -95,14 +89,12 @@ const ProjectStatusEnum = {
   PROD: 'PROD',
 };
 
-// Derived by the API from the credential's expiry date (end of day UTC)
 const CredentialStateEnum = {
   ACTIVE: 'active',
   EXPIRING: 'expiring',
   EXPIRED: 'expired',
 };
 
-// Derived by the API from the last rotation and the grace end
 const RotationStateEnum = {
   NONE: 'none',
   IN_GRACE: 'in_grace',
@@ -110,7 +102,6 @@ const RotationStateEnum = {
   ROTATED: 'rotated',
 };
 
-// expiresOn is a calendar date (YYYY-MM-DD), not an instant: never convert its timezone
 const EXPIRES_ON_FORMAT = 'YYYY-MM-DD';
 
 const SecretStatusEnum = {
@@ -206,7 +197,6 @@ export {
   DEFAULT_POLLING_INTERVAL,
   EXPIRES_ON_FORMAT,
   GATEWAY_OWNER,
-  FEATURE_FLAGS,
   SEARCH_PARAMS,
   NamespaceEnum,
   numberFormatterInt,
@@ -222,5 +212,5 @@ export {
   SortOrderEnum,
   startPage,
   mcpKeysPageSize,
-  tracesPageSize,
+  requestsPageSize,
 };

@@ -1,5 +1,6 @@
 import HtmlAnchor from '@Components/html-anchor';
 import LimitsSummary from '@Components/limits/limits-summary';
+import LiveColumnTitle from '@Components/limits/live-column-title';
 import { useRegisterVisibleRow, useVisibleRowUuids } from '@Components/limits/visible-rows-context';
 import Lucide from '@Components/lucide';
 import { useGetThreeDotsMenuItems } from '@Container/pages/keys/three-dots-menu';
@@ -24,8 +25,6 @@ import { useNavigate } from 'react-router-dom';
 import { useRef, useState } from 'react';
 
 const MENU_TRIGGER = ['click'];
-
-const EXPIRES_ON_TOOLTIP = 'Expires at end of day (UTC)';
 
 const columns = [
   {
@@ -53,7 +52,7 @@ const columns = [
     render: (group) => <AssociatedGroup group={group} />,
   },
   {
-    title: 'Limits',
+    title: <LiveColumnTitle title="Limits" />,
     dataIndex: 'limits',
     key: 'limits',
     render: (limits, { limitWarnings, uuid }) => <Limits limits={limits} uuid={uuid} warnings={limitWarnings} />,
@@ -133,7 +132,7 @@ function ExpiresOn({ expiresOn, owner, state }) {
   });
 
   return (
-    <Tooltip placement="topLeft" title={EXPIRES_ON_TOOLTIP}>
+    <Tooltip placement="topLeft" title="Expires at end of day (UTC)">
       <span className={className}>{label}</span>
     </Tooltip>
   );
@@ -199,21 +198,40 @@ function Limits({ limits, uuid, warnings }) {
 function Actions({ name, uuid }) {
   const buttonRef = useRef(null);
 
+  const [isOpen, setIsOpen] = useState(false);
   const [isOpenedByKeyboard, setIsOpenedByKeyboard] = useState(false);
 
   const items = useGetThreeDotsMenuItems(uuid);
 
-  const handleOnOpenChange = (isOpen) => {
+  const updateIsOpen = (nextIsOpen) => {
     const { activeElement } = document;
     const isFocusLost = activeElement === document.body || activeElement?.closest('.ant-dropdown');
 
-    if (!isOpen) {
+    setIsOpen(nextIsOpen);
+
+    if (!nextIsOpen) {
       setIsOpenedByKeyboard(false);
     }
 
-    if (!isOpen && isFocusLost) {
+    if (!nextIsOpen && isFocusLost) {
       buttonRef.current?.focus();
     }
+  };
+
+  const handleOnOpenChange = (nextIsOpen, { source }) => {
+    if (source === 'menu') {
+      return;
+    }
+
+    updateIsOpen(nextIsOpen);
+  };
+
+  const handleOnMenuClick = ({ domEvent }) => {
+    if (domEvent.target.closest('.c-popconfirm__trigger')) {
+      return;
+    }
+
+    updateIsOpen(false);
   };
 
   const handleOnKeyDown = (event) => {
@@ -233,7 +251,7 @@ function Actions({ name, uuid }) {
   return (
     <span onClick={handleOnClick} role="presentation">
       <Tooltip title="More actions">
-        <Dropdown autoFocus={isOpenedByKeyboard} destroyOnHidden menu={{ items }} onOpenChange={handleOnOpenChange} trigger={MENU_TRIGGER}>
+        <Dropdown autoFocus={isOpenedByKeyboard} destroyOnHidden menu={{ items, onClick: handleOnMenuClick }} onOpenChange={handleOnOpenChange} open={isOpen} trigger={MENU_TRIGGER}>
           <Button aria-label={`More actions for ${name}`} onKeyDown={handleOnKeyDown} ref={buttonRef} type="text">
             <Lucide icon={EllipsisVertical} />
           </Button>

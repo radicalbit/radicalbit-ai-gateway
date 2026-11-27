@@ -1,4 +1,5 @@
-import { formatCount, formatRouteLimitWarning, isLimitComplete } from '@Components/limits/helpers';
+import HtmlAnchor from '@Components/html-anchor';
+import { formatCount, formatRouteLimitWarning } from '@Components/limits/helpers';
 import RouteLimitWarnings from '@Components/limits/route-limit-warnings';
 import useModals from '@Hooks/use-modals';
 import { PathsEnum } from '@Src/constants';
@@ -10,19 +11,12 @@ import {
   Alert, Button, Divider, FormField, RbitModal, SectionTitle, Skeleton, Spinner,
 } from '@radicalbit/radicalbit-design-system';
 import { useEffect } from 'react';
-import { Link } from 'react-router-dom';
 import LimitsToApply from './limits-to-apply';
 import Preview from './preview';
 import { getInitialValues, schema } from './schema';
 import useHandleOnSubmit from './useHandleOnSubmit';
 import useMembers from './use-members';
 import useTouchedCount from './use-touched-count';
-
-const UNAVAILABLE_MESSAGE = 'Unable to load this group, please close and retry later';
-
-const MODAL_WIDTH = 820;
-
-const ROUTE_WARNINGS_TITLE = 'Some routes these credentials reach have a stricter limit';
 
 const OutcomeEnum = {
   ADDED: 'added',
@@ -51,7 +45,7 @@ function ApplyGroupLimitsInner() {
       header={<Header />}
       onCancel={hideModal}
       open
-      width={MODAL_WIDTH}
+      width={820}
     >
       <Body />
     </RbitModal>
@@ -91,7 +85,7 @@ function Body() {
   }
 
   if (group.isError || keys.isError) {
-    return <Alert title={UNAVAILABLE_MESSAGE} type="error" />;
+    return <Alert title="Unable to load this group, please close and retry later" type="error" />;
   }
 
   if (!group.isSuccess || !keys.isSuccess) {
@@ -132,7 +126,6 @@ function ApplyForm() {
   const { members } = useMembers();
 
   const backendError = error('silent.backend');
-  const backendErrorField = backendError ? <FormField message={backendError} /> : false;
 
   return (
     <div className="flex flex-col gap-6">
@@ -144,7 +137,7 @@ function ApplyForm() {
 
       <Preview />
 
-      {backendErrorField}
+      {backendError && <FormField message={backendError} />}
     </div>
   );
 }
@@ -165,25 +158,17 @@ function CopyExplanation({ count }) {
 function ApplyActions() {
   const { hideModal } = useModals();
 
-  const { form } = useFormbitContext();
-  const rows = form?.limits ?? [];
-
   const { handleOnSubmit, args: { isLoading }, isSubmitDisabled } = useHandleOnSubmit();
 
   const touchedCount = useTouchedCount();
 
   const applyLabel = `Apply to ${formatCount(touchedCount, 'credential')}`;
-  const isIncomplete = !rows.every(isLimitComplete);
-  const hint = isIncomplete ? <span className="mr-auto self-center text-xs text-[var(--coo-fg-secondary)]" id="apply-group-limits-hint">Fill in every field of each limit to apply</span> : false;
-  const hintId = isIncomplete ? 'apply-group-limits-hint' : undefined;
 
   return (
     <div className="flex gap-2 justify-end">
-      {hint}
-
       <Button onClick={hideModal} type="secondary-light">Cancel</Button>
 
-      <Button aria-describedby={hintId} disabled={isSubmitDisabled} loading={isLoading} onClick={handleOnSubmit} type="primary">{applyLabel}</Button>
+      <Button disabled={isSubmitDisabled} loading={isLoading} onClick={handleOnSubmit} type="primary">{applyLabel}</Button>
     </div>
   );
 }
@@ -207,13 +192,13 @@ function Result({ result }) {
         <span className="text-xs opacity-70">
           {'These limits now belong to each credential: change or delete them from '}
 
-          <Link className="c-anchor light" onClick={hideModal} to={`/${PathsEnum.CREDENTIALS}`}><strong>Credentials</strong></Link>
+          <HtmlAnchor className="light" onClick={hideModal} to={`/${PathsEnum.CREDENTIALS}`}><strong>Credentials</strong></HtmlAnchor>
 
           .
         </span>
       </div>
 
-      <RouteLimitWarnings lines={warningLines} title={ROUTE_WARNINGS_TITLE} />
+      <RouteLimitWarnings lines={warningLines} title="Some routes these credentials reach have a stricter limit" />
     </div>
   );
 }

@@ -1,4 +1,5 @@
 import { EMPTY_LIMIT, LimitCategoryEnum, WindowTypeEnum } from '@Components/limits/constants';
+import { getMaxTypeError } from '@Components/limits/helpers';
 import * as yup from 'yup';
 
 const ScreenEnum = {
@@ -31,9 +32,9 @@ const getInitialValues = (screen = ScreenEnum.LIST, limit = undefined) => {
 
 const schema = yup.object().shape({
   limits: yup.array().of(yup.object().shape({
-    algorithm: yup.string().oneOf(Object.values(WindowTypeEnum)).required(),
-    windowSize: yup.string().required(),
-    value: yup.number().typeError('Enter a max').positive('Enter a max greater than 0').required('Enter a max'),
+    algorithm: yup.string().oneOf(Object.values(WindowTypeEnum)).required('Select a window type'),
+    windowSize: yup.string().required('Select a window'),
+    value: yup.number().typeError(getMaxTypeError).positive('Enter a max greater than 0').required('Enter a max'),
   })).min(1),
 });
 

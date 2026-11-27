@@ -3,13 +3,15 @@ its routing call. Usage cost must count the decision ones (AG-1126) and the
 route's Models popover must list them all (AG-1127).
 """
 
+from typing import Any
+
 import pytest
 
 from radicalbit_ai_gateway.models.gateway_config import GatewayConfig, RouteModelIds
 from radicalbit_ai_gateway.services.event_service import EventService
 
 
-def _decision_model(model_id: str) -> dict:
+def _decision_model(model_id: str) -> dict[str, Any]:
     return {
         'model_id': model_id,
         'model': 'typesafe/jev-latest',
@@ -17,7 +19,9 @@ def _decision_model(model_id: str) -> dict:
     }
 
 
-def _block(name: str, guardrail_type: str, parameters: dict) -> dict:
+def _block(
+    name: str, guardrail_type: str, parameters: dict[str, Any]
+) -> dict[str, Any]:
     return {
         'name': name,
         'type': guardrail_type,
@@ -162,10 +166,30 @@ def test_decision_cost_is_shown_for_every_way_a_route_calls_a_decision_model(
     assert has_decision_models is expected
 
 
+@pytest.mark.parametrize(
+    ('route', 'expected'),
+    [
+        ('semantic-routed', True),
+        ('semantic-cached', True),
+        ('llm-routed', False),
+        ('plain', False),
+    ],
+)
+def test_embedding_cost_is_shown_for_every_way_a_route_calls_an_embedding_model(
+    config, route, expected
+):
+    _, _, has_embedding_models, *_ = config.get_route_feature_flags(
+        config.routes[route]
+    )
+
+    assert has_embedding_models is expected
+
+
 def test_used_models_carry_names_and_own_lists_stay_as_configured(config):
     out = EventService._build_route_config_out(config.routes['decision-judged'], config)
 
     assert out.decision_models is None
+    assert out.used_models is not None
     assert [m.model for m in out.used_models.chat] == ['openai/gpt-4o-mini']
     assert [m.model_id for m in out.used_models.decision] == ['jev', 'jev-judge-backup']
     assert out.model_dump(by_alias=True)['usedModels']['decision'][0]['model'] == (
@@ -179,5 +203,7 @@ def test_used_models_list_llm_judge_and_semantic_cache_models(config):
         config.routes['semantic-cached'], config
     )
 
+    assert judged.used_models is not None
+    assert cached.used_models is not None
     assert [m.model_id for m in judged.used_models.chat] == ['chat-a', 'judge']
     assert [m.model_id for m in cached.used_models.embedding] == ['emb']

@@ -7,11 +7,7 @@ import { useSearchParams } from 'react-router-dom';
 import { EMPTY_ROW, TagsFilterContextProvider, useTagsFilterContext } from './context';
 import TagRow from './tag-row';
 
-const POPOVER_MIN_WIDTH = 520;
-
 const OVERLAY_SELECTORS = '.c-popover, .ant-select-dropdown';
-
-const TRIGGER_WIDTH = 150;
 
 const OPEN_KEYS = ['Enter', ' ', 'ArrowDown'];
 
@@ -39,7 +35,7 @@ function TagsFilterInner({ id }) {
       <Select
         disabled
         id={id}
-        minWidth={TRIGGER_WIDTH}
+        minWidth={150}
         placeholder="Select a project first"
       />
     );
@@ -48,7 +44,7 @@ function TagsFilterInner({ id }) {
   return (
     <Popover
       content={<PopoverContent />}
-      minWidth={POPOVER_MIN_WIDTH}
+      minWidth={520}
       open={isOpen}
       placement="bottomLeft"
       trigger={[]}
@@ -56,7 +52,7 @@ function TagsFilterInner({ id }) {
       <div ref={wrapperRef}>
         <Select
           id={id}
-          minWidth={TRIGGER_WIDTH}
+          minWidth={150}
           onClick={handleOnTriggerClick}
           onKeyDown={handleOnTriggerKeyDown}
           open={false}

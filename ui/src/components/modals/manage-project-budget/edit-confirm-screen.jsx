@@ -1,3 +1,4 @@
+import HtmlAnchor from '@Components/html-anchor';
 import Lucide from '@Components/lucide';
 import { COUNTER_RESTARTS_NOTE } from '@Components/limits/constants';
 import {
@@ -10,24 +11,15 @@ import { useGetProjectBudgetQuery } from '@State/projects/api';
 import { useFormbitContext } from '@radicalbit/formbit';
 import { Button, FormField, Skeleton } from '@radicalbit/radicalbit-design-system';
 import { ArrowLeft } from 'lucide-react';
-import { Link } from 'react-router-dom';
 import useHandleOnReplace from './useHandleOnReplace';
-
-const STALE_RULES_SUBJECT = 'on the current budget';
-
-const STALE_RULES_UNAVAILABLE = 'Unable to check alert rules on this budget.';
-
-const FLUSH_BUTTON = '!min-w-0 !px-0';
 
 function EditConfirmScreen() {
   const { errorMessage, handleOnBack, newLabel, oldLabel } = useHandleOnReplace();
 
-  const errorField = errorMessage ? <FormField message={errorMessage} /> : false;
-
   return (
     <div className="flex flex-col gap-6">
       <div>
-        <Button className={FLUSH_BUTTON} icon={<Lucide icon={ArrowLeft} />} onClick={handleOnBack} type="text">Back</Button>
+        <Button className="!min-w-0 !px-0" icon={<Lucide icon={ArrowLeft} />} onClick={handleOnBack} type="text">Back</Button>
       </div>
 
       <div className="flex flex-col gap-2 focus:outline-none" data-confirm-question tabIndex={-1}>
@@ -47,7 +39,7 @@ function EditConfirmScreen() {
 
         <StaleRules />
 
-        {errorField}
+        {errorMessage && <FormField message={errorMessage} />}
       </div>
     </div>
   );
@@ -72,7 +64,7 @@ function StaleRules() {
   }
 
   if (isError) {
-    return <span className="text-[var(--coo-warning)]">{STALE_RULES_UNAVAILABLE}</span>;
+    return <span className="text-[var(--coo-warning)]">Unable to check alert rules on this budget.</span>;
   }
 
   if (!isSuccess || !limit) {
@@ -100,21 +92,21 @@ function StaleRulesText({ rules }) {
       <span className="text-[var(--coo-warning)]">
         {'Alert rule '}
 
-        <Link className="c-anchor light" onClick={hideModal} to={`/${PathsEnum.ALERTS}/${rule.uuid}`}><strong>{rule.name}</strong></Link>
+        <HtmlAnchor className="light" onClick={hideModal} to={`/${PathsEnum.ALERTS}/${rule.uuid}`}><strong>{rule.name}</strong></HtmlAnchor>
 
-        {` ${STALE_RULES_SUBJECT} will become stale.`}
+        {' on the current budget will become stale.'}
       </span>
     );
   }
 
-  const title = `${formatCount(rules.length, 'alert rule')} ${STALE_RULES_SUBJECT} will become stale:`;
+  const title = `${formatCount(rules.length, 'alert rule')} on the current budget will become stale:`;
 
   return (
     <div className="flex flex-col gap-1 text-[var(--coo-warning)]">
       <span>{title}</span>
 
       <ul className="m-0 pl-5 list-disc">
-        {rules.map((rule) => <li key={rule.uuid}><Link className="c-anchor light" onClick={hideModal} to={`/${PathsEnum.ALERTS}/${rule.uuid}`}>{rule.name}</Link></li>)}
+        {rules.map((rule) => <li key={rule.uuid}><HtmlAnchor className="light" onClick={hideModal} to={`/${PathsEnum.ALERTS}/${rule.uuid}`}>{rule.name}</HtmlAnchor></li>)}
       </ul>
     </div>
   );

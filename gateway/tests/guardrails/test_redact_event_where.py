@@ -6,18 +6,22 @@ import uuid
 
 import pytest
 
+from tests.common.guardrails import apply_redact
 from tests.common.mocked_gateway_config_openai import get_default_gateway_openai
 
 from radicalbit_ai_gateway.alerting.alert_dispatch import alert_event
-from radicalbit_ai_gateway.guardrails.guardrail_engine import GuardrailEngine
+from radicalbit_ai_gateway.guardrails.guardrails import Guardrails
 from radicalbit_ai_gateway.guardrails.judges.judge_engine import JudgeEngine
 from radicalbit_ai_gateway.guardrails.presidio import PresidioEngine
 from radicalbit_ai_gateway.llm.messages import HumanMessage
+from radicalbit_ai_gateway.models.event_payload import (
+    GuardrailEventBehavior,
+    GuardrailEventPayload,
+)
 from radicalbit_ai_gateway.models.guardrails import (
-    Guardrail,
-    GuardrailBehaviorType,
     GuardrailType,
     GuardrailWhereType,
+    PresidioAnonymizerGuardrail,
     RedactParameter,
 )
 from radicalbit_ai_gateway.prompt_manager import PromptManager
@@ -25,15 +29,14 @@ from radicalbit_ai_gateway.services.cost_service import CostService
 
 
 @pytest.fixture(scope='module')
-def guardrail_engine():
-    io_guardrail = Guardrail(
+def project_guardrails():
+    io_guardrail = PresidioAnonymizerGuardrail(
         name='redact_email',
         type=GuardrailType.PRESIDIO_ANONYMIZER,
-        behavior=GuardrailBehaviorType.BLOCK,
         where=GuardrailWhereType.IO,
         parameters=RedactParameter(language='it', entities=['EMAIL_ADDRESS']),
     )
-    return GuardrailEngine(
+    return Guardrails(
         presidio_engine=PresidioEngine(),
         judge_engine=JudgeEngine(prompt_manager=MagicMock(spec_set=PromptManager)),
         cost_service=MagicMock(spec_set=CostService),
@@ -41,13 +44,14 @@ def guardrail_engine():
     )
 
 
-async def _redact(guardrail_engine, where):
+async def _redact(project_guardrails, where):
     route_config = copy.deepcopy(get_default_gateway_openai().routes['rb-gateway'])
     route_config.guardrails = ['redact_email']
     with patch(
         'radicalbit_ai_gateway.guardrails.guardrail_redact.emit_event', autospec=True
     ) as emit_event:
-        await guardrail_engine.guardrail_redact.apply_guardrails(
+        await apply_redact(
+            project_guardrails,
             request_uuid=str(uuid.uuid4()),
             api_key_uuid=str(uuid.uuid4()),
             group_uuid=str(uuid.uuid4()),
@@ -69,9 +73,9 @@ async def _redact(guardrail_engine, where):
     [(GuardrailWhereType.INPUT, 'INPUT'), (GuardrailWhereType.OUTPUT, 'OUTPUT')],
 )
 async def test_an_io_redaction_reports_the_phase_it_evaluated(
-    guardrail_engine, where, expected
+    project_guardrails, where, expected
 ):
-    event = await _redact(guardrail_engine, where)
+    event = await _redact(project_guardrails, where)
 
     assert event.where == expected
 
@@ -85,8 +89,26 @@ async def test_an_io_redaction_reports_the_phase_it_evaluated(
     ],
 )
 async def test_an_io_redaction_reaches_the_alert_rule_for_its_phase(
-    guardrail_engine, where, expected
+    project_guardrails, where, expected
 ):
-    event = await _redact(guardrail_engine, where)
+    event = await _redact(project_guardrails, where)
 
-    assert alert_event(event).key == expected
+    alert = alert_event(event)
+    assert alert is not None
+    assert alert.key == expected
+
+
+@pytest.mark.asyncio
+async def test_a_redaction_records_redact_not_a_behavior(project_guardrails):
+    # An anonymizer has no behavior: its event and log say it redacted, not
+    # that it blocked.
+    with patch(
+        'radicalbit_ai_gateway.guardrails.guardrail_redact.guardrails_triggered_counter',
+        autospec=True,
+    ) as counter:
+        event = await _redact(project_guardrails, GuardrailWhereType.INPUT)
+
+    assert isinstance(event, GuardrailEventPayload)
+    assert event.behavior is GuardrailEventBehavior.REDACT
+    assert event.model_dump()['behavior'] == 'REDACT'
+    assert counter.add.call_args.args[1]['behavior'] == 'REDACT'

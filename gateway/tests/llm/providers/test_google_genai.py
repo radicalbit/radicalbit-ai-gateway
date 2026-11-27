@@ -1,6 +1,7 @@
 """Tests for the native Gemini chat and embedding models."""
 
 import base64
+from typing import Any
 
 from google.genai import errors, types
 import httpx
@@ -59,7 +60,9 @@ PNG = (
 
 
 def model(name: str = 'gemini-2.5-flash', **kwargs) -> ChatGoogleGenerativeAI:
-    return init_chat_model(f'google-genai:{name}', api_key='sk', **kwargs)
+    chat_model = init_chat_model(f'google-genai:{name}', api_key='sk', **kwargs)
+    assert isinstance(chat_model, ChatGoogleGenerativeAI)
+    return chat_model
 
 
 async def invoke(chat_model, responses, messages=MESSAGES, **kwargs):
@@ -249,8 +252,8 @@ async def test_image_blocks_become_inline_data():
     )
     parts = requests[0]['body']['contents'][0]['parts']
     assert parts[0] == {'text': 'What is this?'}
-    # The SDK serializes bytes as url-safe base64.
-    expected = {'inlineData': {'data': PNG.replace('+', '-'), 'mimeType': 'image/png'}}
+    # The SDK serializes bytes as url-safe base64, and the blob's own keys in snake_case.
+    expected = {'inlineData': {'data': PNG.replace('+', '-'), 'mime_type': 'image/png'}}
     assert parts[1] == parts[2] == expected
 
 
@@ -442,9 +445,11 @@ async def test_structured_output_parsing_error():
 
 
 def embeddings(**kwargs) -> GoogleGenerativeAIEmbeddings:
-    return init_embeddings(
+    embedding_model = init_embeddings(
         'gemini-embedding-001', provider='google-genai', api_key='sk', **kwargs
     )
+    assert isinstance(embedding_model, GoogleGenerativeAIEmbeddings)
+    return embedding_model
 
 
 async def test_embed_documents_and_query_task_types():
@@ -485,6 +490,19 @@ def test_batches_split_by_size_and_tokens():
 async def test_embedding_errors_are_wrapped():
     with (
         ProviderRecorder([gemini_error(400, 'bad', 'INVALID_ARGUMENT')]),
+        pytest.raises(GoogleGenerativeAIError, match='Error embedding content'),
+    ):
+        await embeddings().aembed_query('q')
+
+
+@pytest.mark.parametrize(
+    'body',
+    [{}, {'embeddings': []}, {'embeddings': [{}]}],
+    ids=['no embeddings', 'empty embeddings', 'embedding without values'],
+)
+async def test_a_query_without_a_vector_is_an_embedding_error(body):
+    with (
+        ProviderRecorder([CannedResponse(json_body=body)]),
         pytest.raises(GoogleGenerativeAIError, match='Error embedding content'),
     ):
         await embeddings().aembed_query('q')
@@ -640,7 +658,7 @@ async def test_json_object_response_format_sets_only_the_mime_type():
 # ── Request: tools ───────────────────────────────────────────────────────────
 
 
-async def tool_request(tools, **kwargs) -> dict:
+async def tool_request(tools, **kwargs) -> dict[str, Any]:
     chat_model = model().bind_tools(tools, tool_choice=kwargs.pop('tool_choice', None))
     _, requests = await invoke(chat_model, [canned.gemini_response()], **kwargs)
     return requests[0]['body']
@@ -758,7 +776,7 @@ async def test_tool_choice_conflicting_with_tool_config_fails_the_call():
 # ── Request: tool schemas ────────────────────────────────────────────────────
 
 
-async def declared_parameters(parameters: dict) -> dict:
+async def declared_parameters(parameters: dict[str, Any]) -> dict[str, Any]:
     tool = {'name': 'f', 'parameters': parameters}
     body = await tool_request([tool])
     return body['tools'][0]['functionDeclarations'][0]['parameters']
@@ -992,7 +1010,7 @@ def wire_b64(data: bytes) -> str:
     return base64.urlsafe_b64encode(data).decode()
 
 
-async def user_parts(content, chat_model=None, responses=()) -> list[dict]:
+async def user_parts(content, chat_model=None, responses=()) -> list[dict[str, Any]]:
     _, requests = await invoke(
         chat_model or model(),
         [*responses, canned.gemini_response()],
@@ -1042,17 +1060,17 @@ async def test_file_and_provider_resolved_blocks_become_file_data():
     )
     assert parts == [
         {
-            'fileData': {'fileUri': 'files/abc', 'mimeType': 'application/pdf'},
+            'fileData': {'file_uri': 'files/abc', 'mime_type': 'application/pdf'},
             'mediaProcessing': 'STATIC',
         },
         {
             'fileData': {
-                'fileUri': 'files/def',
-                'mimeType': 'application/octet-stream',
+                'file_uri': 'files/def',
+                'mime_type': 'application/octet-stream',
             }
         },
-        {'fileData': {'fileUri': 'https://www.youtube.com/watch?v=1'}},
-        {'fileData': {'fileUri': 'files/img', 'mimeType': 'image/png'}},
+        {'fileData': {'file_uri': 'https://www.youtube.com/watch?v=1'}},
+        {'fileData': {'file_uri': 'files/img', 'mime_type': 'image/png'}},
     ]
 
 
@@ -1068,9 +1086,9 @@ async def test_inline_data_blocks_are_decoded_or_downloaded():
     )
     assert parts == [
         # The mime type is sniffed from the bytes.
-        {'inlineData': {'data': wire_b64(PNG_BYTES), 'mimeType': 'image/png'}},
+        {'inlineData': {'data': wire_b64(PNG_BYTES), 'mime_type': 'image/png'}},
         # ... or guessed from the URL.
-        {'inlineData': {'data': wire_b64(b'"pixels"'), 'mimeType': 'image/png'}},
+        {'inlineData': {'data': wire_b64(b'"pixels"'), 'mime_type': 'image/png'}},
         {'inlineData': {'data': wire_b64(b'"pixels"')}},
     ]
 
@@ -1115,7 +1133,7 @@ async def test_image_url_variants():
         responses=[CannedResponse(json_body='pixels')],
     )
     assert parts == [
-        {'fileData': {'fileUri': 'gs://bucket/cat.jpg', 'mimeType': 'image/jpeg'}},
+        {'fileData': {'file_uri': 'gs://bucket/cat.jpg', 'mime_type': 'image/jpeg'}},
         {
             'inlineData': {'data': wire_b64(b'"pixels"')},
             'thoughtSignature': wire_b64(b'sig'),
@@ -1157,13 +1175,13 @@ async def test_media_blocks():
         ]
     )
     assert parts == [
-        {'inlineData': {'data': wire_b64(PNG_BYTES), 'mimeType': 'image/png'}},
+        {'inlineData': {'data': wire_b64(PNG_BYTES), 'mime_type': 'image/png'}},
         {
-            'inlineData': {'data': wire_b64(b'raw'), 'mimeType': 'audio/wav'},
+            'inlineData': {'data': wire_b64(b'raw'), 'mime_type': 'audio/wav'},
             'thoughtSignature': wire_b64(b'sig'),
         },
         {
-            'fileData': {'fileUri': 'files/v', 'mimeType': 'video/mp4'},
+            'fileData': {'file_uri': 'files/v', 'mime_type': 'video/mp4'},
             'mediaProcessing': 'AGENTIC',
             'thoughtSignature': wire_b64(b'sig'),
             # The SDK leaves this nested key in snake_case.
@@ -1188,7 +1206,7 @@ async def test_invalid_media_blocks_fail_the_call(block, match):
 # ── Request: conversation history ────────────────────────────────────────────
 
 
-async def contents_for(messages, chat_model=None) -> list[dict]:
+async def contents_for(messages, chat_model=None) -> list[dict[str, Any]]:
     _, requests = await invoke(
         chat_model or model(), [canned.gemini_response()], messages
     )
@@ -1228,7 +1246,7 @@ async def test_gcs_uris_are_dropped_from_ai_history():
     contents = await contents_for([HumanMessage('a'), history, HumanMessage('b')])
     assert contents[1]['parts'] == [
         {'text': 'text'},
-        {'fileData': {'fileUri': 'files/7', 'mimeType': 'video/mp4'}},
+        {'fileData': {'file_uri': 'files/7', 'mime_type': 'video/mp4'}},
     ]
 
 
@@ -1259,8 +1277,8 @@ async def test_tool_calling_turn_keeps_content_and_signatures():
             {'text': 'thinking aloud'},
             {
                 'fileData': {
-                    'fileUri': 'files/x',
-                    'mimeType': 'application/octet-stream',
+                    'file_uri': 'files/x',
+                    'mime_type': 'application/octet-stream',
                 }
             },
             {
@@ -1305,7 +1323,7 @@ async def test_tool_results_with_media_and_plain_text():
     contents = await contents_for(messages)
     assert contents[2] == {
         'parts': [
-            {'inlineData': {'data': wire_b64(PNG_BYTES), 'mimeType': 'image/png'}},
+            {'inlineData': {'data': wire_b64(PNG_BYTES), 'mime_type': 'image/png'}},
             {
                 'functionResponse': {
                     'name': 'snap',
@@ -1368,7 +1386,9 @@ async def test_later_system_messages_extend_the_instruction():
 # ── Response: content parts ──────────────────────────────────────────────────
 
 
-def gemini_payload(parts, *, model_version='gemini-2.5-flash', **candidate) -> dict:
+def gemini_payload(
+    parts, *, model_version='gemini-2.5-flash', **candidate
+) -> dict[str, Any]:
     return {
         'candidates': [
             {
@@ -1389,6 +1409,7 @@ def gemini_payload(parts, *, model_version='gemini-2.5-flash', **candidate) -> d
 async def reply(parts, **kwargs) -> AIMessage:
     payload = CannedResponse(json_body=gemini_payload(parts, **kwargs))
     result, _ = await invoke(model(), [payload])
+    assert isinstance(result, AIMessage)
     return result
 
 
@@ -1428,6 +1449,8 @@ async def test_code_execution_parts():
         ]
     )
     text, code, ok, failed = result.content
+    assert isinstance(code, dict)
+    assert isinstance(failed, dict)
     assert text == 'Running.'
     assert code['type'] == 'executable_code'
     assert code['executable_code'] == 'print(1)'
@@ -1465,6 +1488,8 @@ async def test_server_tool_parts():
         ]
     )
     call, response, bare_call, bare_response = result.content
+    assert isinstance(bare_call, dict)
+    assert isinstance(bare_response, dict)
     assert call == {
         'type': 'server_tool_call',
         'name': 'google_search_web',
@@ -1560,6 +1585,7 @@ async def test_grounding_metadata_is_exposed():
     assert grounding['grounding_supports'] == []
 
 
+@pytest.mark.filterwarnings('ignore:SOMETHING_NEW is not a valid FinishReason')
 async def test_unknown_finish_reason_is_named():
     result = await reply([{'text': 'x'}], finishReason='SOMETHING_NEW')
     assert result.response_metadata['finish_reason'] == 'SOMETHING_NEW'
@@ -1688,8 +1714,8 @@ async def test_gcs_and_downloaded_blocks_with_a_custom_http_client():
             responses=[CannedResponse(json_body='pixels')],
         )
     assert parts == [
-        {'fileData': {'fileUri': 'gs://bucket/x.png', 'mimeType': 'image/png'}},
-        {'inlineData': {'data': wire_b64(b'"pixels"'), 'mimeType': 'image/png'}},
+        {'fileData': {'file_uri': 'gs://bucket/x.png', 'mime_type': 'image/png'}},
+        {'inlineData': {'data': wire_b64(b'"pixels"'), 'mime_type': 'image/png'}},
     ]
 
 

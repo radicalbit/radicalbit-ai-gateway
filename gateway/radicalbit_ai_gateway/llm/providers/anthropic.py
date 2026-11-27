@@ -10,7 +10,7 @@ list of raw blocks.
 
 from collections.abc import AsyncIterator, Mapping, Sequence
 import copy
-import datetime
+import datetime as dt
 from functools import cache, lru_cache
 import hashlib
 import inspect
@@ -18,11 +18,13 @@ import json
 import logging
 import os
 import re
-from typing import Any
+from typing import Any, TypeGuard
 import warnings
 
 import anthropic
+from anthropic.resources.messages import Messages
 from pydantic import BaseModel
+from typing_extensions import override
 
 from radicalbit_ai_gateway.llm.chat_model import ChatModel, StructuredChatModel
 from radicalbit_ai_gateway.llm.messages import (
@@ -33,10 +35,17 @@ from radicalbit_ai_gateway.llm.messages import (
     SystemMessage,
     ToolCall,
     ToolMessage,
+    UsageMetadata,
     tool_call,
     tool_call_chunk,
 )
+from radicalbit_ai_gateway.llm.providers._schema import (
+    OutputParserError,
+    is_data_content_block,
+    rm_titles,
+)
 from radicalbit_ai_gateway.llm.providers._sse import iter_sse_events
+from radicalbit_ai_gateway.llm.usage import input_token_details, messages_usage
 
 logger = logging.getLogger(__name__)
 
@@ -160,7 +169,6 @@ _OPENAI_TOOL_TYPES = (
 )
 _TOP_LEVEL_COMPOSITION_KEYS = ('oneOf', 'anyOf')
 _SAMPLING_PARAMS = ('temperature', 'top_p', 'top_k')
-_DATA_BLOCK_TYPES = ('image', 'video', 'audio', 'text-plain', 'file')
 
 # Content blocks copied with only these fields.
 _FILTERED_BLOCK_FIELDS = {
@@ -199,10 +207,6 @@ _THINKING_ADMONITION = (
     'raise an OutputParserException if tool calls are not generated. Consider '
     'disabling `thinking` or adjust your prompt to ensure the tool is called.'
 )
-
-
-class OutputParserError(ValueError):
-    """A structured reply could not be parsed into its schema."""
 
 
 def build_chat_model(model_name: str, **kwargs: Any) -> 'ChatAnthropic':
@@ -324,7 +328,21 @@ class ChatAnthropic(ChatModel):
 
     # ── tools and structured output ─────────────────────────────────────────
 
-    def bind_tools(self, tools: list[dict], tool_choice: Any = None) -> 'ChatAnthropic':
+    @override
+    def _adapt_kwargs(self, kwargs: dict[str, Any]) -> dict[str, Any]:
+        adapted = dict(kwargs)
+        if 'max_completion_tokens' in adapted:
+            adapted['max_tokens'] = adapted.pop('max_completion_tokens')
+        # OpenAI's; Anthropic rejects it and reports usage in every stream.
+        adapted.pop('stream_options', None)
+        return adapted
+
+    @override
+    def bind_tools(
+        self,
+        tools: Sequence[Mapping[str, Any] | type[BaseModel]],
+        tool_choice: Any = None,
+    ) -> 'ChatAnthropic':
         formatted = [
             tool if _is_builtin_tool(tool) else _convert_tool(tool) for tool in tools
         ]
@@ -406,6 +424,7 @@ class ChatAnthropic(ChatModel):
             'adaptive',
         )
 
+    @override
     def with_structured_output(
         self, schema: type[BaseModel], include_raw: bool = False
     ) -> StructuredChatModel:
@@ -421,10 +440,14 @@ class ChatAnthropic(ChatModel):
 
     # ── tracing ─────────────────────────────────────────────────────────────
 
+    @override
     def _server_url(self) -> str | None:
         return self.anthropic_api_url
 
-    def _invocation_params(self, stop: list[str] | None = None, **kwargs: Any) -> dict:
+    @override
+    def _invocation_params(
+        self, stop: list[str] | None = None, **kwargs: Any
+    ) -> dict[str, Any]:
         return {
             'model': self.model,
             'max_tokens': self.max_tokens,
@@ -436,7 +459,8 @@ class ChatAnthropic(ChatModel):
             **kwargs,
         }
 
-    def _llm_output(self, message: AIMessage) -> dict | None:
+    @override
+    def _llm_output(self, message: AIMessage) -> dict[str, Any] | None:
         metadata = message.response_metadata
         return {
             'model_name': metadata.get('model_name'),
@@ -446,12 +470,14 @@ class ChatAnthropic(ChatModel):
 
     # ── invocation ──────────────────────────────────────────────────────────
 
+    @override
     async def _agenerate(self, messages: list[BaseMessage], **kwargs: Any) -> AIMessage:
         stop = kwargs.pop('stop', None)
         payload = self._request_payload(messages, stop=stop, **kwargs)
         data = await (await self._create(payload)).parse()
         return _format_output(data)
 
+    @override
     async def _astream(
         self, messages: list[BaseMessage], **kwargs: Any
     ) -> AsyncIterator[AIMessageChunk]:
@@ -491,10 +517,13 @@ class ChatAnthropic(ChatModel):
     # not merged in. The gateway's retries and fallback are the only retry
     # layer, so the SDK does not retry.
 
+    @override
     def supports_native_messages(self) -> bool:
         return True
 
-    def _native_messages_call(self, body: dict, headers: dict[str, str]) -> dict:
+    def _native_messages_call(
+        self, body: dict[str, Any], headers: dict[str, str]
+    ) -> dict[str, Any]:
         """Return the SDK call's arguments for a client's Messages body."""
         forwarded = {
             'anthropic-version': headers.get('anthropic-version')
@@ -511,17 +540,19 @@ class ChatAnthropic(ChatModel):
             'extra_headers': forwarded,
         }
 
+    @override
     async def _ainvoke_native_messages(
-        self, body: dict, headers: dict[str, str]
-    ) -> dict:
+        self, body: dict[str, Any], headers: dict[str, str]
+    ) -> dict[str, Any]:
         client = self.client.with_options(max_retries=0)
         response = await client.messages.with_raw_response.create(
             **self._native_messages_call(body, headers)
         )
         return response.http_response.json()
 
+    @override
     async def _astream_native_messages(
-        self, body: dict, headers: dict[str, str]
+        self, body: dict[str, Any], headers: dict[str, str]
     ) -> AsyncIterator[tuple[str, str]]:
         client = self.client.with_options(max_retries=0)
         async with client.messages.with_streaming_response.create(
@@ -622,7 +653,7 @@ class ChatAnthropic(ChatModel):
         self, payload: dict[str, Any], messages: Sequence[BaseMessage]
     ) -> None:
         container = payload.get('container')
-        if not self.reuse_last_container or _container_id(container):
+        if not self.reuse_last_container or _has_container_id(container):
             return
         # Reuse the container of the most recent reply (code execution).
         for message in reversed(messages):
@@ -708,6 +739,7 @@ class _StructuredAnthropic(StructuredChatModel):
         self.include_raw = include_raw
         self.require_tool = require_tool
 
+    @override
     async def ainvoke(self, input: Sequence[BaseMessage], **kwargs: Any) -> Any:  # noqa: A002
         raw = await self.model.ainvoke(input, **kwargs)
         if self.require_tool and not raw.tool_calls:
@@ -780,9 +812,7 @@ def _first_env(*names: str) -> str | None:
 @cache
 def _unsupported_sampling_params() -> frozenset[str]:
     """Return the sampling params the installed SDK's ``create`` rejects."""
-    accepted = inspect.signature(
-        anthropic.resources.messages.Messages.create
-    ).parameters
+    accepted = inspect.signature(Messages.create).parameters
     return frozenset(p for p in _SAMPLING_PARAMS if p not in accepted)
 
 
@@ -834,18 +864,18 @@ def _apply_required_betas(payload: dict[str, Any]) -> None:
         _add_beta(payload, 'user-profiles-2026-03-24')
 
 
-def _container_id(container: Any) -> str | None:
+def _has_container_id(container: Any) -> bool:
     if isinstance(container, str):
-        return container
+        return bool(container)
     if isinstance(container, dict):
-        return container.get('id')
-    return None
+        return bool(container.get('id'))
+    return False
 
 
 # ── tools ───────────────────────────────────────────────────────────────────
 
 
-def _is_builtin_tool(tool: Any) -> bool:
+def _is_builtin_tool(tool: Any) -> TypeGuard[dict[str, Any]]:
     """Whether ``tool`` is a server-side Anthropic tool, sent as is."""
     if not isinstance(tool, dict):
         return False
@@ -907,7 +937,7 @@ def _openai_function(tool: Mapping[str, Any] | type[BaseModel]) -> dict[str, Any
         return {
             'name': name,
             'description': description,
-            'parameters': _rm_titles(schema),
+            'parameters': rm_titles(schema),
         }
     raise ValueError(f'Unsupported function\n\n{tool}')
 
@@ -930,20 +960,6 @@ def _dereference(schema: dict[str, Any]) -> dict[str, Any]:
         return {k: resolve(v, seen) for k, v in node.items()}
 
     return resolve(copy.deepcopy(schema), ())
-
-
-def _rm_titles(kv: dict[str, Any], prev_key: str = '') -> dict[str, Any]:
-    """Drop JSON-schema ``title``s, keeping properties that are named title."""
-    new_kv = {}
-    for k, v in kv.items():
-        if k == 'title':
-            if isinstance(v, dict) and prev_key == 'properties':
-                new_kv[k] = _rm_titles(v, k)
-        elif isinstance(v, dict):
-            new_kv[k] = _rm_titles(v, k)
-        else:
-            new_kv[k] = v
-    return new_kv
 
 
 def _drop_unsupported_root_composition_tools(
@@ -985,7 +1001,7 @@ def _normalize_tool_call_id(tool_call_id: str | None) -> str | None:
     return f'toolu_{digest[:24]}'
 
 
-def _normalize_block_tool_use_id(block: dict) -> dict:
+def _normalize_block_tool_use_id(block: dict[str, Any]) -> dict[str, Any]:
     if 'tool_use_id' in block:
         return {**block, 'tool_use_id': _normalize_tool_call_id(block['tool_use_id'])}
     return block
@@ -1015,7 +1031,7 @@ def _merge_messages(messages: Sequence[BaseMessage]) -> list[BaseMessage]:
             for c in (SystemMessage, HumanMessage)
         ):
             if isinstance(last.content, str):
-                new_content: list = [{'type': 'text', 'text': last.content}]
+                new_content: list[Any] = [{'type': 'text', 'text': last.content}]
             else:
                 new_content = copy.copy(last.content)
             if isinstance(curr.content, str):
@@ -1028,7 +1044,7 @@ def _merge_messages(messages: Sequence[BaseMessage]) -> list[BaseMessage]:
     return merged
 
 
-def _tool_result_content(message: ToolMessage) -> list:
+def _tool_result_content(message: ToolMessage) -> list[Any]:
     content = message.content
     if (
         isinstance(content, list)
@@ -1062,10 +1078,10 @@ def _tool_result_content(message: ToolMessage) -> list:
 
 def _format_messages(
     messages: Sequence[BaseMessage],
-) -> tuple[str | list[dict] | None, list[dict]]:
+) -> tuple[str | list[dict[str, Any]] | None, list[dict[str, Any]]]:
     """Split ``messages`` into Anthropic's system prompt and message list."""
-    system: str | list[dict] | None = None
-    formatted: list[dict] = []
+    system: str | list[dict[str, Any]] | None = None
+    formatted: list[dict[str, Any]] = []
     merged = _merge_messages(messages)
     for i, message in enumerate(merged):
         if message.type == 'system':
@@ -1087,7 +1103,7 @@ def _format_messages(
             continue
 
         role = _ROLES[message.type]
-        content: str | list
+        content: str | list[Any]
         if isinstance(message.content, str):
             content = message.content
         elif isinstance(message.content, list):
@@ -1132,7 +1148,7 @@ def _format_messages(
     return system, formatted
 
 
-def _format_block(block: Any, message: BaseMessage) -> list[dict]:
+def _format_block(block: Any, message: BaseMessage) -> list[dict[str, Any]]:
     """Format one content block of a user or assistant message."""
     if isinstance(block, str):
         return [{'type': 'text', 'text': block}]
@@ -1150,7 +1166,7 @@ def _format_block(block: Any, message: BaseMessage) -> list[dict]:
         return []
     if block_type == 'image_url':
         return [{'type': 'image', 'source': _format_image(block['image_url']['url'])}]
-    if _is_data_content_block(block):
+    if is_data_content_block(block):
         return [_format_data_content_block(block)]
     if block_type == 'tool_use':
         return [_format_tool_use(block, message)]
@@ -1209,7 +1225,7 @@ def _format_block(block: Any, message: BaseMessage) -> list[dict]:
     return [block]
 
 
-def _format_tool_use(block: dict, message: BaseMessage) -> dict:
+def _format_tool_use(block: dict[str, Any], message: BaseMessage) -> dict[str, Any]:
     # A tool call with the same id is preferred over the block.
     if (
         isinstance(message, AIMessage)
@@ -1238,7 +1254,7 @@ def _format_tool_use(block: dict, message: BaseMessage) -> dict:
     return tool_use
 
 
-def _format_text_block(block: dict) -> dict:
+def _format_text_block(block: dict[str, Any]) -> dict[str, Any]:
     """Keep only the text-block fields the API accepts."""
     formatted = {
         k: v
@@ -1253,7 +1269,7 @@ def _format_text_block(block: dict) -> dict:
     return formatted
 
 
-def _format_image(url: str) -> dict:
+def _format_image(url: str) -> dict[str, Any]:
     """Convert an OpenAI image URL (http or data URI) to an Anthropic source."""
     if match := re.match(r'^data:(?P<media_type>image/.+);base64,(?P<data>.+)$', url):
         return {
@@ -1270,22 +1286,9 @@ def _format_image(url: str) -> dict:
     )
 
 
-def _is_data_content_block(block: dict) -> bool:
-    """Whether ``block`` is a multimodal data block (image, file, ...)."""
-    if block.get('type') not in _DATA_BLOCK_TYPES:
-        return False
-    if any(key in block for key in ('url', 'base64', 'file_id', 'text')):
-        return True
-    source_type = block.get('source_type')
-    return (
-        (source_type == 'url' and 'url' in block)
-        or (source_type == 'base64' and 'data' in block)
-        or (source_type == 'id' and 'id' in block)
-        or (source_type == 'text' and 'url' in block)
-    )
-
-
-def _data_source(block: dict, default_mime: str | None) -> dict | None:
+def _data_source(
+    block: dict[str, Any], default_mime: str | None
+) -> dict[str, Any] | None:
     if 'url' in block:
         return None
     if 'base64' in block or block.get('source_type') == 'base64':
@@ -1307,7 +1310,7 @@ def _data_source(block: dict, default_mime: str | None) -> dict | None:
     return None
 
 
-def _format_data_content_block(block: dict) -> dict:
+def _format_data_content_block(block: dict[str, Any]) -> dict[str, Any]:
     """Format an image or file block as an Anthropic image or document block."""
     block_type = block['type']
     if block_type == 'image':
@@ -1381,7 +1384,7 @@ def _format_output(data: Any) -> AIMessage:
         k: v for k, v in data_dict.items() if k not in ('content', 'role', 'type')
     }
     if isinstance(container := llm_output.get('container'), dict) and isinstance(
-        expires_at := container.get('expires_at'), datetime.datetime
+        expires_at := container.get('expires_at'), dt.datetime
     ):
         container['expires_at'] = expires_at.isoformat()
     if 'model' in llm_output and 'model_name' not in llm_output:
@@ -1457,9 +1460,7 @@ def _chunk_from_event(
             if block.type == 'text':
                 if text := getattr(block, 'text', '') or '':
                     chunk = AIMessageChunk(content=text)
-            elif (getattr(block, 'thinking', '') or '') or (
-                getattr(block, 'signature', '') or ''
-            ):
+            elif getattr(block, 'thinking', '') or getattr(block, 'signature', ''):
                 chunk = AIMessageChunk(content='')
     elif event.type == 'content_block_delta':
         delta_type = event.delta.type
@@ -1502,41 +1503,41 @@ def _chunk_from_event(
     return chunk, block_start
 
 
-def _usage_metadata(usage: Any) -> dict[str, Any]:
-    """Usage in gateway terms: input_tokens includes cache reads and writes."""
-    input_token_details: dict[str, Any] = {
+def _usage_metadata(usage: Any) -> UsageMetadata:
+    """Usage in gateway terms: input_tokens includes cache reads and writes.
+
+    The counts come from ``messages_usage``, as on the native Messages path.
+    """
+    counts = messages_usage(usage)
+    # None: a count the provider did not report, left out.
+    details: dict[str, int | None] = {
         'cache_read': getattr(usage, 'cache_read_input_tokens', None),
         'cache_creation': getattr(usage, 'cache_creation_input_tokens', None),
     }
     cache_creation = getattr(usage, 'cache_creation', None)
-    specific_cache_creation = 0
     if cache_creation:
         if isinstance(cache_creation, BaseModel):
             cache_creation = cache_creation.model_dump()
         for key in ('ephemeral_5m_input_tokens', 'ephemeral_1h_input_tokens'):
-            specific_cache_creation += cache_creation.get(key, 0)
-            input_token_details[key] = cache_creation.get(key)
-        if not isinstance(specific_cache_creation, int):
-            specific_cache_creation = 0
-        if specific_cache_creation > 0:
+            details[key] = cache_creation.get(key)
+        if any(
+            isinstance(count, int) and count > 0
+            for count in (
+                details['ephemeral_5m_input_tokens'],
+                details['ephemeral_1h_input_tokens'],
+            )
+        ):
             # The TTL breakdown replaces the total, so it is not counted twice.
-            input_token_details['cache_creation'] = 0
+            details['cache_creation'] = 0
 
-    # Anthropic's input_tokens excludes the cached ones.
-    input_tokens = (
-        (getattr(usage, 'input_tokens', 0) or 0)
-        + (input_token_details['cache_read'] or 0)
-        + (specific_cache_creation or input_token_details['cache_creation'] or 0)
+    input_tokens = counts.input
+    output_tokens = counts.output
+    usage_metadata = UsageMetadata(
+        input_tokens=input_tokens,
+        output_tokens=output_tokens,
+        total_tokens=input_tokens + output_tokens,
+        input_token_details=input_token_details(details),
     )
-    output_tokens = getattr(usage, 'output_tokens', 0) or 0
-    usage_metadata: dict[str, Any] = {
-        'input_tokens': input_tokens,
-        'output_tokens': output_tokens,
-        'total_tokens': input_tokens + output_tokens,
-        'input_token_details': {
-            k: v for k, v in input_token_details.items() if v is not None
-        },
-    }
     reasoning = getattr(
         getattr(usage, 'output_tokens_details', None), 'thinking_tokens', None
     )

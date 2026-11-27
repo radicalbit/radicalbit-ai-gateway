@@ -6,6 +6,7 @@ from uuid import UUID
 from fastapi_pagination import Page, Params
 
 from radicalbit_ai_gateway.db.dao.event_dao import MCP_ENTITY_COLUMNS, EventDAO
+from radicalbit_ai_gateway.db.database import run_from_worker
 from radicalbit_ai_gateway.db.models.event import InvocationChartDataPoint
 from radicalbit_ai_gateway.models.mcp_usage_dto import (
     McpKeyUsageDTO,
@@ -62,7 +63,7 @@ class McpUsageService:
             )
             for row in page.items
         ]
-        return Page.create(items, params, total=page.total)
+        return Page[McpKeyUsageDTO].create(items, params, total=page.total)
 
     def get_mcp_server_chart_data(
         self,
@@ -235,9 +236,9 @@ class McpUsageService:
                 uuid_str_to_obj[value] = UUID(value)
         unique_ids = list(uuid_str_to_obj.values())
         names_map = (
-            self.key_service.get_names_by_uuids(unique_ids)
+            run_from_worker(self.key_service.get_names_by_uuids, unique_ids)
             if group_by == 'keys'
-            else self.group_service.get_names_by_uuids(unique_ids)
+            else run_from_worker(self.group_service.get_names_by_uuids, unique_ids)
         )
         entity_label = 'Key' if group_by == 'keys' else 'Group'
 

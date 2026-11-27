@@ -68,3 +68,30 @@ class Storage(ABC):
     @abstractmethod
     async def delete(self, key: str) -> None:
         """Delete a key's counter, if present."""
+
+    async def get_many(self, keys: list[str]) -> list[int | None]:
+        """Get several counters, in one round trip where the backend can.
+
+        Args:
+            keys: The storage keys.
+
+        Returns:
+            Each key's current value, or None if it doesn't exist or expired.
+
+        """
+        return [await self.get(key) for key in keys]
+
+    async def increment_many(
+        self, increments: list[tuple[str, int, int, int]]
+    ) -> list[tuple[int, str]]:
+        """Increment several counters, in one round trip where the backend can.
+
+        Args:
+            increments: ``increment``'s arguments (key, amount, ttl_seconds,
+                window_start), one tuple per counter.
+
+        Returns:
+            ``increment``'s result for each, in order.
+
+        """
+        return [await self.increment(*increment) for increment in increments]

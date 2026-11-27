@@ -12,13 +12,17 @@ on:
         required: false
         default: false
         type: boolean
+      python-version:
+        description: Python version of the component, as in its Dockerfile.
+        required: false
+        default: "3.11"
+        type: string
     secrets:
       CODECOV_TOKEN:
         required: false
 
 env:
-  PYTHON_VERSION: "3.11"
-  UV_VERSION: "0.7.13"
+  UV_VERSION: "0.13.8"
 
 jobs:
   test:
@@ -32,7 +36,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v6
         with:
-          python-version: ${{ env.PYTHON_VERSION }}
+          python-version: ${{ inputs.python-version }}
 
       - name: Setup uv
         run: |

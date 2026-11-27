@@ -1,10 +1,10 @@
 import Lucide from '@Components/lucide';
-import { FEATURE_FLAGS, PathsEnum } from '@Src/constants';
+import { PathsEnum } from '@Src/constants';
 import { Button } from '@radicalbit/radicalbit-design-system';
 import {
   FolderOpen, Gauge, Key, Lock, Route, Settings2, Signpost, Users,
 } from 'lucide-react';
-import { Link } from 'react-router-dom';
+import { Link, useLocation } from 'react-router-dom';
 
 const isMac = navigator.platform.toUpperCase().indexOf('MAC') >= 0;
 
@@ -31,7 +31,6 @@ const group = (key, label, position, hasLeftColumnCollapsed, children) => {
 
 const divider = (key, position) => ({ key, position, type: 'divider' });
 
-// GROUPS ITEMS
 const projects = (hasLeftColumnCollapsed) => ({
   position: 2,
   title: hasLeftColumnCollapsed ? <CollapsedTitle keys={{ mac: [{ label: 'Ctrl' }, { label: '1', shape: 'circle' }] }}>Projects</CollapsedTitle> : 'Projects',
@@ -72,12 +71,12 @@ const usage = (hasLeftColumnCollapsed) => ({
   link: getLink(PathsEnum.USAGE, 'Usage'),
 });
 
-const tracing = (hasLeftColumnCollapsed) => ({
+const observability = (hasLeftColumnCollapsed) => ({
   position: 9,
-  title: hasLeftColumnCollapsed ? <CollapsedTitle keys={{ mac: [{ label: 'Ctrl' }, { label: '6', shape: 'circle' }] }}>Tracing</CollapsedTitle> : 'Tracing',
+  title: hasLeftColumnCollapsed ? <CollapsedTitle keys={{ mac: [{ label: 'Ctrl' }, { label: '6', shape: 'circle' }] }}>Observability</CollapsedTitle> : 'Observability',
   icon: <Lucide icon={Route} size="md" />,
-  key: PathsEnum.TRACING,
-  link: getLink(PathsEnum.TRACING, 'Tracing'),
+  key: PathsEnum.OBSERVABILITY,
+  link: getLink(PathsEnum.OBSERVABILITY, 'Observability'),
 });
 
 const groups = (hasLeftColumnCollapsed) => ({
@@ -104,7 +103,6 @@ const alerts = (hasLeftColumnCollapsed) => ({
   link: getLink(PathsEnum.ALERTS, 'Alert'),
 });
 
-// ALL ROUTES
 const allRoutes = (hasLeftColumnCollapsed) => [
   group('setup-header', 'Setup', 1, hasLeftColumnCollapsed, [
     projects(hasLeftColumnCollapsed),
@@ -115,13 +113,13 @@ const allRoutes = (hasLeftColumnCollapsed) => [
   group('monitor-header', 'Monitor', 6, hasLeftColumnCollapsed, [
     routes(hasLeftColumnCollapsed),
     usage(hasLeftColumnCollapsed),
-    tracing(hasLeftColumnCollapsed),
+    observability(hasLeftColumnCollapsed),
   ]),
   divider('separator2', 10),
   group('manage-header', 'Manage', 11, hasLeftColumnCollapsed, [
     groups(hasLeftColumnCollapsed),
     keys(hasLeftColumnCollapsed),
-    FEATURE_FLAGS.ALERTS ? alerts(hasLeftColumnCollapsed) : false,
+    alerts(hasLeftColumnCollapsed),
   ].filter(Boolean)),
 ];
 
@@ -154,8 +152,14 @@ export function CollapsedTitle({ children, keys: keyboardKeys = {}, buttonProps 
   );
 }
 
-const getLink = (pathname, label) => (
-  <Link aria-label={label} to={{ pathname }}>
-    <div className="hidden">{pathname}</div>
-  </Link>
-);
+const getLink = (pathname, label) => <MenuLink label={label} pathname={pathname} />;
+
+function MenuLink({ label, pathname }) {
+  const { pathname: currentPathname, search } = useLocation();
+
+  return (
+    <Link aria-label={label} to={currentPathname.split('/')[1] === pathname ? { pathname, search } : { pathname }}>
+      <div className="hidden">{pathname}</div>
+    </Link>
+  );
+}

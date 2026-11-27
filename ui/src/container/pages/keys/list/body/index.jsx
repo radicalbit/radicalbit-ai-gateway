@@ -125,8 +125,7 @@ function RowWithSpinner({ children, ...other }) {
 
   return (isEditing || isDeleting || isAddingGroups) ? (
     <tr {...other}>
-      {/* IF scroll={{ y: 'calc(100vh - 10rem)' }} is defined, colSpan must be === columns.length */}
-      <td colSpan={7}>
+      <td colSpan={columns.length}>
         <Spin spinning />
       </td>
     </tr>

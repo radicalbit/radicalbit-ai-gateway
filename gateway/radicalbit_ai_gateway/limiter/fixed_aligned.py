@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import time
 
+from typing_extensions import override
+
 from radicalbit_ai_gateway.limiter.base import BaseFixedWindowLimiter
 from radicalbit_ai_gateway.limiter.window_config import WindowConfig, WindowStats
 
@@ -19,10 +21,9 @@ class AlignedFixedWindowLimiter(BaseFixedWindowLimiter):
     - Counter resets at window boundaries
     """
 
-    @property
-    def _window_type(self) -> str:
-        return 'aligned'
+    _window_type = 'aligned'
 
+    @override
     def _calculate_window_boundary(self, window_seconds: int) -> tuple[int, int]:
         """Calculate aligned window start and remaining TTL.
 
@@ -33,6 +34,7 @@ class AlignedFixedWindowLimiter(BaseFixedWindowLimiter):
         window_end = window_start + window_seconds
         return window_start, window_end - now
 
+    @override
     def _empty_stats(self, item: WindowConfig) -> WindowStats:
         """Create WindowStats for a non-existent or expired window."""
         window_start, _ = self._calculate_window_boundary(item.window_seconds)

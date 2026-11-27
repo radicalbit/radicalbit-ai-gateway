@@ -1,6 +1,10 @@
 from enum import Enum
+from typing import Generic
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+
+# typing_extensions: a TypeVar default needs Python 3.13.
+from typing_extensions import TypeVar
 
 from radicalbit_ai_gateway.limiter.window_config import format_window, parse_window
 from radicalbit_ai_gateway.utils import BUDGET_MULTIPLIER
@@ -208,13 +212,18 @@ class RateLimiting(Limiting):
         return self
 
 
-class TokenLimiting(BaseModel):
+# The limit a token limiting holds per side: the configuration's, or a
+# response's.
+LimitingT = TypeVar('LimitingT', bound=Limiting, default=Limiting)
+
+
+class TokenLimiting(BaseModel, Generic[LimitingT]):
     model_config = ConfigDict(extra='forbid')
 
-    input: Limiting | None = Field(
+    input: LimitingT | None = Field(
         default=None, description='Rate limiting for input tokens.'
     )
-    output: Limiting | None = Field(
+    output: LimitingT | None = Field(
         default=None, description='Rate limiting for output tokens.'
     )
 

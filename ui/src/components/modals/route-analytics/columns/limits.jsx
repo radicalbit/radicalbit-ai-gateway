@@ -64,67 +64,20 @@ function PopoverContent({ configuration, metrics }) {
   const durationLimitingWindowSize = durationLimiting?.windowSize ?? '--';
   const durationLimitingMaxDurationSeconds = numberFormatterInt(durationLimiting?.maxDurationSeconds) ?? '--';
 
-  const tokenTriggerRows = supportsTokenLimiting ? (
-    <>
-      <PopoverRow label="Token in:" value={tokenIn} />
-
-      {supportsTokenOutputLimiting && <PopoverRow label="Token out:" value={tokenOut} />}
-    </>
-  ) : false;
-
-  const durationTriggerRow = supportsDurationLimiting
-    ? <PopoverRow label="Duration:" value={duration} />
-    : false;
-
-  const tokenLimitingSections = supportsTokenLimiting ? (
-    <>
-      <Divider style={{ margin: '.5rem' }} />
-
-      <strong>Token Limiting Input</strong>
-
-      <PopoverRow label="Algorithm:" value={tokenLimitingInputAlgorithm} />
-
-      <PopoverRow label="Window size:" value={tokenLimitingInputWindowSize} />
-
-      <PopoverRow label="Max tokens:" value={tokenLimitingInputMaxTokens} />
-
-      {supportsTokenOutputLimiting && (
-        <>
-          <Divider style={{ margin: '.5rem' }} />
-
-          <strong>Token Limiting Output</strong>
-
-          <PopoverRow label="Algorithm:" value={tokenLimitingOutputAlgorithm} />
-
-          <PopoverRow label="Window size:" value={tokenLimitingOutputWindowSize} />
-
-          <PopoverRow label="Max tokens:" value={tokenLimitingOutputMaxTokens} />
-        </>
-      )}
-    </>
-  ) : false;
-
-  const durationLimitingSection = supportsDurationLimiting ? (
-    <>
-      <Divider style={{ margin: '.5rem' }} />
-
-      <strong>Duration Limiting</strong>
-
-      <PopoverRow label="Algorithm:" value={durationLimitingAlgorithm} />
-
-      <PopoverRow label="Window size:" value={durationLimitingWindowSize} />
-
-      <PopoverRow label="Max duration (s):" value={durationLimitingMaxDurationSeconds} />
-    </>
-  ) : false;
-
   return (
     <div className="flex flex-col">
       <PopoverRow label="Rate:" value={rate} />
 
-      {tokenTriggerRows}
+      {supportsTokenLimiting && (
+        <>
+          <PopoverRow label="Token in:" value={tokenIn} />
 
-      {durationTriggerRow}
+          {supportsTokenOutputLimiting && <PopoverRow label="Token out:" value={tokenOut} />}
+        </>
+      )}
+
+      {supportsDurationLimiting
+    && <PopoverRow label="Duration:" value={duration} />}
 
       <Divider style={{ margin: '.5rem' }} />
 
@@ -136,9 +89,47 @@ function PopoverContent({ configuration, metrics }) {
 
       <PopoverRow label="Max requests:" value={rateLimitingmaxRequests} />
 
-      {tokenLimitingSections}
+      {supportsTokenLimiting && (
+        <>
+          <Divider style={{ margin: '.5rem' }} />
 
-      {durationLimitingSection}
+          <strong>Token Limiting Input</strong>
+
+          <PopoverRow label="Algorithm:" value={tokenLimitingInputAlgorithm} />
+
+          <PopoverRow label="Window size:" value={tokenLimitingInputWindowSize} />
+
+          <PopoverRow label="Max tokens:" value={tokenLimitingInputMaxTokens} />
+
+          {supportsTokenOutputLimiting && (
+          <>
+            <Divider style={{ margin: '.5rem' }} />
+
+            <strong>Token Limiting Output</strong>
+
+            <PopoverRow label="Algorithm:" value={tokenLimitingOutputAlgorithm} />
+
+            <PopoverRow label="Window size:" value={tokenLimitingOutputWindowSize} />
+
+            <PopoverRow label="Max tokens:" value={tokenLimitingOutputMaxTokens} />
+          </>
+          )}
+        </>
+      )}
+
+      {supportsDurationLimiting && (
+        <>
+          <Divider style={{ margin: '.5rem' }} />
+
+          <strong>Duration Limiting</strong>
+
+          <PopoverRow label="Algorithm:" value={durationLimitingAlgorithm} />
+
+          <PopoverRow label="Window size:" value={durationLimitingWindowSize} />
+
+          <PopoverRow label="Max duration (s):" value={durationLimitingMaxDurationSeconds} />
+        </>
+      )}
     </div>
   );
 }

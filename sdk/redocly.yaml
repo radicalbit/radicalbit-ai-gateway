@@ -1,0 +1,23 @@
+# Redocly CLI lint rules for the SDK spec (sdk/openapi.json).
+# Starts from "recommended" and turns the rules that matter for client
+# generation into errors.
+extends:
+  - recommended
+
+rules:
+  # Stable, unique operation ids become SDK method and module names.
+  operation-operationId: error
+  operation-operationId-unique: error
+  operation-operationId-url-safe: error
+  # Every operation must document an error response, so the SDK can type it.
+  operation-4xx-response: error
+  operation-2xx-response: error
+  # Docstrings in the generated client come from these.
+  operation-summary: error
+  operation-description: warn
+  tag-description: off
+  # No servers block: the SDK takes the base URL at runtime.
+  no-empty-servers: off
+  # No security schemes in OSS (no auth on the management API).
+  security-defined: off
+  info-license: off

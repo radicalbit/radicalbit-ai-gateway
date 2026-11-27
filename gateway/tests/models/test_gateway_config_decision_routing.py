@@ -1,3 +1,5 @@
+from typing import Any
+
 from pydantic import TypeAdapter
 import pytest
 
@@ -9,13 +11,17 @@ from radicalbit_ai_gateway.models.gateway_config_out import (
     DecisionRoutingConfigOut,
 )
 from radicalbit_ai_gateway.models.guardrails import GuardrailMessageRole
-from radicalbit_ai_gateway.models.routing import DecisionRoutingConfig
+from radicalbit_ai_gateway.models.routing import (
+    AnyRoutingConfig,
+    DecisionOutputMappingEntry,
+    DecisionRoutingConfig,
+)
 
 GPT_4O = {'model_id': 'gpt-4o', 'model': 'openai/gpt-4o'}
 GPT_5 = {'model_id': 'gpt-5', 'model': 'openai/gpt-5'}
 
 
-def _routing(**overrides) -> dict:
+def _routing(**overrides) -> dict[str, Any]:
     return {
         'name': 'by-task',
         'type': 'decision',
@@ -30,7 +36,9 @@ def _routing(**overrides) -> dict:
     }
 
 
-def _config(routing: dict, route: dict | None = None) -> GatewayConfig:
+def _config(
+    routing: dict[str, Any], route: dict[str, Any] | None = None
+) -> GatewayConfig:
     return GatewayConfig.model_validate(
         {
             'chat_models': [GPT_4O, GPT_5],
@@ -44,30 +52,43 @@ def _config(routing: dict, route: dict | None = None) -> GatewayConfig:
     )
 
 
+def _only_routing(config: GatewayConfig) -> AnyRoutingConfig:
+    """Return the one routing of ``config``."""
+    assert config.routing is not None
+    return config.routing[0]
+
+
 def test_a_decision_routing_loads_with_its_defaults():
-    routing = _config(_routing()).routing[0]
+    routing = _only_routing(_config(_routing()))
 
     assert isinstance(routing, DecisionRoutingConfig)
     assert routing.history == 'last'
     assert routing.min_confidence is None
     assert routing.fallback_model_id is None
     assert routing.message_roles is None
-    assert [e.description for e in routing.output_mapping] == [
+    descriptions = []
+    for entry in routing.output_mapping:
+        assert isinstance(entry, DecisionOutputMappingEntry)
+        descriptions.append(entry.description)
+    assert descriptions == [
         'Emails and business documents',
         'Translation to Chinese',
     ]
 
 
 def test_a_full_decision_routing_loads():
-    routing = _config(
-        _routing(
-            fallback_model_id='jev-backup',
-            min_confidence=0.6,
-            history='all',
-            message_roles=['user', 'assistant'],
+    routing = _only_routing(
+        _config(
+            _routing(
+                fallback_model_id='jev-backup',
+                min_confidence=0.6,
+                history='all',
+                message_roles=['user', 'assistant'],
+            )
         )
-    ).routing[0]
+    )
 
+    assert isinstance(routing, DecisionRoutingConfig)
     assert routing.fallback_model_id == 'jev-backup'
     assert routing.min_confidence == 0.6
     assert routing.message_roles == [
@@ -86,7 +107,9 @@ def test_a_decision_routing_that_no_route_uses_still_loads():
         }
     )
 
-    assert config.routing_by_name['by-task'].decision_model_id == 'jev'
+    routing = config.routing_by_name['by-task']
+    assert isinstance(routing, DecisionRoutingConfig)
+    assert routing.decision_model_id == 'jev'
 
 
 @pytest.mark.parametrize(
@@ -219,7 +242,7 @@ def test_decision_models_cannot_be_routed_to(overrides):
 
 
 def test_the_routing_out_dto_accepts_a_decision_routing():
-    routing = _config(_routing(history='all', message_roles=['user'])).routing[0]
+    routing = _only_routing(_config(_routing(history='all', message_roles=['user'])))
 
     out = TypeAdapter(AnyRoutingConfigOut).validate_python(routing.model_dump())
 

@@ -52,28 +52,6 @@ function AssociatedGroups() {
   const groups = data?.groups || [];
   const associated = groups.map((i) => ({ label: i.name, value: i.uuid }));
 
-  const popoverContent = (
-    <div>
-      <strong>Groups already associated</strong>
-
-      <div style={{ maxHeight: 200, overflowY: 'auto' }}>
-        {associated.map(({ label, value }) => {
-          const handleOnClick = () => {
-            navigate(`/${PathsEnum.GROUPS}/${value}?${SEARCH_PARAMS.groups}=${encodeURIComponent(label)}`);
-          };
-
-          return (
-            <div key={value}>
-              <HtmlAnchor onClick={handleOnClick}>
-                {label}
-              </HtmlAnchor>
-            </div>
-          );
-        })}
-      </div>
-    </div>
-  );
-
   if (associated.length === 0) {
     return <span>{`Groups already associated: ${associated.length}`}</span>;
   }
@@ -82,7 +60,29 @@ function AssociatedGroups() {
     <div className="flex flex-row items-center gap-2">
       <span>{`Groups already associated: ${associated.length}`}</span>
 
-      <InfoPopover content={popoverContent}>
+      <InfoPopover
+        content={(
+          <div>
+            <strong>Groups already associated</strong>
+
+            <div style={{ maxHeight: 200, overflowY: 'auto' }}>
+              {associated.map(({ label, value }) => {
+                const handleOnClick = () => {
+                  navigate(`/${PathsEnum.GROUPS}/${value}?${SEARCH_PARAMS.groups}=${encodeURIComponent(label)}`);
+                };
+
+                return (
+                  <div key={value}>
+                    <HtmlAnchor onClick={handleOnClick}>
+                      {label}
+                    </HtmlAnchor>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+      >
         <Lucide icon={Info} />
       </InfoPopover>
     </div>

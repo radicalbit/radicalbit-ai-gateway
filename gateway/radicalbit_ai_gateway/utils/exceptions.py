@@ -1,13 +1,18 @@
+from http import HTTPStatus
 import logging
 from typing import Any
 
 from fastapi import status
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse
+from fastapi.utils import is_body_allowed_for_status_code
 from pydantic.alias_generators import to_snake
+from starlette.exceptions import HTTPException
 from starlette.requests import Request
+from starlette.responses import Response
 
 from radicalbit_ai_gateway.middleware.request_event_context import RequestEventContext
+from radicalbit_ai_gateway.models.event_payload import LimitScope
 from radicalbit_ai_gateway.utils.app_config import get_app_config
 
 app_config = get_app_config()
@@ -194,7 +199,7 @@ class GuardrailError(AppError):
         *,
         log_message: str | None = None,
         code: Any = None,
-        reason: dict | None = None,
+        reason: dict[str, Any] | None = None,
     ):
         super().__init__(
             client_message=message,
@@ -214,8 +219,11 @@ class GuardrailBadRequest(GuardrailError):
         guardrail: Any,
         *,
         log_message: str | None = None,
-        reason: dict | None = None,
+        reason: dict[str, Any] | None = None,
+        headers: dict[str, str] | None = None,
     ):
+        # The gateway's headers of the request so far (cache, guardrails).
+        self.headers = headers or {}
         super().__init__(
             message,
             status.HTTP_400_BAD_REQUEST,
@@ -374,14 +382,25 @@ def _guardrail_param_payload(guardrail: Any) -> Any:
     return payload or fallback
 
 
+LIMIT_SCOPE_HEADER = 'X-RB-AIGATEWAY-LIMIT-SCOPE'
+
+
 class TokenLimitExceeded(AppError):
-    def __init__(self, message: str, code: str, *, log_message: str | None = None):
+    def __init__(
+        self,
+        message: str,
+        code: str,
+        *,
+        log_message: str | None = None,
+        limit_scope: LimitScope | None = None,
+    ):
         super().__init__(
             client_message=message,
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
             log_message=log_message,
             code=code,
         )
+        self.limit_scope = limit_scope
 
 
 class RBRateLimitExceeded(AppError):
@@ -392,6 +411,7 @@ class RBRateLimitExceeded(AppError):
         *,
         log_message: str | None = None,
         param: Any = None,
+        limit_scope: LimitScope | None = None,
     ):
         super().__init__(
             client_message=message,
@@ -400,6 +420,7 @@ class RBRateLimitExceeded(AppError):
             code=code,
             param=param,
         )
+        self.limit_scope = limit_scope
 
 
 class RequestRateLimitExceeded(RBRateLimitExceeded):
@@ -409,12 +430,14 @@ class RequestRateLimitExceeded(RBRateLimitExceeded):
         *,
         log_message: str | None = None,
         route_name: str | None = None,
+        limit_scope: LimitScope | None = None,
     ):
         super().__init__(
             message,
             'request_rate_limited',
             log_message=log_message,
             param=route_name,
+            limit_scope=limit_scope,
         )
 
 
@@ -425,23 +448,47 @@ class AudioDurationLimitExceeded(RBRateLimitExceeded):
         *,
         log_message: str | None = None,
         route_name: str | None = None,
+        limit_scope: LimitScope | None = None,
     ):
         super().__init__(
             message,
             'audio_duration_rate_limited',
             log_message=log_message,
             param=route_name,
+            limit_scope=limit_scope,
         )
 
 
 class InputTokenLimitExceeded(TokenLimitExceeded):
-    def __init__(self, message: str, *, log_message: str | None = None):
-        super().__init__(message, 'token_limit_rate_limited', log_message=log_message)
+    def __init__(
+        self,
+        message: str,
+        *,
+        log_message: str | None = None,
+        limit_scope: LimitScope | None = None,
+    ):
+        super().__init__(
+            message,
+            'token_limit_rate_limited',
+            log_message=log_message,
+            limit_scope=limit_scope,
+        )
 
 
 class OutputTokenLimitExceeded(TokenLimitExceeded):
-    def __init__(self, message: str, *, log_message: str | None = None):
-        super().__init__(message, 'token_limit_rate_limited', log_message=log_message)
+    def __init__(
+        self,
+        message: str,
+        *,
+        log_message: str | None = None,
+        limit_scope: LimitScope | None = None,
+    ):
+        super().__init__(
+            message,
+            'token_limit_rate_limited',
+            log_message=log_message,
+            limit_scope=limit_scope,
+        )
 
 
 class ModelInvokerError(AppError):
@@ -472,7 +519,9 @@ class ModelInvokerInternalError(ModelInvokerError):
 
 
 class ModelInvokerBadGateway(ModelInvokerError):
-    """No upstream attempt got a response: every call errored or timed out."""
+    """No upstream attempt got a response (every call errored or timed out), or
+    the provider refused the gateway's own access to it (a 401 or 403).
+    """
 
     def __init__(self, message: str, *, log_message: str | None = None):
         super().__init__(
@@ -542,8 +591,8 @@ class KeyAlreadyExistsError(AuthRegistryError):
     def __init__(self, message: str, *, log_message: str | None = None):
         super().__init__(
             message,
-            status.HTTP_400_BAD_REQUEST,
-            'key_already_exists_bad_request',
+            status.HTTP_409_CONFLICT,
+            'key_already_exists',
             log_message=log_message,
         )
 
@@ -556,6 +605,20 @@ class KeyOperationNotAllowedError(AuthRegistryError):
             'key_operation_method_not_allowed',
             log_message=log_message,
         )
+
+
+class KeyExternallyManagedError(KeyOperationNotAllowedError):
+    """A change to a credential managed outside the gateway (its owner is not
+    ``gateway``): its lifecycle is managed where it comes from.
+
+    A KeyOperationNotAllowedError for the callers that catch that, but a 409
+    with a code of its own: the UI reads a 405 as an expired credential.
+    """
+
+    def __init__(self, message: str, *, log_message: str | None = None):
+        super().__init__(message, log_message=log_message)
+        self.status_code = status.HTTP_409_CONFLICT
+        self.code = 'key_externally_managed'
 
 
 class KeyRotationConflictError(AuthRegistryError):
@@ -572,8 +635,8 @@ class KeyGroupAlreadyExistsError(AuthRegistryError):
     def __init__(self, message: str, *, log_message: str | None = None):
         super().__init__(
             message,
-            status.HTTP_400_BAD_REQUEST,
-            'key_group_already_exists_bad_request',
+            status.HTTP_409_CONFLICT,
+            'key_group_already_exists',
             log_message=log_message,
         )
 
@@ -582,8 +645,8 @@ class CredentialLimitAlreadyExistsError(AuthRegistryError):
     def __init__(self, message: str, *, log_message: str | None = None):
         super().__init__(
             message,
-            status.HTTP_400_BAD_REQUEST,
-            'credential_limit_already_exists_bad_request',
+            status.HTTP_409_CONFLICT,
+            'credential_limit_already_exists',
             log_message=log_message,
         )
 
@@ -632,8 +695,8 @@ class GroupAlreadyExistsError(AuthRegistryError):
     def __init__(self, message: str, *, log_message: str | None = None):
         super().__init__(
             message,
-            status.HTTP_400_BAD_REQUEST,
-            'group_already_exists_bad_request',
+            status.HTTP_409_CONFLICT,
+            'group_already_exists',
             log_message=log_message,
         )
 
@@ -646,6 +709,15 @@ class GroupOperationNotAllowedError(AuthRegistryError):
             'group_operation_method_not_allowed',
             log_message=log_message,
         )
+
+
+class GroupExternallyManagedError(GroupOperationNotAllowedError):
+    """A change to a group managed outside the gateway (its owner is not ``gateway``)."""
+
+    def __init__(self, message: str, *, log_message: str | None = None):
+        super().__init__(message, log_message=log_message)
+        self.status_code = status.HTTP_409_CONFLICT
+        self.code = 'group_externally_managed'
 
 
 class GroupHasNoCredentialsError(AuthRegistryError):
@@ -692,8 +764,8 @@ class ProjectAlreadyExistsError(AuthRegistryError):
     def __init__(self, message: str, *, log_message: str | None = None):
         super().__init__(
             message,
-            status.HTTP_400_BAD_REQUEST,
-            'project_already_exists_bad_request',
+            status.HTTP_409_CONFLICT,
+            'project_already_exists',
             log_message=log_message,
         )
 
@@ -705,6 +777,7 @@ class ProjectConfigValidationError(AuthRegistryError):
         *,
         log_message: str | None = None,
         routes: list[str] | None = None,
+        details: list[dict[str, Any]] | None = None,
     ):
         super().__init__(
             message,
@@ -713,14 +786,29 @@ class ProjectConfigValidationError(AuthRegistryError):
             log_message=log_message,
         )
         self.routes = routes
+        # One {loc, msg, type} per problem in the YAML, for clients to read
+        self.details = details
+
+
+class ProjectConfigStateError(ProjectConfigValidationError):
+    """A config action not allowed in the config's current state.
+
+    A ProjectConfigValidationError for the callers that catch that, but a 409
+    with a code of its own for each state.
+    """
+
+    def __init__(self, message: str, code: str, *, log_message: str | None = None):
+        super().__init__(message, log_message=log_message)
+        self.status_code = status.HTTP_409_CONFLICT
+        self.code = code
 
 
 class ProjectBudgetLimitAlreadyExistsError(AuthRegistryError):
     def __init__(self, message: str, *, log_message: str | None = None):
         super().__init__(
             message,
-            status.HTTP_400_BAD_REQUEST,
-            'project_budget_limit_already_exists_bad_request',
+            status.HTTP_409_CONFLICT,
+            'project_budget_limit_already_exists',
             log_message=log_message,
         )
 
@@ -777,18 +865,37 @@ class SecretsBackendError(AppError):
 
 
 class BudgetLimitExceeded(AppError):
-    def __init__(self, message: str, code: str, *, log_message: str | None = None):
+    def __init__(
+        self,
+        message: str,
+        code: str,
+        *,
+        log_message: str | None = None,
+        limit_scope: LimitScope | None = None,
+    ):
         super().__init__(
             client_message=message,
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
             log_message=log_message,
             code=code,
         )
+        self.limit_scope = limit_scope
 
 
 class BudgetLimitExceededError(BudgetLimitExceeded):
-    def __init__(self, message: str, *, log_message: str | None = None):
-        super().__init__(message, 'budget_limit_rate_limited', log_message=log_message)
+    def __init__(
+        self,
+        message: str,
+        *,
+        log_message: str | None = None,
+        limit_scope: LimitScope | None = None,
+    ):
+        super().__init__(
+            message,
+            'budget_limit_rate_limited',
+            log_message=log_message,
+            limit_scope=limit_scope,
+        )
 
 
 def _log_and_json_response(
@@ -843,14 +950,33 @@ def guardrail_exception_handler(request: Request, err: GuardrailError):
         sanitized_reason.pop('threshold', None)
         payload = {**payload, 'reason': sanitized_reason}
     response = _log_and_json_response(err, 'guardrail_error', param_override=payload)
+    response.headers.update(getattr(err, 'headers', None) or {})
     # Surface that a guardrail (hard block) was triggered
     response.headers['X-RB-AIGATEWAY-GUARDRAILS-TRIGGERED'] = 'true'
     return response
 
 
+def limit_scope_headers(err: Exception) -> dict[str, str]:
+    """Return the header naming the limit scope that blocked, if `err` has one."""
+    limit_scope = getattr(err, 'limit_scope', None)
+    if limit_scope is None:
+        return {}
+    return {LIMIT_SCOPE_HEADER: str(limit_scope)}
+
+
+def _limit_response(
+    err: TokenLimitExceeded | RBRateLimitExceeded | BudgetLimitExceeded,
+    error_type: str,
+) -> JSONResponse:
+    """Build a limit's 429, naming the scope that blocked it when known."""
+    response = _log_and_json_response(err, error_type)
+    response.headers.update(limit_scope_headers(err))
+    return response
+
+
 def token_limiter_exception_handler(request: Request, err: TokenLimitExceeded):
     set_request_error_info(request, err)
-    return _log_and_json_response(err, 'rate_limit_error')
+    return _limit_response(err, 'rate_limit_error')
 
 
 def model_invoker_exception_handler(request: Request, err: ModelInvokerError):
@@ -868,8 +994,11 @@ def api_key_exception_handler(request: Request, err: ApiKeyError):
 
 def auth_registry_exception_handler(request: Request, err: AuthRegistryError):
     set_request_error_info(request, err)
-    routes = getattr(err, 'routes', None)
-    extra = {'routes': routes} if routes is not None else None
+    extra = {
+        name: value
+        for name in ('routes', 'details')
+        if (value := getattr(err, name, None)) is not None
+    } or None
     return _log_and_json_response(err, 'auth_registry_error', extra=extra)
 
 
@@ -935,14 +1064,14 @@ def alert_rule_exception_handler(request: Request, err: AppError):
 
 async def rate_limit_exceeded_handler(request: Request, exc: RequestRateLimitExceeded):
     set_request_error_info(request, exc)
-    return _log_and_json_response(exc, 'rate_limit_error')
+    return _limit_response(exc, 'rate_limit_error')
 
 
 async def audio_duration_limit_exceeded_handler(
     request: Request, exc: AudioDurationLimitExceeded
 ):
     set_request_error_info(request, exc)
-    return _log_and_json_response(exc, 'rate_limit_error')
+    return _limit_response(exc, 'rate_limit_error')
 
 
 def secrets_backend_exception_handler(request: Request, err: SecretsBackendError):
@@ -952,15 +1081,39 @@ def secrets_backend_exception_handler(request: Request, err: SecretsBackendError
 
 def budget_limiter_exception_handler(request: Request, err: BudgetLimitExceeded):
     set_request_error_info(request, err)
-    return _log_and_json_response(err, 'budget_limit_error')
+    return _limit_response(err, 'budget_limit_error')
 
 
-def validation_error_param(error: dict) -> str:
+def validation_error_param(error: dict[str, Any]) -> str:
     """Return the body field a request validation error points at, as ``a.b.0``.
 
     The ``body`` part of the error's location is left out.
     """
     return '.'.join(str(part) for part in (error.get('loc') or ())[1:])
+
+
+def http_exception_handler(request: Request, exc: HTTPException) -> Response:
+    """Answer the web framework's own errors in the ``ErrorOut`` shape.
+
+    Unknown paths, methods not allowed, bodies that cannot be parsed and any
+    ``HTTPException`` raised by the gateway.
+
+    Replaces FastAPI's default handler, which answers ``{"detail": ...}``: the
+    status and headers of the exception are kept.
+    """
+    if not is_body_allowed_for_status_code(exc.status_code):
+        return Response(status_code=exc.status_code, headers=exc.headers)
+    try:
+        code: str | int = HTTPStatus(exc.status_code).name.lower()
+    except ValueError:
+        code = exc.status_code
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={
+            'error': ErrorOut(str(exc.detail), type_='http_error', code=code).error
+        },
+        headers=exc.headers,
+    )
 
 
 async def unhandled_exception_handler(request: Request, err: Exception):

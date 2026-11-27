@@ -1,7 +1,12 @@
+import asyncio
+import atexit
+import functools
 from typing import TypeVar
 import unittest
 
-from testcontainers.postgres import PostgresContainer
+from sqlalchemy import Constraint, delete
+from testcontainers.community.postgres import PostgresContainer
+from typing_extensions import override
 
 from radicalbit_ai_gateway.db import database
 from radicalbit_ai_gateway.db.database import Database
@@ -10,28 +15,70 @@ from radicalbit_ai_gateway.utils.app_config import DBConfig
 T = TypeVar('T')
 
 
-class DatabaseIntegration(unittest.TestCase):
+@functools.cache
+def _postgres() -> PostgresContainer:
+    """Start one Postgres for the test run: starting one takes seconds, and
+    each test class creates and drops its own schema in it.
+    """
+    container = PostgresContainer(image='postgres:15', driver='psycopg')
+    container.start()
+    atexit.register(container.stop)
+    return container
+
+
+def _db_conf(container: PostgresContainer) -> DBConfig:
+    return DBConfig(
+        db_host=container.get_container_host_ip(),
+        db_port=int(container.get_exposed_port(container.port)),
+        db_user=container.username,
+        db_pwd=container.password,
+        db_name=container.dbname,
+    )
+
+
+async def _create_schema(db: Database) -> None:
+    engine = db._async_engine
+    assert engine is not None
+    async with engine.begin() as conn:
+        await conn.run_sync(database.BaseTable.metadata.create_all)
+    await db.init_mappings()
+    # The pooled connections belong to this short-lived loop: drop them.
+    await db.dispose()
+
+
+async def _drop_schema(db: Database) -> None:
+    engine = db._async_engine
+    assert engine is not None
+    async with engine.begin() as conn:
+        await conn.run_sync(database.BaseTable.metadata.drop_all)
+    await db.dispose()
+
+
+class SchemaIntegration(unittest.TestCase):
+    """Create the schema in the shared Postgres when a test class starts, and
+    drop it when the class ends.
+
+    Use it as is for sync tests that reach the database through an event loop
+    of their own, like a ``TestClient`` portal. Async tests use
+    ``AsyncDatabaseIntegration``.
+    """
+
+    @override
     @classmethod
     def setUpClass(cls) -> None:
-        cls.postgres_container = PostgresContainer(image='postgres:15')
-        cls.postgres_container.start()
-        cls.db_conf = DBConfig()
+        cls.postgres_container = _postgres()
+        cls.db_conf = _db_conf(cls.postgres_container)
         cls.db = Database(conf=cls.db_conf)
-        cls.db._db_url = cls.postgres_container.get_connection_url()
         cls.db.connect()
-        with cls.db._engine.connect() as conn:
-            conn.commit()
-        database.BaseTable.metadata.create_all(cls.db._engine)
-        cls.db.init_mappings()
+        asyncio.run(_create_schema(cls.db))
 
+    @override
     @classmethod
     def tearDownClass(cls) -> None:
-        # Drop schema at class end
-        database.BaseTable.metadata.drop_all(cls.db._engine)
+        asyncio.run(_drop_schema(cls.db))
         # Sanitize possible duplicated/reflected UNIQUE constraints left in metadata
         cls._sanitize_unique_constraints()
         cls.db.reset_connection()
-        cls.postgres_container.stop()
 
     @classmethod
     def _sanitize_unique_constraints(cls) -> None:
@@ -45,7 +92,7 @@ class DatabaseIntegration(unittest.TestCase):
         criteria and both end up removed, dropping the constraint entirely.
         """
         for table in list(database.BaseTable.metadata.tables.values()):
-            groups: dict[tuple[str, tuple[str, ...]], list] = {}
+            groups: dict[tuple[str, tuple[str, ...]], list[Constraint]] = {}
             for constraint in table.constraints:
                 if type(constraint).__name__ != 'UniqueConstraint':
                     continue
@@ -81,14 +128,31 @@ class DatabaseIntegration(unittest.TestCase):
                 else:
                     seen_idx.add(index.name)
 
-    def tearDown(self):
-        with self.db.begin_session() as session:
-            for table in reversed(database.BaseTable.metadata.sorted_tables):
-                session.execute(table.delete())
-            session.commit()
 
-    def insert(self, table: T) -> T:
-        with self.db.begin_session() as session:
-            session.add(table)
-            session.flush()
-            return table
+async def delete_all_rows(db: Database) -> None:
+    async with db.begin_session() as session:
+        for table in reversed(database.BaseTable.metadata.sorted_tables):
+            await session.execute(delete(table))
+
+
+async def insert_row(db: Database, row: T) -> T:
+    async with db.begin_session() as session:
+        session.add(row)
+        await session.flush()
+        return row
+
+
+class AsyncDatabaseIntegration(SchemaIntegration, unittest.IsolatedAsyncioTestCase):
+    """Async base: tests are ``async def`` and use
+    ``async with self.db.begin_session()``. Every row is deleted after each test.
+    """
+
+    @override
+    async def asyncTearDown(self):
+        await delete_all_rows(self.db)
+        # Each test runs on its own event loop. A pooled async connection is
+        # bound to the loop that opened it, so close them all here.
+        await self.db.dispose()
+
+    async def insert(self, row: T) -> T:
+        return await insert_row(self.db, row)

@@ -145,15 +145,13 @@ function BudgetRouting({ routes }) {
 }
 
 function RouteNames({ routes }) {
-  const names = routes.map((route, index) => (
+  return routes.map((route, index) => (
     <Fragment key={route}>
-      {index > 0 ? ', ' : false}
+      {index > 0 && ', '}
 
       <code className="whitespace-nowrap">{route}</code>
     </Fragment>
   ));
-
-  return <>{names}</>;
 }
 
 export default Conflicts;

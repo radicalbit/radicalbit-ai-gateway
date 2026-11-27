@@ -6,13 +6,16 @@ it identically. This is the one place that logic lives.
 """
 
 from collections import defaultdict
+from typing import Any
 
 from sqlalchemy import func
 from sqlalchemy.sql import ColumnElement
 
 
 def add_tags_filter(
-    conditions: list, tags_column: ColumnElement, tags: list[str] | None
+    conditions: list[ColumnElement[Any]],
+    tags_column: ColumnElement[Any],
+    tags: list[str] | None,
 ) -> None:
     """Append Google-style facet tag-filter conditions to `conditions`.
 

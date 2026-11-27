@@ -1,5 +1,5 @@
 import asyncio
-import datetime
+import datetime as dt
 import unittest
 from unittest.mock import AsyncMock, MagicMock, patch
 import uuid
@@ -8,14 +8,20 @@ from fastapi import FastAPI
 from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from freezegun import freeze_time
+import pytest
 from starlette.testclient import TestClient
+from typing_extensions import override
 
 from tests.common import db_mock
+from tests.common.sse import first_events
 
 from radicalbit_ai_gateway.auth.api_key_validator import ApiKeyValidator
 from radicalbit_ai_gateway.db.dao.group_dao import GroupDAO
 from radicalbit_ai_gateway.db.dao.key_dao import KeyDAO
 from radicalbit_ai_gateway.db.dao.key_limit_dao import KeyLimitDAO
+from radicalbit_ai_gateway.db.tables.key_table import Key
+from radicalbit_ai_gateway.limiting.limits import shared_limits
+from radicalbit_ai_gateway.middleware.exception_handlers import add_exception_handler
 from radicalbit_ai_gateway.models.api_key_dto import ApiKeySec
 from radicalbit_ai_gateway.models.auth_dto import (
     GroupFullOut,
@@ -29,8 +35,10 @@ from radicalbit_ai_gateway.models.credential_limiting import (
     CredentialLimitValueIn,
     RouteLimitConsistencyWarning,
 )
+from radicalbit_ai_gateway.models.event_dto import WindowProgressBarDTO
 from radicalbit_ai_gateway.models.gateway_route_config import GatewayRouteConfig
 from radicalbit_ai_gateway.models.limiting import LimitingAlgorithmType, RateLimiting
+from radicalbit_ai_gateway.route_meta import read_route_meta
 from radicalbit_ai_gateway.routes.key_route import KeyRoute
 from radicalbit_ai_gateway.server import validation_exception_handler
 from radicalbit_ai_gateway.services.api_key_security import ApiKeySecurity
@@ -47,528 +55,440 @@ from radicalbit_ai_gateway.utils.exceptions import (
     auth_registry_exception_handler,
 )
 
+PREFIX = '/public/api/v1'
+KEY_UUID = db_mock.RANDOM_UUID
 
-class TestKeyRoute(unittest.TestCase):
-    def setUp(self):
-        self.prefix = '/public/api/v1'
-        self.key_service = MagicMock(spec_set=KeyService)
-        router = KeyRoute.get_key_router(self.key_service)
-        app = FastAPI(title='AI Gateway', debug=True)
-        app.add_exception_handler(AuthRegistryError, auth_registry_exception_handler)
-        app.include_router(router, prefix=self.prefix)
 
-        self.client = TestClient(app)
+@pytest.fixture
+def key_service():
+    return MagicMock(spec_set=KeyService)
 
-    def test_create_key(self):
-        key_in = db_mock.get_sample_key_create_in()
-        key = db_mock.get_sample_key()
-        key_out = KeyFullOut.from_key_obscured(key)
-        self.key_service.create_key = MagicMock(return_value=key_out)
-        res = self.client.post(f'{self.prefix}/keys', json=jsonable_encoder(key_in))
-        assert res.status_code == 201
-        assert res.json() == jsonable_encoder(key_out)
-        self.key_service.create_key.assert_called_once_with(key_in)
 
-    def test_exception_handler_key_internal_error(self):
-        key_in = db_mock.get_sample_key_create_in()
-        self.key_service.create_key = MagicMock(side_effect=KeyInternalError('error'))
-        res = self.client.post(
-            f'{self.prefix}/keys',
-            json=jsonable_encoder(key_in),
-        )
-        assert res.status_code == 500
-        assert (
-            res.json()['error']
-            == ErrorOut(
-                'error', 'auth_registry_error', code='key_internal_error', param=None
-            ).error
-        )
-        self.key_service.create_key.assert_called_once_with(key_in)
+@pytest.fixture
+def client(key_service):
+    app = FastAPI(title='AI Gateway', debug=True)
+    add_exception_handler(app, AuthRegistryError, auth_registry_exception_handler)
+    app.include_router(KeyRoute.get_key_router(key_service), prefix=PREFIX)
+    return TestClient(app)
 
-    def test_get_all(self):
-        api_keys = [
-            KeyFullOut.from_key_obscured(
-                db_mock.get_sample_key(uuid=uuid.uuid4(), name='one')
+
+def test_create_key(client, key_service):
+    key_in = db_mock.get_sample_key_create_in()
+    key_out = KeyFullOut.from_key_obscured(db_mock.get_sample_key())
+    key_service.create_key.return_value = key_out
+
+    res = client.post(f'{PREFIX}/keys', json=jsonable_encoder(key_in))
+
+    assert res.status_code == 201
+    assert res.json() == jsonable_encoder(key_out)
+    key_service.create_key.assert_called_once_with(key_in)
+
+
+def test_get_all(client, key_service):
+    api_keys = [
+        KeyFullOut.from_key_obscured(db_mock.get_sample_key(uuid=uuid.uuid4(), name=n))
+        for n in ('one', 'two', 'three')
+    ]
+    key_service.get_all.return_value = api_keys
+
+    res = client.get(f'{PREFIX}/keys')
+
+    assert res.status_code == 200
+    assert res.json() == jsonable_encoder(api_keys)
+    key_service.get_all.assert_called_once()
+
+
+def test_delete_key(client, key_service):
+    key_out = KeyFullOut.from_key_obscured(db_mock.get_sample_key())
+    key_service.delete_key.return_value = key_out
+
+    res = client.delete(f'{PREFIX}/keys/{KEY_UUID}')
+
+    assert res.status_code == 200
+    assert res.json() == jsonable_encoder(key_out)
+    key_service.delete_key.assert_called_once_with(KEY_UUID, False)
+
+
+def test_get_key_by_uuid(client, key_service):
+    key = db_mock.get_sample_key()
+    key_out = KeyFullOut.from_key_obscured(key)
+    key_service.get_key_by_uuid.return_value = key_out
+
+    res = client.get(f'{PREFIX}/keys/{key.uuid}')
+
+    assert res.status_code == 200
+    assert res.json() == jsonable_encoder(key_out)
+    key_service.get_key_by_uuid.assert_called_once_with(key.uuid, False, False, {})
+
+
+def test_update_key_name(client, key_service):
+    key_in = db_mock.get_sample_key_update_in()
+    key = db_mock.get_sample_key()
+    key_out = KeyFullOut.from_key_obscured(key)
+    key_service.update_key_name.return_value = key_out
+
+    res = client.patch(f'{PREFIX}/keys/{key.uuid}', json=jsonable_encoder(key_in))
+
+    assert res.status_code == 200
+    assert res.json() == jsonable_encoder(key_out)
+    key_service.update_key_name.assert_called_once_with(key.uuid, key_in)
+
+
+def test_add_group_to_key(client, key_service):
+    key = db_mock.get_sample_key()
+    key_group_in = db_mock.get_sample_key_group_in()
+    key_out = db_mock.get_sample_key_full_out()
+    key_service.add_group_to_key.return_value = key_out
+
+    res = client.patch(
+        f'{PREFIX}/keys/{key.uuid}/group?include_groups=True',
+        json=jsonable_encoder(key_group_in),
+    )
+
+    assert res.status_code == 200
+    assert res.json() == jsonable_encoder(key_out)
+    key_service.add_group_to_key.assert_called_once_with(key.uuid, key_group_in, True)
+
+
+def test_get_associable_groups(client, key_service):
+    key = db_mock.get_sample_key()
+    groups_out = [
+        GroupFullOut.from_group(db_mock.get_sample_group(uuid=uuid.uuid4(), name=n))
+        for n in ('g1', 'g2')
+    ]
+    key_service.get_associable_groups.return_value = groups_out
+
+    res = client.get(f'{PREFIX}/keys/{key.uuid}/associable-groups')
+
+    assert res.status_code == 200
+    assert res.json() == jsonable_encoder(groups_out)
+    key_service.get_associable_groups.assert_called_once_with(key.uuid, False, False)
+
+
+def test_get_associable_groups_with_includes(client, key_service):
+    key = db_mock.get_sample_key()
+    groups_out = [
+        GroupFullOut.from_group(
+            db_mock.get_sample_group(
+                uuid=uuid.uuid4(), group_routes=[db_mock.get_sample_group_route()]
             ),
-            KeyFullOut.from_key_obscured(
-                db_mock.get_sample_key(uuid=uuid.uuid4(), name='two')
-            ),
-            KeyFullOut.from_key_obscured(
-                db_mock.get_sample_key(uuid=uuid.uuid4(), name='three')
-            ),
-        ]
-        self.key_service.get_all = MagicMock(return_value=api_keys)
-        res = self.client.get(f'{self.prefix}/keys')
-        assert res.status_code == 200
-        assert jsonable_encoder(api_keys) == res.json()
-        self.key_service.get_all.assert_called_once()
+            include_routes=True,
+            include_keys=True,
+        )
+    ]
+    key_service.get_associable_groups.return_value = groups_out
 
-    def test_delete_key(self):
-        key = db_mock.get_sample_key()
-        key_out = KeyFullOut.from_key_obscured(key)
-        self.key_service.delete_key = MagicMock(return_value=key_out)
-        res = self.client.delete(f'{self.prefix}/keys/{db_mock.RANDOM_UUID}')
-        assert res.status_code == 200
-        assert res.json() == jsonable_encoder(key_out)
-        self.key_service.delete_key.assert_called_once_with(db_mock.RANDOM_UUID, False)
+    res = client.get(
+        f'{PREFIX}/keys/{key.uuid}/associable-groups'
+        '?include_routes=true&include_keys=true'
+    )
 
-    def test_delete_key_ko(self):
-        self.key_service.delete_key = MagicMock(side_effect=KeyInternalError('error'))
-        res = self.client.delete(f'{self.prefix}/keys/{db_mock.RANDOM_UUID}')
-        assert res.status_code == 500
-        assert (
-            res.json()['error']
-            == ErrorOut(
-                'error', 'auth_registry_error', code='key_internal_error', param=None
-            ).error
-        )
-        self.key_service.delete_key.assert_called_once_with(db_mock.RANDOM_UUID, False)
+    assert res.status_code == 200
+    assert res.json() == jsonable_encoder(groups_out)
+    key_service.get_associable_groups.assert_called_once_with(key.uuid, True, True)
 
-    def test_delete_missing_key(self):
-        self.key_service.delete_key = MagicMock(side_effect=KeyNotFoundError('error'))
-        res = self.client.delete(f'{self.prefix}/keys/{db_mock.RANDOM_UUID}')
-        assert res.status_code == 404
-        assert (
-            res.json()['error']
-            == ErrorOut(
-                'error', 'auth_registry_error', code='key_not_found', param=None
-            ).error
-        )
-        self.key_service.delete_key.assert_called_once_with(db_mock.RANDOM_UUID, False)
 
-    def test_get_key_by_uuid(self):
-        key = db_mock.get_sample_key()
-        key_out = KeyFullOut.from_key_obscured(key)
-        self.key_service.get_key_by_uuid = MagicMock(return_value=key_out)
-        res = self.client.get(f'{self.prefix}/keys/{key.uuid}')
-        assert res.status_code == 200
-        assert jsonable_encoder(key_out) == res.json()
-        self.key_service.get_key_by_uuid.assert_called_once_with(
-            key.uuid, False, False, {}
-        )
+def test_add_limits_to_key(client, key_service):
+    key = db_mock.get_sample_key()
+    limits_in = db_mock.get_sample_credential_limits_in()
+    result = KeyLimitsAddedOut(key=db_mock.get_sample_key_full_out(), warnings=[])
+    key_service.add_limits_to_key.return_value = result
 
-    def test_get_missing_key_by_uuid(self):
-        key = db_mock.get_sample_key()
-        self.key_service.get_key_by_uuid = MagicMock(
-            side_effect=KeyNotFoundError('error')
-        )
-        res = self.client.get(f'{self.prefix}/keys/{key.uuid}')
-        assert res.status_code == 404
-        assert (
-            res.json()['error']
-            == ErrorOut(
-                'error', 'auth_registry_error', code='key_not_found', param=None
-            ).error
-        )
-        self.key_service.get_key_by_uuid.assert_called_once_with(
-            key.uuid, False, False, {}
-        )
+    res = client.post(
+        f'{PREFIX}/keys/{key.uuid}/limits', json=jsonable_encoder(limits_in)
+    )
 
-    def test_update_key_name(self):
-        key_in = db_mock.get_sample_key_update_in()
-        key = db_mock.get_sample_key()
-        key_out = KeyFullOut.from_key_obscured(key)
-        self.key_service.update_key_name = MagicMock(return_value=key_out)
-        res = self.client.patch(
-            f'{self.prefix}/keys/{key.uuid}', json=jsonable_encoder(key_in)
-        )
-        assert res.status_code == 200
-        assert jsonable_encoder(key_out) == res.json()
-        self.key_service.update_key_name.assert_called_once_with(key.uuid, key_in)
+    assert res.status_code == 201
+    assert res.json() == jsonable_encoder(result)
+    # No routes built yet: nothing to compare with, the save still goes on
+    key_service.add_limits_to_key.assert_called_once_with(
+        key.uuid, limits_in, False, {}
+    )
 
-    def test_update_key_name_ko(self):
-        key_in = db_mock.get_sample_key_update_in()
-        key = db_mock.get_sample_key()
-        self.key_service.update_key_name = MagicMock(
-            side_effect=KeyInternalError('error')
-        )
-        res = self.client.patch(
-            f'{self.prefix}/keys/{key.uuid}', json=jsonable_encoder(key_in)
-        )
-        assert res.status_code == 500
-        assert (
-            res.json()['error']
-            == ErrorOut(
-                'error', 'auth_registry_error', code='key_internal_error', param=None
-            ).error
-        )
-        self.key_service.update_key_name.assert_called_once_with(key.uuid, key_in)
 
-    def test_update_missing_key(self):
-        key_in = db_mock.get_sample_key_update_in()
-        key = db_mock.get_sample_key()
-        self.key_service.update_key_name = MagicMock(
-            side_effect=KeyNotFoundError('error')
-        )
-        res = self.client.patch(
-            f'{self.prefix}/keys/{key.uuid}', json=jsonable_encoder(key_in)
-        )
-        assert res.status_code == 404
-        assert (
-            res.json()['error']
-            == ErrorOut(
-                'error', 'auth_registry_error', code='key_not_found', param=None
-            ).error
-        )
-        self.key_service.update_key_name.assert_called_once_with(key.uuid, key_in)
+def test_add_limits_to_key_compares_with_the_served_routes(client, key_service):
+    key = db_mock.get_sample_key()
+    limits_in = db_mock.get_sample_credential_limits_in()
+    route_config = GatewayRouteConfig(
+        route_name='chat', rate_limiting=RateLimiting(max_requests=50)
+    )
+    client.app.state.routes = {
+        'proj/chat': MagicMock(gateway_route_config=route_config)
+    }
+    warning = RouteLimitConsistencyWarning(
+        category='request_rate',
+        algorithm=LimitingAlgorithmType.FIXED_WINDOW,
+        route_name='proj/chat',
+        credential_value=100,
+        credential_window_size='1 minute',
+        route_value=50,
+        route_window_size='1 minute',
+    )
+    key_service.add_limits_to_key.return_value = KeyLimitsAddedOut(
+        key=db_mock.get_sample_key_full_out(), warnings=[warning]
+    )
 
-    def test_add_group_to_key_success(self):
-        key = db_mock.get_sample_key()
-        key_group_in = db_mock.get_sample_key_group_in()
-        key_out = db_mock.get_sample_key_full_out()
-        self.key_service.add_group_to_key = MagicMock(return_value=key_out)
-        res = self.client.patch(
-            f'{self.prefix}/keys/{key.uuid}/group?include_groups=True',
-            json=jsonable_encoder(key_group_in),
-        )
-        assert res.status_code == 200
-        assert res.json() == jsonable_encoder(key_out)
+    res = client.post(
+        f'{PREFIX}/keys/{key.uuid}/limits', json=jsonable_encoder(limits_in)
+    )
 
-    def test_add_group_to_key_success_no_group(self):
-        key = db_mock.get_sample_key()
-        key_group_in = db_mock.get_sample_key_group_in()
-        key_out = db_mock.get_sample_key_full_out()
-        del key_out.group
-        self.key_service.add_group_to_key = MagicMock(return_value=key_out)
-        res = self.client.patch(
-            f'{self.prefix}/keys/{key.uuid}/group',
-            json=jsonable_encoder(key_group_in),
-        )
-        assert res.status_code == 200
-        assert res.json() == jsonable_encoder(key_out)
-
-    def test_get_associable_groups(self):
-        key = db_mock.get_sample_key()
-        groups_out = [
-            GroupFullOut.from_group(
-                db_mock.get_sample_group(uuid=uuid.uuid4(), name='g1')
-            ),
-            GroupFullOut.from_group(
-                db_mock.get_sample_group(uuid=uuid.uuid4(), name='g2')
-            ),
-        ]
-        self.key_service.get_associable_groups = MagicMock(return_value=groups_out)
-        res = self.client.get(f'{self.prefix}/keys/{key.uuid}/associable-groups')
-        assert res.status_code == 200
-        assert jsonable_encoder(groups_out) == res.json()
-        self.key_service.get_associable_groups.assert_called_once_with(
-            key.uuid, False, False
-        )
-
-    def test_get_associable_groups_with_includes(self):
-        key = db_mock.get_sample_key()
-        group_route = db_mock.get_sample_group_route()
-        groups_out = [
-            GroupFullOut.from_group(
-                db_mock.get_sample_group(uuid=uuid.uuid4(), group_routes=[group_route]),
-                include_routes=True,
-                include_keys=True,
-            )
-        ]
-        self.key_service.get_associable_groups = MagicMock(return_value=groups_out)
-        res = self.client.get(
-            f'{self.prefix}/keys/{key.uuid}/associable-groups?include_routes=true&include_keys=true'
-        )
-        assert res.status_code == 200
-        assert jsonable_encoder(groups_out) == res.json()
-        self.key_service.get_associable_groups.assert_called_once_with(
-            key.uuid, True, True
-        )
-
-    def test_get_associable_groups_empty(self):
-        key = db_mock.get_sample_key()
-        self.key_service.get_associable_groups = MagicMock(return_value=[])
-        res = self.client.get(f'{self.prefix}/keys/{key.uuid}/associable-groups')
-        assert res.status_code == 200
-        assert res.json() == []
-        self.key_service.get_associable_groups.assert_called_once_with(
-            key.uuid, False, False
-        )
-
-    def test_get_associable_groups_key_not_found(self):
-        key = db_mock.get_sample_key()
-        self.key_service.get_associable_groups = MagicMock(
-            side_effect=KeyNotFoundError('error')
-        )
-        res = self.client.get(f'{self.prefix}/keys/{key.uuid}/associable-groups')
-        assert res.status_code == 404
-        assert (
-            res.json()['error']
-            == ErrorOut(
-                'error', 'auth_registry_error', code='key_not_found', param=None
-            ).error
-        )
-        self.key_service.get_associable_groups.assert_called_once_with(
-            key.uuid, False, False
-        )
-
-    def test_add_limits_to_key_success(self):
-        key = db_mock.get_sample_key()
-        limits_in = db_mock.get_sample_credential_limits_in()
-        result = KeyLimitsAddedOut(key=db_mock.get_sample_key_full_out(), warnings=[])
-        self.key_service.add_limits_to_key = MagicMock(return_value=result)
-        res = self.client.post(
-            f'{self.prefix}/keys/{key.uuid}/limits',
-            json=jsonable_encoder(limits_in),
-        )
-        assert res.status_code == 201
-        assert res.json() == jsonable_encoder(result)
-        # No routes built yet: nothing to compare with, the save still goes on
-        self.key_service.add_limits_to_key.assert_called_once_with(
-            key.uuid, limits_in, False, {}
-        )
-
-    def test_add_limits_to_key_compares_with_the_served_routes(self):
-        key = db_mock.get_sample_key()
-        limits_in = db_mock.get_sample_credential_limits_in()
-        route_config = GatewayRouteConfig(
-            route_name='chat', rate_limiting=RateLimiting(max_requests=50)
-        )
-        self.client.app.state.routes = {
-            'proj/chat': MagicMock(gateway_route_config=route_config)
+    assert res.status_code == 201
+    assert res.json()['warnings'] == [
+        {
+            'category': 'request_rate',
+            'algorithm': 'FIXED_WINDOW',
+            'routeName': 'proj/chat',
+            'credentialValue': 100.0,
+            'credentialWindowSize': '1 minute',
+            'routeValue': 50.0,
+            'routeWindowSize': '1 minute',
         }
-        warning = RouteLimitConsistencyWarning(
-            category='request_rate',
-            algorithm=LimitingAlgorithmType.FIXED_WINDOW,
-            route_name='proj/chat',
-            credential_value=100,
-            credential_window_size='1 minute',
-            route_value=50,
-            route_window_size='1 minute',
-        )
-        self.key_service.add_limits_to_key = MagicMock(
-            return_value=KeyLimitsAddedOut(
-                key=db_mock.get_sample_key_full_out(), warnings=[warning]
+    ]
+    key_service.add_limits_to_key.assert_called_once_with(
+        key.uuid, limits_in, False, {'proj/chat': route_config}
+    )
+
+
+def test_get_limits_for_key(client, key_service):
+    key = db_mock.get_sample_key()
+    limit_out = CredentialLimitOut.from_key_limit(
+        db_mock.get_sample_key_limit(uuid=uuid.uuid4(), key_uuid=key.uuid)
+    )
+    key_service.get_limits_for_key.return_value = [limit_out]
+
+    res = client.get(f'{PREFIX}/keys/{key.uuid}/limits')
+
+    assert res.status_code == 200
+    assert res.json() == jsonable_encoder([limit_out])
+    key_service.get_limits_for_key.assert_called_once_with(key.uuid)
+
+
+def test_delete_limit_from_key(client, key_service):
+    key = db_mock.get_sample_key()
+    limit_out = CredentialLimitOut.from_key_limit(
+        db_mock.get_sample_key_limit(uuid=uuid.uuid4(), key_uuid=key.uuid)
+    )
+    key_service.delete_limit_from_key = AsyncMock(return_value=limit_out)
+
+    res = client.delete(f'{PREFIX}/keys/{key.uuid}/limits/{limit_out.uuid}')
+
+    assert res.status_code == 200
+    assert res.json() == jsonable_encoder(limit_out)
+    key_service.delete_limit_from_key.assert_awaited_once_with(key.uuid, limit_out.uuid)
+
+
+LIMIT_URL = f'{PREFIX}/keys/{KEY_UUID}/limits/{db_mock.RANDOM_UUID}'
+
+# (HTTP method, path, service method, body, raised error, status, error code).
+# The handler is global: one row per endpoint, each error type at least once.
+KEY_ERRORS = [
+    pytest.param(
+        'POST',
+        f'{PREFIX}/keys',
+        'create_key',
+        jsonable_encoder(db_mock.get_sample_key_create_in()),
+        KeyInternalError('error'),
+        500,
+        'key_internal_error',
+        id='create-internal-error',
+    ),
+    pytest.param(
+        'GET',
+        f'{PREFIX}/keys/{KEY_UUID}',
+        'get_key_by_uuid',
+        None,
+        KeyNotFoundError('error'),
+        404,
+        'key_not_found',
+        id='get-missing-key',
+    ),
+    pytest.param(
+        'PATCH',
+        f'{PREFIX}/keys/{KEY_UUID}',
+        'update_key_name',
+        jsonable_encoder(db_mock.get_sample_key_update_in()),
+        KeyInternalError('error'),
+        500,
+        'key_internal_error',
+        id='update-internal-error',
+    ),
+    pytest.param(
+        'DELETE',
+        f'{PREFIX}/keys/{KEY_UUID}',
+        'delete_key',
+        None,
+        KeyNotFoundError('error'),
+        404,
+        'key_not_found',
+        id='delete-missing-key',
+    ),
+    pytest.param(
+        'GET',
+        f'{PREFIX}/keys/{KEY_UUID}/associable-groups',
+        'get_associable_groups',
+        None,
+        KeyNotFoundError('error'),
+        404,
+        'key_not_found',
+        id='associable-groups-missing-key',
+    ),
+    pytest.param(
+        'POST',
+        f'{PREFIX}/keys/{KEY_UUID}/limits',
+        'add_limits_to_key',
+        jsonable_encoder(db_mock.get_sample_credential_limits_in()),
+        KeyNotFoundError('error'),
+        404,
+        'key_not_found',
+        id='add-limits-missing-key',
+    ),
+    pytest.param(
+        'GET',
+        f'{PREFIX}/keys/{KEY_UUID}/limits',
+        'get_limits_for_key',
+        None,
+        KeyNotFoundError('error'),
+        404,
+        'key_not_found',
+        id='get-limits-missing-key',
+    ),
+    pytest.param(
+        'DELETE',
+        LIMIT_URL,
+        'delete_limit_from_key',
+        None,
+        CredentialLimitNotFoundError('error'),
+        404,
+        'credential_limit_not_found',
+        id='delete-missing-limit',
+    ),
+    pytest.param(
+        'PATCH',
+        LIMIT_URL,
+        'update_limit_value',
+        {'value': 5},
+        KeyOperationNotAllowedError('error'),
+        405,
+        'key_operation_method_not_allowed',
+        id='update-limit-not-allowed',
+    ),
+]
+
+
+@pytest.mark.parametrize(
+    ('method', 'path', 'service_method', 'body', 'error', 'status_code', 'code'),
+    KEY_ERRORS,
+)
+def test_a_service_error_becomes_its_auth_registry_error_response(
+    client, key_service, method, path, service_method, body, error, status_code, code
+):
+    getattr(key_service, service_method).side_effect = error
+
+    res = client.request(method, path, json=body)
+
+    assert res.status_code == status_code
+    assert (
+        res.json()['error']
+        == ErrorOut('error', 'auth_registry_error', code=code, param=None).error
+    )
+
+
+def _patch_limit(client, key_uuid, limit_uuid, body):
+    return client.patch(f'{PREFIX}/keys/{key_uuid}/limits/{limit_uuid}', json=body)
+
+
+def test_update_limit_value_returns_the_limit_with_its_previous_max(
+    client, key_service
+):
+    key_uuid, limit_uuid = uuid.uuid4(), uuid.uuid4()
+    updated = CredentialLimitUpdatedOut(
+        **CredentialLimitOut.from_key_limit(
+            db_mock.get_sample_key_limit(
+                uuid=limit_uuid, key_uuid=key_uuid, max_value=25.0
             )
-        )
+        ).model_dump(),
+        previous_value=10.0,
+    )
+    key_service.update_limit_value.return_value = updated
 
-        res = self.client.post(
-            f'{self.prefix}/keys/{key.uuid}/limits',
-            json=jsonable_encoder(limits_in),
-        )
+    res = _patch_limit(client, key_uuid, limit_uuid, {'value': 25})
 
-        assert res.status_code == 201
-        assert res.json()['warnings'] == [
-            {
-                'category': 'request_rate',
-                'algorithm': 'FIXED_WINDOW',
-                'routeName': 'proj/chat',
-                'credentialValue': 100.0,
-                'credentialWindowSize': '1 minute',
-                'routeValue': 50.0,
-                'routeWindowSize': '1 minute',
-            }
-        ]
-        self.key_service.add_limits_to_key.assert_called_once_with(
-            key.uuid, limits_in, False, {'proj/chat': route_config}
-        )
+    assert res.status_code == 200
+    assert res.json()['value'] == 25.0
+    assert res.json()['previousValue'] == 10.0
+    key_service.update_limit_value.assert_called_once_with(
+        key_uuid, limit_uuid, CredentialLimitValueIn(value=25), {}
+    )
 
-    def test_add_limits_to_key_not_found(self):
-        key = db_mock.get_sample_key()
-        limits_in = db_mock.get_sample_credential_limits_in()
-        self.key_service.add_limits_to_key = MagicMock(
-            side_effect=KeyNotFoundError('error')
-        )
-        res = self.client.post(
-            f'{self.prefix}/keys/{key.uuid}/limits',
-            json=jsonable_encoder(limits_in),
-        )
-        assert res.status_code == 404
-        assert (
-            res.json()['error']
-            == ErrorOut(
-                'error', 'auth_registry_error', code='key_not_found', param=None
-            ).error
-        )
 
-    def test_get_limits_for_key_success(self):
-        key = db_mock.get_sample_key()
-        limit_out = CredentialLimitOut.from_key_limit(
-            db_mock.get_sample_key_limit(uuid=uuid.uuid4(), key_uuid=key.uuid)
-        )
-        self.key_service.get_limits_for_key = MagicMock(return_value=[limit_out])
-        res = self.client.get(f'{self.prefix}/keys/{key.uuid}/limits')
-        assert res.status_code == 200
-        assert res.json() == jsonable_encoder([limit_out])
-        self.key_service.get_limits_for_key.assert_called_once_with(key.uuid)
+@pytest.mark.parametrize(
+    ('body', 'loc'),
+    [
+        pytest.param({'value': 0}, ['body', 'value'], id='max-not-above-zero'),
+        pytest.param(
+            {'value': 5, 'windowSize': '1 hour'},
+            ['body', 'windowSize'],
+            id='field-other-than-the-max',
+        ),
+    ],
+)
+def test_update_limit_value_rejects_an_invalid_body(client, key_service, body, loc):
+    res = _patch_limit(client, uuid.uuid4(), uuid.uuid4(), body)
 
-    def test_get_limits_for_key_not_found(self):
-        key = db_mock.get_sample_key()
-        self.key_service.get_limits_for_key = MagicMock(
-            side_effect=KeyNotFoundError('error')
-        )
-        res = self.client.get(f'{self.prefix}/keys/{key.uuid}/limits')
-        assert res.status_code == 404
-        assert (
-            res.json()['error']
-            == ErrorOut(
-                'error', 'auth_registry_error', code='key_not_found', param=None
-            ).error
-        )
+    assert res.status_code == 422
+    assert res.json()['detail'][0]['loc'] == loc
+    key_service.update_limit_value.assert_not_called()
 
-    def test_delete_limit_from_key_success(self):
-        key = db_mock.get_sample_key()
-        limit_out = CredentialLimitOut.from_key_limit(
-            db_mock.get_sample_key_limit(uuid=uuid.uuid4(), key_uuid=key.uuid)
-        )
-        self.key_service.delete_limit_from_key = AsyncMock(return_value=limit_out)
-        res = self.client.delete(
-            f'{self.prefix}/keys/{key.uuid}/limits/{limit_out.uuid}'
-        )
-        assert res.status_code == 200
-        assert res.json() == jsonable_encoder(limit_out)
-        self.key_service.delete_limit_from_key.assert_awaited_once_with(
-            key.uuid, limit_out.uuid
-        )
 
-    def test_delete_limit_from_key_not_found(self):
-        key = db_mock.get_sample_key()
-        self.key_service.delete_limit_from_key = AsyncMock(
-            side_effect=CredentialLimitNotFoundError('error')
-        )
-        res = self.client.delete(f'{self.prefix}/keys/{key.uuid}/limits/{uuid.uuid4()}')
-        assert res.status_code == 404
-        assert (
-            res.json()['error']
-            == ErrorOut(
-                'error',
-                'auth_registry_error',
-                code='credential_limit_not_found',
-                param=None,
-            ).error
-        )
+def test_update_limit_value_points_an_invalid_max_at_the_value_field(
+    client, key_service
+):
+    key_service.update_limit_value.side_effect = CredentialLimitValueError(
+        '2.5 is not a valid max for a request_rate limit'
+    )
 
-    def test_delete_limit_from_key_key_not_found(self):
-        self.key_service.delete_limit_from_key = AsyncMock(
-            side_effect=KeyNotFoundError('error')
-        )
-        res = self.client.delete(
-            f'{self.prefix}/keys/{uuid.uuid4()}/limits/{uuid.uuid4()}'
-        )
-        assert res.status_code == 404
-        assert (
-            res.json()['error']
-            == ErrorOut(
-                'error', 'auth_registry_error', code='key_not_found', param=None
-            ).error
-        )
+    res = _patch_limit(client, uuid.uuid4(), uuid.uuid4(), {'value': 2.5})
 
-    def _patch_limit(self, key_uuid, limit_uuid, body):
-        return self.client.patch(
-            f'{self.prefix}/keys/{key_uuid}/limits/{limit_uuid}', json=body
-        )
+    assert res.status_code == 422
+    assert res.json()['detail'][0]['loc'] == ['body', 'value']
+    assert (
+        res.json()['detail'][0]['msg']
+        == '2.5 is not a valid max for a request_rate limit'
+    )
 
-    def test_update_limit_value_returns_the_limit_with_its_previous_max(self):
-        key_uuid, limit_uuid = uuid.uuid4(), uuid.uuid4()
-        updated = CredentialLimitUpdatedOut(
-            **CredentialLimitOut.from_key_limit(
-                db_mock.get_sample_key_limit(
-                    uuid=limit_uuid, key_uuid=key_uuid, max_value=25.0
-                )
-            ).model_dump(),
-            previous_value=10.0,
-        )
-        self.key_service.update_limit_value = MagicMock(return_value=updated)
 
-        res = self._patch_limit(key_uuid, limit_uuid, {'value': 25})
+def test_update_limit_value_is_audited_on_the_key(client):
+    def find_endpoint(routes):
+        for route in routes:
+            nested = getattr(getattr(route, 'original_router', None), 'routes', None)
+            found = find_endpoint(nested or getattr(route, 'routes', []))
+            if found:
+                return found
+            if getattr(route, 'path', '').endswith(
+                '/keys/{key_uuid}/limits/{limit_uuid}'
+            ) and 'PATCH' in getattr(route, 'methods', set()):
+                return route.endpoint
+        return None
 
-        assert res.status_code == 200
-        assert res.json()['value'] == 25.0
-        assert res.json()['previousValue'] == 10.0
-        self.key_service.update_limit_value.assert_called_once_with(
-            key_uuid, limit_uuid, CredentialLimitValueIn(value=25), {}
-        )
+    endpoint = find_endpoint(client.app.routes)
 
-    def test_update_limit_value_rejects_a_max_not_above_zero(self):
-        self.key_service.update_limit_value = MagicMock()
-
-        res = self._patch_limit(uuid.uuid4(), uuid.uuid4(), {'value': 0})
-
-        assert res.status_code == 422
-        assert res.json()['detail'][0]['loc'] == ['body', 'value']
-        self.key_service.update_limit_value.assert_not_called()
-
-    def test_update_limit_value_rejects_fields_other_than_the_max(self):
-        self.key_service.update_limit_value = MagicMock()
-
-        res = self._patch_limit(
-            uuid.uuid4(), uuid.uuid4(), {'value': 5, 'windowSize': '1 hour'}
-        )
-
-        assert res.status_code == 422
-        assert res.json()['detail'][0]['loc'] == ['body', 'windowSize']
-        self.key_service.update_limit_value.assert_not_called()
-
-    def test_update_limit_value_points_an_invalid_max_at_the_value_field(self):
-        self.key_service.update_limit_value = MagicMock(
-            side_effect=CredentialLimitValueError(
-                '2.5 is not a valid max for a request_rate limit'
-            )
-        )
-
-        res = self._patch_limit(uuid.uuid4(), uuid.uuid4(), {'value': 2.5})
-
-        assert res.status_code == 422
-        assert res.json()['detail'][0]['loc'] == ['body', 'value']
-        assert (
-            res.json()['detail'][0]['msg']
-            == '2.5 is not a valid max for a request_rate limit'
-        )
-
-    def test_update_limit_value_maps_the_service_errors(self):
-        cases = [
-            (
-                CredentialLimitNotFoundError('missing'),
-                404,
-                'credential_limit_not_found',
-            ),
-            (
-                KeyOperationNotAllowedError('expired'),
-                405,
-                'key_operation_method_not_allowed',
-            ),
-        ]
-        for error, status_code, code in cases:
-            self.key_service.update_limit_value = MagicMock(side_effect=error)
-
-            res = self._patch_limit(uuid.uuid4(), uuid.uuid4(), {'value': 5})
-
-            assert res.status_code == status_code
-            assert res.json()['error']['code'] == code
-
-    def test_update_limit_value_is_audited_on_the_key(self):
-        def find_endpoint(routes):
-            for route in routes:
-                nested = getattr(
-                    getattr(route, 'original_router', None), 'routes', None
-                )
-                found = find_endpoint(nested or getattr(route, 'routes', []))
-                if found:
-                    return found
-                if getattr(route, 'path', '').endswith(
-                    '/keys/{key_uuid}/limits/{limit_uuid}'
-                ) and 'PATCH' in getattr(route, 'methods', set()):
-                    return route.endpoint
-            return None
-
-        endpoint = find_endpoint(self.client.app.routes)
-
-        assert endpoint._route_meta == {
-            'entity_type': 'KEY',
-            'entity_uuid_param': 'key_uuid',
-        }
+    assert read_route_meta(endpoint) == {
+        'entity_type': 'KEY',
+        'entity_uuid_param': 'key_uuid',
+    }
 
 
 class TestKeyRouteExpiry(unittest.TestCase):
     """Expiry date on create, and expiresOn/state on every read."""
 
+    @override
     def setUp(self):
         self.prefix = '/public/api/v1'
         self.key_service = MagicMock(spec_set=KeyService)
         router = KeyRoute.get_key_router(self.key_service)
         app = FastAPI(title='AI Gateway', debug=True)
-        app.add_exception_handler(AuthRegistryError, auth_registry_exception_handler)
-        app.add_exception_handler(RequestValidationError, validation_exception_handler)
+        add_exception_handler(app, AuthRegistryError, auth_registry_exception_handler)
+        add_exception_handler(app, RequestValidationError, validation_exception_handler)
         app.include_router(router, prefix=self.prefix)
         self.client = TestClient(app)
 
@@ -576,11 +496,11 @@ class TestKeyRouteExpiry(unittest.TestCase):
         key_out = KeyFullOut.from_key_obscured(
             db_mock.get_sample_key(expires_on=expires_on)
         )
-        self.key_service.create_key = MagicMock(return_value=key_out)
+        self.key_service.create_key = AsyncMock(return_value=key_out)
         return key_out
 
     @freeze_time('2026-11-01 12:00:00')
-    def test_create_without_expires_on(self):
+    def test_create_without_expires_on(self) -> None:
         self._created()
         res = self.client.post(f'{self.prefix}/keys', json={'name': 'no-expiry'})
         assert res.status_code == 201
@@ -591,8 +511,8 @@ class TestKeyRouteExpiry(unittest.TestCase):
         )
 
     @freeze_time('2026-11-01 12:00:00')
-    def test_create_with_expires_on(self):
-        self._created(expires_on=datetime.date(2026, 11, 10))
+    def test_create_with_expires_on(self) -> None:
+        self._created(expires_on=dt.date(2026, 11, 10))
         res = self.client.post(
             f'{self.prefix}/keys', json={'name': 'expiry', 'expiresOn': '2026-11-10'}
         )
@@ -600,12 +520,12 @@ class TestKeyRouteExpiry(unittest.TestCase):
         assert res.json()['expiresOn'] == '2026-11-10'
         assert res.json()['state'] == 'active'
         self.key_service.create_key.assert_called_once_with(
-            KeyCreateIn(name='expiry', expires_on=datetime.date(2026, 11, 10))
+            KeyCreateIn(name='expiry', expires_on=dt.date(2026, 11, 10))
         )
 
     @freeze_time('2026-11-01 23:59:59')
-    def test_create_with_today_is_accepted(self):
-        self._created(expires_on=datetime.date(2026, 11, 1))
+    def test_create_with_today_is_accepted(self) -> None:
+        self._created(expires_on=dt.date(2026, 11, 1))
         res = self.client.post(
             f'{self.prefix}/keys', json={'name': 'today', 'expiresOn': '2026-11-01'}
         )
@@ -613,7 +533,7 @@ class TestKeyRouteExpiry(unittest.TestCase):
         assert res.json()['state'] == 'expiring'
 
     @freeze_time('2026-11-02 00:00:00')
-    def test_create_with_a_past_date_is_rejected(self):
+    def test_create_with_a_past_date_is_rejected(self) -> None:
         res = self.client.post(
             f'{self.prefix}/keys', json={'name': 'past', 'expiresOn': '2026-11-01'}
         )
@@ -622,12 +542,12 @@ class TestKeyRouteExpiry(unittest.TestCase):
         self.key_service.create_key.assert_not_called()
 
     @freeze_time('2026-11-11 00:00:00')
-    def test_reads_carry_expires_on_and_state(self):
+    def test_reads_carry_expires_on_and_state(self) -> None:
         expired = KeyFullOut.from_key_obscured(
-            db_mock.get_sample_key(expires_on=datetime.date(2026, 11, 10))
+            db_mock.get_sample_key(expires_on=dt.date(2026, 11, 10))
         )
-        self.key_service.get_key_by_uuid = MagicMock(return_value=expired)
-        self.key_service.get_all = MagicMock(return_value=[expired])
+        self.key_service.get_key_by_uuid = AsyncMock(return_value=expired)
+        self.key_service.get_all = AsyncMock(return_value=[expired])
 
         one = self.client.get(f'{self.prefix}/keys/{expired.uuid}').json()
         assert one['expiresOn'] == '2026-11-10'
@@ -639,7 +559,7 @@ class TestKeyRouteExpiry(unittest.TestCase):
 
     def test_update_cannot_change_the_expiry_date(self):
         key = db_mock.get_sample_key()
-        self.key_service.update_key_name = MagicMock()
+        self.key_service.update_key_name = AsyncMock()
         res = self.client.patch(
             f'{self.prefix}/keys/{key.uuid}',
             json={'name': 'renamed', 'expiresOn': '2099-01-01'},
@@ -648,7 +568,7 @@ class TestKeyRouteExpiry(unittest.TestCase):
         self.key_service.update_key_name.assert_not_called()
 
 
-EXPIRES_ON = datetime.date(2026, 11, 10)
+EXPIRES_ON = dt.date(2026, 11, 10)
 EXPIRED_AT = '2026-11-11 00:00:00'
 EXPIRING_AT = '2026-11-10 23:59:59'
 LIMITS_BODY = {'limits': [{'category': 'budget', 'windowSize': '1 day', 'value': 10}]}
@@ -657,6 +577,7 @@ LIMITS_BODY = {'limits': [{'category': 'budget', 'windowSize': '1 day', 'value':
 class TestKeyRouteExpiredIsDeleteOrUnassignOnly(unittest.TestCase):
     """A real KeyService over mocked DAOs, so the guards run behind the routes."""
 
+    @override
     def setUp(self):
         self.prefix = '/public/api/v1'
         self.key_uuid = uuid.uuid4()
@@ -667,18 +588,18 @@ class TestKeyRouteExpiredIsDeleteOrUnassignOnly(unittest.TestCase):
         self.key = db_mock.get_sample_key(uuid=self.key_uuid, expires_on=EXPIRES_ON)
 
         self.key_dao = MagicMock(spec_set=KeyDAO)
-        self.key_dao.get_by_uuid = MagicMock(side_effect=lambda _: self.key)
-        self.key_dao.update_key_name = MagicMock(return_value=1)
-        self.key_dao.assign_group = MagicMock(side_effect=lambda **_: self.key)
-        self.key_dao.remove_group = MagicMock(return_value=1)
-        self.key_dao.delete_by_uuid = MagicMock(return_value=1)
+        self.key_dao.get_by_uuid = AsyncMock(side_effect=lambda _: self.key)
+        self.key_dao.update_key_name = AsyncMock(return_value=1)
+        self.key_dao.assign_group = AsyncMock(side_effect=lambda **_: self.key)
+        self.key_dao.remove_group = AsyncMock(return_value=1)
+        self.key_dao.delete_by_uuid = AsyncMock(return_value=1)
         group_dao = MagicMock(spec_set=GroupDAO)
-        group_dao.get_by_uuid = MagicMock(return_value=self.group)
+        group_dao.get_by_uuid = AsyncMock(return_value=self.group)
         self.key_limit_dao = MagicMock(spec_set=KeyLimitDAO)
-        self.key_limit_dao.get_by_key_uuid = MagicMock(return_value=[])
-        self.key_limit_dao.insert_many = MagicMock(return_value=[])
-        self.key_limit_dao.get_by_uuid = MagicMock(return_value=self.limit)
-        self.key_limit_dao.delete_by_uuid = MagicMock(return_value=1)
+        self.key_limit_dao.get_by_key_uuid = AsyncMock(return_value=[])
+        self.key_limit_dao.insert_many = AsyncMock(return_value=[])
+        self.key_limit_dao.get_by_uuid = AsyncMock(return_value=self.limit)
+        self.key_limit_dao.delete_by_uuid = AsyncMock(return_value=1)
 
         self.key_service = KeyService(
             key_dao=self.key_dao,
@@ -687,14 +608,15 @@ class TestKeyRouteExpiredIsDeleteOrUnassignOnly(unittest.TestCase):
             key_limit_dao=self.key_limit_dao,
         )
         app = FastAPI(title='AI Gateway', debug=True)
-        app.add_exception_handler(AuthRegistryError, auth_registry_exception_handler)
+        add_exception_handler(app, AuthRegistryError, auth_registry_exception_handler)
         app.include_router(
             KeyRoute.get_key_router(self.key_service), prefix=self.prefix
         )
         self.client = TestClient(app)
 
-        patcher = patch(
-            'radicalbit_ai_gateway.services.key_service.clear_limit_counter',
+        patcher = patch.object(
+            shared_limits,
+            'clear',
             new=AsyncMock(),
         )
         patcher.start()
@@ -714,7 +636,7 @@ class TestKeyRouteExpiredIsDeleteOrUnassignOnly(unittest.TestCase):
         }
 
     @freeze_time(EXPIRED_AT)
-    def test_operations_on_an_expired_key_are_refused(self):
+    def test_operations_on_an_expired_key_are_refused(self) -> None:
         for name, call in self._operations().items():
             with self.subTest(name):
                 res = call()
@@ -727,7 +649,7 @@ class TestKeyRouteExpiredIsDeleteOrUnassignOnly(unittest.TestCase):
         self.key_limit_dao.delete_by_uuid.assert_not_called()
 
     @freeze_time(EXPIRED_AT)
-    def test_group_unassign_on_an_expired_key_succeeds(self):
+    def test_group_unassign_on_an_expired_key_succeeds(self) -> None:
         self.key.group_uuid = self.group.uuid
         self.key.group = self.group
         # Unassign is cleanup, like delete: allowed on an expired key (ADR 0007).
@@ -735,32 +657,36 @@ class TestKeyRouteExpiredIsDeleteOrUnassignOnly(unittest.TestCase):
         asyncio.run(
             self.key_service.remove_group_from_key(self.key_uuid, self.group.uuid)
         )
-        self.key_dao.remove_group.assert_called_once_with(key_uuid=self.key_uuid)
+        self.key_dao.remove_group.assert_called_once_with(
+            key_uuid=self.key_uuid, group_uuid=self.group.uuid
+        )
 
     @freeze_time(EXPIRED_AT)
-    def test_delete_on_an_expired_key_succeeds(self):
+    def test_delete_on_an_expired_key_succeeds(self) -> None:
         res = self.client.delete(f'{self.prefix}/keys/{self.key_uuid}')
         assert res.status_code == 200
         self.key_dao.delete_by_uuid.assert_called_once_with(self.key_uuid)
 
     @freeze_time(EXPIRING_AT)
-    def test_operations_on_an_expiring_key_still_succeed(self):
+    def test_operations_on_an_expiring_key_still_succeed(self) -> None:
         for name, call in self._operations().items():
             with self.subTest(name):
                 assert call().status_code in (200, 201)
 
     @freeze_time(EXPIRING_AT)
-    def test_group_unassign_on_an_expiring_key_still_succeeds(self):
+    def test_group_unassign_on_an_expiring_key_still_succeeds(self) -> None:
         self.key.group_uuid = self.group.uuid
         self.key.group = self.group
         asyncio.run(
             self.key_service.remove_group_from_key(self.key_uuid, self.group.uuid)
         )
-        self.key_dao.remove_group.assert_called_once_with(key_uuid=self.key_uuid)
+        self.key_dao.remove_group.assert_called_once_with(
+            key_uuid=self.key_uuid, group_uuid=self.group.uuid
+        )
 
 
-NOW = datetime.datetime(2026, 11, 3, 12, tzinfo=datetime.timezone.utc)
-ROTATION_EXPIRES_ON = datetime.date(2026, 11, 10)
+NOW = dt.datetime(2026, 11, 3, 12, tzinfo=dt.timezone.utc)
+ROTATION_EXPIRES_ON = dt.date(2026, 11, 10)
 
 
 class TestKeyRouteRotation(unittest.TestCase):
@@ -768,6 +694,7 @@ class TestKeyRouteRotation(unittest.TestCase):
     real KeyService over mocked DAOs (AG-1042, AG-1043).
     """
 
+    @override
     def setUp(self):
         self.prefix = '/public/api/v1'
         self.key_uuid = uuid.uuid4()
@@ -783,11 +710,11 @@ class TestKeyRouteRotation(unittest.TestCase):
         ]
 
         self.key_dao = MagicMock(spec_set=KeyDAO)
-        self.key_dao.get_by_uuid = MagicMock(side_effect=lambda _: self.key)
-        self.key_dao.rotate = MagicMock(side_effect=self._apply_rotation)
-        self.key_dao.end_grace_period = MagicMock(side_effect=self._apply_end_grace)
-        self.key_dao.delete_by_uuid = MagicMock(side_effect=self._apply_delete)
-        self.key_dao.get_key_by_hashed_key = MagicMock(side_effect=self._lookup)
+        self.key_dao.get_by_uuid = AsyncMock(side_effect=lambda _: self.key)
+        self.key_dao.rotate = AsyncMock(side_effect=self._apply_rotation)
+        self.key_dao.end_grace_period = AsyncMock(side_effect=self._apply_end_grace)
+        self.key_dao.delete_by_uuid = AsyncMock(side_effect=self._apply_delete)
+        self.key_dao.get_key_by_hashed_key = AsyncMock(side_effect=self._lookup)
 
         # A known new value, so the tests never hash what the response returns
         api_key_security = MagicMock(spec_set=ApiKeySecurity)
@@ -801,8 +728,8 @@ class TestKeyRouteRotation(unittest.TestCase):
             key_limit_dao=MagicMock(spec_set=KeyLimitDAO),
         )
         app = FastAPI(title='AI Gateway', debug=True)
-        app.add_exception_handler(AuthRegistryError, auth_registry_exception_handler)
-        app.add_exception_handler(RequestValidationError, validation_exception_handler)
+        add_exception_handler(app, AuthRegistryError, auth_registry_exception_handler)
+        add_exception_handler(app, RequestValidationError, validation_exception_handler)
         app.include_router(
             KeyRoute.get_key_router(self.key_service), prefix=self.prefix
         )
@@ -814,26 +741,38 @@ class TestKeyRouteRotation(unittest.TestCase):
         frozen.start()
         self.addCleanup(frozen.stop)
 
+    @property
+    def stored_key(self) -> Key:
+        """The credential the mocked DAO holds: present until a test deletes it."""
+        assert self.key is not None
+        return self.key
+
     # The mocked DAO behaves like the conditional update it stands for
     def _apply_rotation(
         self, *, expected_hashed_key, hashed_key, obscured_key, grace_ends_at, now, **_
     ):
-        if self.key.hashed_key != expected_hashed_key or (
-            self.key.grace_ends_at is not None and self.key.grace_ends_at > now
+        if self.stored_key.hashed_key != expected_hashed_key or (
+            self.stored_key.grace_ends_at is not None
+            and self.stored_key.grace_ends_at > now
         ):
             return None
-        self.key.previous_hashed_key = expected_hashed_key if grace_ends_at else None
-        self.key.hashed_key = hashed_key
-        self.key.obscured_key = obscured_key
-        self.key.grace_ends_at = grace_ends_at
-        self.key.last_rotated_at = now
+        self.stored_key.previous_hashed_key = (
+            expected_hashed_key if grace_ends_at else None
+        )
+        self.stored_key.hashed_key = hashed_key
+        self.stored_key.obscured_key = obscured_key
+        self.stored_key.grace_ends_at = grace_ends_at
+        self.stored_key.last_rotated_at = now
         return self.key
 
     def _apply_end_grace(self, _key_uuid, now):
-        if self.key.grace_ends_at is None or self.key.grace_ends_at <= now:
+        if (
+            self.stored_key.grace_ends_at is None
+            or self.stored_key.grace_ends_at <= now
+        ):
             return None
-        self.key.previous_hashed_key = None
-        self.key.grace_ends_at = None
+        self.stored_key.previous_hashed_key = None
+        self.stored_key.grace_ends_at = None
         return self.key
 
     def _apply_delete(self, _key_uuid):
@@ -848,7 +787,7 @@ class TestKeyRouteRotation(unittest.TestCase):
             return self.key
         return None
 
-    def _authenticate(self, token: str) -> str:
+    def _authenticate(self, token: str) -> str | int | None:
         """Return the credential uuid the token resolves to, or the 401 code."""
         try:
             return asyncio.run(self.validator.validate_token(token)).api_key_uuid
@@ -859,17 +798,17 @@ class TestKeyRouteRotation(unittest.TestCase):
         return self.client.post(self.url, json={'gracePeriod': grace_period})
 
     def _in_grace(self, hours=24):
-        self.key.previous_hashed_key = 'previous'
-        self.key.grace_ends_at = NOW + datetime.timedelta(hours=hours)
-        self.key.last_rotated_at = NOW - datetime.timedelta(hours=1)
+        self.stored_key.previous_hashed_key = 'previous'
+        self.stored_key.grace_ends_at = NOW + dt.timedelta(hours=hours)
+        self.stored_key.last_rotated_at = NOW - dt.timedelta(hours=1)
 
     def test_rotate_returns_the_new_value_once_and_keeps_the_credential(self):
-        old_hash = self.key.hashed_key
+        old_hash = self.stored_key.hashed_key
         res = self._rotate('24 hours')
         assert res.status_code == 200
         body = res.json()
         assert body['apiKey'] == db_mock.ROTATED_PLAIN_KEY
-        assert self.key.hashed_key == db_mock.ROTATED_HASHED_KEY != old_hash
+        assert self.stored_key.hashed_key == db_mock.ROTATED_HASHED_KEY != old_hash
         assert body['uuid'] == str(self.key_uuid)
         assert body['name'] == 'rb-key'
         assert body['group']['uuid'] == str(self.group.uuid)
@@ -878,7 +817,7 @@ class TestKeyRouteRotation(unittest.TestCase):
         assert body['graceEndsAt'] == '2026-11-04T12:00:00Z'
         assert body['rotationState'] == 'grace_ending'
         assert body['lastRotatedAt'] == '2026-11-03T12:00:00Z'
-        assert self.key.previous_hashed_key == old_hash
+        assert self.stored_key.previous_hashed_key == old_hash
         # Never shown again: a read returns the obscured value
         read = self.client.get(f'{self.prefix}/keys/{self.key_uuid}').json()
         assert read['apiKey'] != body['apiKey']
@@ -890,19 +829,19 @@ class TestKeyRouteRotation(unittest.TestCase):
             ('1 week', '2026-11-10T12:00:00Z', 'in_grace'),
         ]:
             with self.subTest(grace_period):
-                self.key.grace_ends_at = None
+                self.stored_key.grace_ends_at = None
                 body = self._rotate(grace_period).json()
                 assert body['graceEndsAt'] == grace_ends_at
                 assert body['rotationState'] == state
 
     def test_rotate_with_no_grace_period(self):
-        old_hash = self.key.hashed_key
+        old_hash = self.stored_key.hashed_key
         body = self._rotate(None).json()
         assert body['graceEndsAt'] is None
         assert body['rotationState'] == 'rotated'
         assert body['lastRotatedAt'] == '2026-11-03T12:00:00Z'
-        assert self.key.previous_hashed_key is None
-        assert self.key.hashed_key != old_hash
+        assert self.stored_key.previous_hashed_key is None
+        assert self.stored_key.hashed_key != old_hash
 
     def test_grace_period_bounds_are_validation_errors(self):
         for name, body in {
@@ -942,7 +881,7 @@ class TestKeyRouteRotation(unittest.TestCase):
         self.key_dao.rotate.assert_not_called()
 
     def test_a_rotation_lost_to_a_concurrent_one_is_a_conflict(self):
-        self.key_dao.rotate = MagicMock(return_value=None)
+        self.key_dao.rotate = AsyncMock(return_value=None)
         assert self._rotate(None).status_code == 409
 
     def test_rotate_is_refused_on_an_expired_credential(self):
@@ -953,10 +892,10 @@ class TestKeyRouteRotation(unittest.TestCase):
         self.key_dao.rotate.assert_not_called()
 
     def test_rotate_is_refused_on_an_externally_managed_credential(self):
-        self.key.owner = 'keycloak'
+        self.stored_key.owner = 'keycloak'
         res = self._rotate(None)
-        assert res.status_code == 405
-        assert res.json()['error']['code'] == 'key_operation_method_not_allowed'
+        assert res.status_code == 409
+        assert res.json()['error']['code'] == 'key_externally_managed'
         self.key_dao.rotate.assert_not_called()
 
     def test_rotate_a_missing_credential(self):
@@ -1022,3 +961,50 @@ class TestKeyRouteRotation(unittest.TestCase):
     def test_end_grace_period_on_a_missing_credential(self):
         self.key = None
         assert self.client.delete(self.url).status_code == 404
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    'keys',
+    [
+        pytest.param([uuid.uuid4(), uuid.uuid4()], id='keys'),
+        pytest.param([], id='none'),
+    ],
+)
+async def test_limits_stream_sends_the_keys_consumption(key_service, keys):
+    limit_uuid = str(uuid.uuid4())
+    key_service.get_limits_consumption = AsyncMock(
+        return_value={
+            limit_uuid: WindowProgressBarDTO(
+                window_length=60,
+                window_start_time=1_700_000_000,
+                window_end_time=1_700_000_060,
+                window_size=10.0,
+                window_filled_size=3.0,
+                window_filled_percentage=30.0,
+            )
+        }
+    )
+    app = FastAPI(title='AI Gateway', debug=True)
+    app.include_router(KeyRoute.get_key_router(key_service), prefix=PREFIX)
+
+    [event] = await first_events(
+        app,
+        f'{PREFIX}/keys/limits/stream',
+        sleep='radicalbit_ai_gateway.routes.key_route.asyncio.sleep',
+        interval=10,
+        params={'keys': [str(k) for k in keys]},
+    )
+
+    key_service.get_limits_consumption.assert_awaited_once_with(keys)
+    assert event == {
+        limit_uuid: {
+            'windowLength': 60,
+            'windowStartTime': 1_700_000_000,
+            'windowEndTime': 1_700_000_060,
+            'windowSize': 10.0,
+            'windowFilledSize': 3.0,
+            'windowFilledPercentage': 30.0,
+            'windowStatus': 'ok',
+        }
+    }

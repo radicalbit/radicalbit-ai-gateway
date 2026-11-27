@@ -11,7 +11,7 @@ import RightColumnSwitch from '@Container/app/right-column-switch';
 import SecondaryHeaderContentSwitch from '@Container/app/secondary-column-header-content-switch';
 import SecondaryContentSwitch from '@Container/app/secondary-column-main-content-switch';
 import { createRoutes } from '@Container/layout';
-import { FEATURE_FLAGS, PathsEnum } from '@Src/constants';
+import { PathsEnum } from '@Src/constants';
 import { useContextConfigurationFromUrlEffect } from '@State/context-configuration/hooks';
 import { useGetFeatureFlagsQuery } from '@State/feature-flags/api';
 import { actions as layoutActions, selectors as layoutSelectors } from '@State/layout';
@@ -169,60 +169,70 @@ function AppInner() {
 
 const useNavigateNavBarWithKeyboard = () => {
   const navigate = useNavigate();
+  const { pathname, search } = useLocation();
 
   useEffect(() => {
+    const navigateToSection = (section) => {
+      if (pathname.split('/')[1] === section) {
+        navigate({ pathname: `/${section}`, search });
+        return;
+      }
+
+      navigate(`/${section}`);
+    };
+
     const handleKeyDown = (e) => {
       const isMac = navigator.platform.toUpperCase().indexOf('MAC') >= 0;
 
       if ((isMac && e.ctrlKey && e.code === 'Digit1')) {
         e.preventDefault();
-        navigate(`/${PathsEnum.PROJECTS}`);
+        navigateToSection(PathsEnum.PROJECTS);
       }
 
       if ((isMac && e.ctrlKey && e.code === 'Digit2')) {
         e.preventDefault();
-        navigate(`/${PathsEnum.CONFIGURATIONS}`);
+        navigateToSection(PathsEnum.CONFIGURATIONS);
       }
 
       if ((isMac && e.ctrlKey && e.code === 'Digit3')) {
         e.preventDefault();
-        navigate(`/${PathsEnum.SECRETS}`);
+        navigateToSection(PathsEnum.SECRETS);
       }
 
       if ((isMac && e.ctrlKey && e.code === 'Digit4')) {
         e.preventDefault();
-        navigate(`/${PathsEnum.ROUTES}`);
+        navigateToSection(PathsEnum.ROUTES);
       }
 
       if ((isMac && e.ctrlKey && e.code === 'Digit5')) {
         e.preventDefault();
-        navigate(`/${PathsEnum.USAGE}`);
+        navigateToSection(PathsEnum.USAGE);
       }
 
       if ((isMac && e.ctrlKey && e.code === 'Digit6')) {
         e.preventDefault();
-        navigate(`/${PathsEnum.TRACING}`);
+        navigateToSection(PathsEnum.OBSERVABILITY);
       }
 
       if ((isMac && e.ctrlKey && e.code === 'Digit7')) {
         e.preventDefault();
-        navigate(`/${PathsEnum.GROUPS}`);
+        navigateToSection(PathsEnum.GROUPS);
       }
 
       if ((isMac && e.ctrlKey && e.code === 'Digit8')) {
         e.preventDefault();
-        navigate(`/${PathsEnum.CREDENTIALS}`);
+        navigateToSection(PathsEnum.CREDENTIALS);
       }
 
-      if ((FEATURE_FLAGS.ALERTS && isMac && e.ctrlKey && e.code === 'Digit9')) {
+      if ((isMac && e.ctrlKey && e.code === 'Digit9')) {
         e.preventDefault();
-        navigate(`/${PathsEnum.ALERTS}`);
+        navigateToSection(PathsEnum.ALERTS);
       }
     };
 
     document.addEventListener('keydown', handleKeyDown);
     return () => document.removeEventListener('keydown', handleKeyDown);
-  }, [navigate]);
+  }, [navigate, pathname, search]);
 };
 
 function useSwitchLightAndDarkModeWithKeyboard() {

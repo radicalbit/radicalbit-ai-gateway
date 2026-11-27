@@ -1,5 +1,6 @@
 from collections.abc import Sequence
-import datetime
+import datetime as dt
+from typing import Any
 from uuid import UUID
 
 from sqlalchemy import ColumnElement, select
@@ -13,66 +14,68 @@ class AlertRuleDAO:
     def __init__(self, database: Database):
         self.db = database
 
-    def insert(self, alert_rule: AlertRule) -> AlertRule:
-        with self.db.begin_session() as session:
+    async def insert(self, alert_rule: AlertRule) -> AlertRule:
+        async with self.db.begin_session() as session:
             session.add(alert_rule)
-            session.flush()
+            await session.flush()
             return alert_rule
 
-    def get_by_uuid(self, alert_rule_uuid: UUID) -> AlertRule | None:
-        with self.db.begin_session() as session:
+    async def get_by_uuid(self, alert_rule_uuid: UUID) -> AlertRule | None:
+        async with self.db.begin_session() as session:
             stmt = select(AlertRule).where(
                 AlertRule.uuid == alert_rule_uuid,
                 AlertRule.deleted == False,  # noqa: E712
             )
-            return session.scalar(stmt)
+            return await session.scalar(stmt)
 
-    def get_all(self) -> Sequence[AlertRule]:
-        with self.db.begin_session() as session:
+    async def get_all(self) -> Sequence[AlertRule]:
+        async with self.db.begin_session() as session:
             stmt = (
                 select(AlertRule)
                 .where(AlertRule.deleted == False)  # noqa: E712
                 .order_by(AlertRule.created_at.desc())
             )
-            return session.scalars(stmt).all()
+            return (await session.scalars(stmt)).all()
 
-    def get_enabled_route_rules(
+    async def get_enabled_route_rules(
         self, project_uuid: str, route_name: str
     ) -> Sequence[AlertRule]:
-        return self._get_enabled(
+        return await self._get_enabled(
             AlertRule.scope == AlertRuleScope.ROUTE.value,
             AlertRule.project == project_uuid,
             AlertRule.route == route_name,
         )
 
-    def get_enabled_project_rules(self, project_uuid: str) -> Sequence[AlertRule]:
-        return self._get_enabled(
+    async def get_enabled_project_rules(self, project_uuid: str) -> Sequence[AlertRule]:
+        return await self._get_enabled(
             AlertRule.scope == AlertRuleScope.PROJECT.value,
             AlertRule.project == project_uuid,
         )
 
-    def get_enabled_credential_rules(
+    async def get_enabled_credential_rules(
         self, credential_uuid: UUID
     ) -> Sequence[AlertRule]:
-        return self._get_enabled(
+        return await self._get_enabled(
             AlertRule.scope == AlertRuleScope.CREDENTIAL.value,
             AlertRule.credential_uuid == credential_uuid,
         )
 
-    def _get_enabled(self, *conditions: ColumnElement[bool]) -> Sequence[AlertRule]:
-        with self.db.begin_session() as session:
+    async def _get_enabled(
+        self, *conditions: ColumnElement[bool]
+    ) -> Sequence[AlertRule]:
+        async with self.db.begin_session() as session:
             stmt = select(AlertRule).where(
                 *conditions,
                 AlertRule.enabled == True,  # noqa: E712
                 AlertRule.deleted == False,  # noqa: E712
             )
-            return session.scalars(stmt).all()
+            return (await session.scalars(stmt)).all()
 
-    def soft_delete_by_uuid(self, alert_rule_uuid: UUID) -> AlertRule | None:
-        UTC = getattr(datetime, 'UTC', datetime.timezone.utc)
-        now = datetime.datetime.now(tz=UTC)
-        with self.db.begin_session() as session:
-            rule = session.scalar(
+    async def soft_delete_by_uuid(self, alert_rule_uuid: UUID) -> AlertRule | None:
+        UTC = getattr(dt, 'UTC', dt.timezone.utc)
+        now = dt.datetime.now(tz=UTC)
+        async with self.db.begin_session() as session:
+            rule = await session.scalar(
                 select(AlertRule).where(
                     AlertRule.uuid == alert_rule_uuid,
                     AlertRule.deleted == False,  # noqa: E712
@@ -82,14 +85,16 @@ class AlertRuleDAO:
                 return None
             rule.deleted = True
             rule.updated_at = now
-            session.flush()
+            await session.flush()
             return rule
 
-    def toggle_enabled(self, alert_rule_uuid: UUID, enabled: bool) -> AlertRule | None:
-        UTC = getattr(datetime, 'UTC', datetime.timezone.utc)
-        now = datetime.datetime.now(tz=UTC)
-        with self.db.begin_session() as session:
-            rule = session.scalar(
+    async def toggle_enabled(
+        self, alert_rule_uuid: UUID, enabled: bool
+    ) -> AlertRule | None:
+        UTC = getattr(dt, 'UTC', dt.timezone.utc)
+        now = dt.datetime.now(tz=UTC)
+        async with self.db.begin_session() as session:
+            rule = await session.scalar(
                 select(AlertRule).where(
                     AlertRule.uuid == alert_rule_uuid,
                     AlertRule.deleted == False,  # noqa: E712
@@ -99,16 +104,16 @@ class AlertRuleDAO:
                 return None
             rule.enabled = enabled
             rule.updated_at = now
-            session.flush()
+            await session.flush()
             return rule
 
-    def update_rule(
-        self, alert_rule_uuid: UUID, update_fields: dict
+    async def update_rule(
+        self, alert_rule_uuid: UUID, update_fields: dict[str, Any]
     ) -> AlertRule | None:
-        UTC = getattr(datetime, 'UTC', datetime.timezone.utc)
-        now = datetime.datetime.now(tz=UTC)
-        with self.db.begin_session() as session:
-            rule = session.scalar(
+        UTC = getattr(dt, 'UTC', dt.timezone.utc)
+        now = dt.datetime.now(tz=UTC)
+        async with self.db.begin_session() as session:
+            rule = await session.scalar(
                 select(AlertRule).where(
                     AlertRule.uuid == alert_rule_uuid,
                     AlertRule.deleted == False,  # noqa: E712
@@ -120,5 +125,5 @@ class AlertRuleDAO:
                 if hasattr(rule, field):
                     setattr(rule, field, value)
             rule.updated_at = now
-            session.flush()
+            await session.flush()
             return rule

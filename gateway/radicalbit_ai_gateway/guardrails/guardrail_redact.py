@@ -1,25 +1,26 @@
 import asyncio
-from collections.abc import Awaitable, Callable, Mapping
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 import logging
 from typing import Any
-
-from traceloop.sdk.decorators import task, workflow
 
 from radicalbit_ai_gateway.events.events_processor import emit_event
 from radicalbit_ai_gateway.guardrails.guardrail_check import _select_messages
 from radicalbit_ai_gateway.guardrails.presidio import PresidioEngine
 from radicalbit_ai_gateway.llm.messages import BaseMessage
 from radicalbit_ai_gateway.metrics.define_metrics import guardrails_triggered_counter
-from radicalbit_ai_gateway.models.event_payload import GuardrailEventPayload
+from radicalbit_ai_gateway.models.event_payload import (
+    GuardrailEventBehavior,
+    GuardrailEventPayload,
+)
 from radicalbit_ai_gateway.models.event_type import EventType
-from radicalbit_ai_gateway.models.gateway_route_config import GatewayRouteConfig
 from radicalbit_ai_gateway.models.guardrails import (
-    Guardrail,
-    GuardrailClass,
     GuardrailType,
     GuardrailWhereType,
+    PresidioAnonymizerGuardrail,
     RedactParameter,
 )
+from radicalbit_ai_gateway.models.request_identity import RequestIdentity
+from radicalbit_ai_gateway.telemetry.tracing import task, workflow
 from radicalbit_ai_gateway.utils.app_config import get_app_config
 from radicalbit_ai_gateway.utils.exceptions import GuardrailBadRequest
 
@@ -33,35 +34,16 @@ GuardrailRedactFunction = Callable[
 
 
 def _with_content(msg: BaseMessage, new_content: Any) -> BaseMessage:
-    """Create a copy of the message with updated content, preserving other fields.
-    If not possible, falls back to mutating the instance (preserves special fields like tool_call_id).
+    """Return a copy of the message with new content, its other fields
+    (a tool call id...) kept.
     """
-    if hasattr(msg, 'model_copy'):
-        # Gateway messages are pydantic models
-        try:
-            return msg.model_copy(update={'content': new_content})
-        except Exception:
-            pass
-
-    try:
-        return msg.__class__(
-            content=new_content,
-            additional_kwargs=getattr(msg, 'additional_kwargs', {}),
-            response_metadata=getattr(msg, 'response_metadata', {}),
-        )
-    except Exception:
-        # fallback: mutate the object directly (useful for ToolMessage)
-        try:
-            msg.content = new_content
-        except Exception:
-            logger.debug('Unable to set new content on message; returning original.')
-        return msg
+    return msg.model_copy(update={'content': new_content})
 
 
 async def _anonymize_text_with_presidio(
     text: str,
     language: str,
-    entities: list,
+    entities: list[str] | None,
     presidio_engine: PresidioEngine,
     backend: str = 'local',
     ahds=None,
@@ -69,7 +51,7 @@ async def _anonymize_text_with_presidio(
     """Execute analyze + anonymize on a string.
     Returns (redacted_text, True) if changed, otherwise (original_text, False).
     """
-    if not isinstance(text, str) or not text:
+    if not text:
         return text, False
 
     try:
@@ -102,18 +84,13 @@ async def _anonymize_text_with_presidio(
     anon_result = await asyncio.to_thread(
         presidio_engine.anonymizer.anonymize, text=text, analyzer_results=results
     )
-    redacted = getattr(anon_result, 'text', None) or text
+    redacted = anon_result.text or text
     return redacted, (redacted != text)
 
 
 class GuardrailRedact:
-    def __init__(
-        self,
-        presidio_engine: PresidioEngine,
-        guardrails_by_name: dict[str, Guardrail] | None = None,
-    ):
+    def __init__(self, presidio_engine: PresidioEngine):
         self._presidio_engine = presidio_engine
-        self._guardrails_by_name = guardrails_by_name or {}
 
         self._guardrail_redact_mapping: dict[GuardrailType, GuardrailRedactFunction] = {
             GuardrailType.PRESIDIO_ANONYMIZER: self._redact_presidio,
@@ -184,40 +161,38 @@ class GuardrailRedact:
         return new_messages, any_redacted
 
     @workflow(name='apply_redact_guardrails')
-    async def apply_guardrails(
+    async def apply(
         self,
-        request_uuid: str,
-        api_key_uuid: str,
-        group_uuid: str,
-        api_key_name: str,
-        group_name: str,
-        route_config: GatewayRouteConfig,
+        identity: RequestIdentity,
+        guardrails: Sequence[PresidioAnonymizerGuardrail],
         messages: list[BaseMessage],
         where: GuardrailWhereType,
-        project_uuid: str = '',
-        project_name: str = '',
+        *,
+        unknown: Sequence[str] = (),
         windowed: bool = True,
     ) -> list[BaseMessage]:
-        """``windowed`` is False on calls with no conversation (embeddings,
-        decision models): every guardrail then reads every message.
-        """
-        redact_guardrails = self._get_redact_guardrails_for_route(
-            route_config=route_config,
-            where=where,
-        )
+        """Apply redact ``guardrails`` to messages; return them redacted.
 
-        if not redact_guardrails:
+        ``unknown`` are names the route lists that the project does not
+        define: each is logged. ``windowed`` is False on calls with no
+        conversation (embeddings, decision models): every guardrail then reads
+        every message.
+        """
+        for name in unknown:
+            logger.warning(
+                'Guardrail name %r not found for route %s', name, identity.route_name
+            )
+        if not guardrails:
             return messages
 
         messages_to_redact = list(messages)
 
-        for guardrail in redact_guardrails:
+        for guardrail in guardrails:
             logger.debug(
-                'Evaluating guardrail: %s (type=%s, where=%s, behavior=%s)',
+                'Evaluating guardrail: %s (type=%s, where=%s)',
                 guardrail.name,
                 guardrail.type.name,
                 guardrail.where.name,
-                guardrail.behavior.name,
             )
 
             redact_fn = self._guardrail_redact_mapping.get(guardrail.type)
@@ -225,6 +200,7 @@ class GuardrailRedact:
                 raise GuardrailBadRequest(
                     f'Unknown guardrail type: {guardrail.type}', guardrail
                 )
+            params = guardrail.parameters
 
             # Each message keeps its index, so the redacted copy goes back
             # in its place.
@@ -242,9 +218,7 @@ class GuardrailRedact:
                 continue
 
             filtered_only = [m for _, m in filtered_indexed]
-            redacted_filtered, was_redacted = await redact_fn(
-                filtered_only, guardrail.parameters
-            )
+            redacted_filtered, was_redacted = await redact_fn(filtered_only, params)
 
             # Reintegrate redacted messages into their original positions
             result = list(messages_to_redact)
@@ -252,40 +226,42 @@ class GuardrailRedact:
                 result[orig_idx] = redacted_msg
 
             if was_redacted:
+                # An anonymizer has no behavior: its event records what it did.
+                behavior = GuardrailEventBehavior.REDACT
                 attrs = {
                     'name': guardrail.name,
                     'type': guardrail.type.name,
                     'where': where.name,
                     'parameters': str(guardrail.parameters),
-                    'behavior': guardrail.behavior.name,
+                    'behavior': behavior.value,
                 }
                 emit_event(
                     GuardrailEventPayload(
-                        request_uuid=request_uuid,
-                        api_key_uuid=api_key_uuid,
-                        group_uuid=group_uuid,
-                        api_key_name=api_key_name,
-                        route_name=route_config.route_name,
+                        request_uuid=identity.request_uuid,
+                        api_key_uuid=identity.api_key_uuid,
+                        group_uuid=identity.group_uuid,
+                        api_key_name=identity.api_key_name,
+                        route_name=identity.route_name,
                         value=1.0,
                         event_type=EventType.GUARDRAIL,
-                        group_name=group_name,
-                        project_uuid=project_uuid,
-                        project_name=project_name,
+                        group_name=identity.group_name,
+                        project_uuid=identity.project_uuid,
+                        project_name=identity.project_name,
                         name=guardrail.name,
                         type=guardrail.type.name,
                         where=where.name,
                         parameters=str(guardrail.parameters),
-                        behavior=guardrail.behavior.name,
+                        behavior=behavior,
                     )
                 )
                 guardrails_triggered_counter.add(
-                    1, {'route_name': route_config.route_name, **attrs}
+                    1, {'route_name': identity.route_name, **attrs}
                 )
 
                 log_message = (
-                    f'[GUARDRAIL TRIGGERED] [route={route_config.route_name}] '
+                    f'[GUARDRAIL TRIGGERED] [route={identity.route_name}] '
                     f'[name={guardrail.name}] [type={guardrail.type.name}] '
-                    f'[where={where.name}] [behavior={guardrail.behavior.name}]'
+                    f'[where={where.name}] [behavior={behavior.value}]'
                 )
 
                 logger.warning(log_message)
@@ -293,30 +269,3 @@ class GuardrailRedact:
             messages_to_redact = result
 
         return messages_to_redact
-
-    def _get_redact_guardrails_for_route(
-        self,
-        route_config: GatewayRouteConfig,
-        where: GuardrailWhereType,
-    ) -> list[Guardrail]:
-        guardrail_names = route_config.guardrails or []
-        guardrails: list[Guardrail] = []
-
-        for gr_name in guardrail_names:
-            guardrail = self._guardrails_by_name.get(gr_name)
-            if not guardrail:
-                logger.warning(
-                    'Guardrail name %r not found for route %s',
-                    gr_name,
-                    route_config.route_name,
-                )
-                continue
-            if not guardrail.enabled:
-                continue
-            if guardrail.guardrail_class() != GuardrailClass.REDACT:
-                continue
-            if guardrail.where not in (where, GuardrailWhereType.IO):
-                continue
-            guardrails.append(guardrail)
-
-        return guardrails
