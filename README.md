@@ -611,7 +611,9 @@ The gateway ships with a built-in UI. It is the control plane for projects, rout
 
 ## Enterprise
 
-The open-source edition has everything needed to run the gateway in production. Enterprise adds the governance layer for regulated environments:
+The open-source edition enforces API key authentication (`sk-rb-...`), route authorization, rate limiting, and guardrails on all proxied data-plane endpoints (`/v1/*`, `/mcp`), while the UI and management APIs (`/public/api/v1/*`) are designed to run on a trusted network or behind an authenticating reverse proxy.
+
+Enterprise adds built-in control-plane authentication and the governance layer for regulated environments:
 
 - **RBAC** with three built-in roles: Admin, Builder, and Auditor
 - **SSO** through OIDC and Keycloak or your existing IDP
