@@ -34,7 +34,7 @@ from radicalbit_ai_gateway.limiting.limits import Usage
 from radicalbit_ai_gateway.llm.usage import responses_token_counts
 from radicalbit_ai_gateway.models.model import Model
 from radicalbit_ai_gateway.preprocessing import run_preprocessing
-from radicalbit_ai_gateway.telemetry.tracing import workflow
+from radicalbit_ai_gateway.telemetry.tracing import record_error, workflow
 from radicalbit_ai_gateway.utils.exceptions import GatewayBadRequest
 from radicalbit_ai_gateway.utils.trace_attributes import (
     OperationCategory,
@@ -176,14 +176,28 @@ async def _live(scope: ResponsesScope, prepared: _Prepared) -> AsyncIterator[str
     set_operation_category(OperationCategory.INVOCATION)
     route_name = scope.route.gateway_route_config.route_name
     final_response = None
+    failure = None
     async for event in prepared.invoker.stream_responses(**_call(scope, prepared)):
         if event.is_final:
             final_response = event.response
+        failure = event.failure or failure
         yield event.to_sse(route_name)
+    _record_stream_failure(failure)
 
     if final_response:
         await _count(scope, prepared, final_response)
         await _store(scope, prepared, final_response)
+
+
+def _record_stream_failure(failure: str | None) -> None:
+    """Mark the request's span failed if the model failed the stream.
+
+    The failure goes to the client as an event of the stream, as OpenAI sends
+    it: nothing raises, so nothing else marks the span. Call it after the
+    model's stream is read: while it is read, its own span is the current one.
+    """
+    if failure is not None:
+        record_error(failure)
 
 
 async def _buffered(scope: ResponsesScope, prepared: _Prepared) -> list[str]:
@@ -200,10 +214,13 @@ async def _buffered(scope: ResponsesScope, prepared: _Prepared) -> list[str]:
     set_operation_category(OperationCategory.INVOCATION)
     frames: list[str] = []
     final_response = None
+    failure = None
     async for event in prepared.invoker.stream_responses(**_call(scope, prepared)):
         if event.is_final:
             final_response = event.response
+        failure = event.failure or failure
         frames.append(event.to_sse(route_name))
+    _record_stream_failure(failure)
     if final_response is None:
         return frames
 

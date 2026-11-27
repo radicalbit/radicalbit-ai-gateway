@@ -4,6 +4,7 @@ from collections.abc import AsyncIterator, Callable, Iterable
 from typing import TypeVar
 
 from radicalbit_ai_gateway.endpoints.common.streaming_response import StreamRefused
+from radicalbit_ai_gateway.telemetry.tracing import record_error
 from radicalbit_ai_gateway.utils.exceptions import limit_scope_headers
 
 T = TypeVar('T')
@@ -22,7 +23,8 @@ async def serve_stream(
     and status, raised as ``StreamRefused`` (see
     ``StreamingResponseWithStatusCode``) with headers that name the limit
     scope that blocked, if a limit did. After that, the 200 is sent: an
-    error ends the stream with the frame ``stream_error`` returns.
+    error ends the stream with the frame ``stream_error`` returns. It also
+    marks the request's span failed.
 
     Both run in the ``except`` block that caught the error.
     """
@@ -38,6 +40,7 @@ async def serve_stream(
         async for frame in frames:
             yield frame
     except Exception as exc:
+        record_error(exc)
         yield stream_error(exc)
 
 

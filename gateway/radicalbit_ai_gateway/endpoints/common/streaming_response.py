@@ -5,12 +5,14 @@ the response then answers with the refusal's status, headers and body, so
 errors that surface on the very first chunk (e.g. invalid API key) still
 produce a non-200 response. Once the first frame is sent, the status is the
 response's own.
+
+``when_sent`` runs a callback once the response is done, however it ends.
 """
 
-from collections.abc import Mapping
+from collections.abc import Awaitable, Callable, Mapping
 
 from starlette.responses import StreamingResponse
-from starlette.types import Send
+from starlette.types import Receive, Scope, Send
 from typing_extensions import override
 
 
@@ -32,6 +34,24 @@ class StreamingResponseWithStatusCode(StreamingResponse):
     """Like ``StreamingResponse``, but a stream that raises ``StreamRefused``
     before its first frame answers with the refusal's status code.
     """
+
+    _when_sent: tuple[Callable[[], Awaitable[None]], ...] = ()
+
+    def when_sent(self, callback: Callable[[], Awaitable[None]]) -> None:
+        """Call ``callback`` once the response is done.
+
+        It runs when the stream ends, fails or is cut short by the client.
+        It runs even if the client left before the stream started.
+        """
+        self._when_sent = (*self._when_sent, callback)
+
+    @override
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        try:
+            await super().__call__(scope, receive, send)
+        finally:
+            for callback in self._when_sent:
+                await callback()
 
     def _encode(self, chunk: str | bytes | memoryview) -> bytes | memoryview:
         if isinstance(chunk, bytes | memoryview):

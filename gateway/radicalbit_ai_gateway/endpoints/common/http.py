@@ -28,7 +28,6 @@ from radicalbit_ai_gateway.utils.request_context import reset_route_context
 from radicalbit_ai_gateway.utils.trace_attributes import (
     OperationCategory,
     ensure_endpoint_category,
-    in_request_trace,
     set_operation_category,
 )
 
@@ -174,9 +173,7 @@ def sse_response(
 
     set_operation_category(OperationCategory.ENDPOINT)
     return StreamingResponseWithStatusCode(
-        in_request_trace(
-            serve_stream(frames(), refusal=refusal, stream_error=stream_error)
-        ),
+        serve_stream(frames(), refusal=refusal, stream_error=stream_error),
         media_type='text/event-stream',
         headers=headers,
     )

@@ -4,10 +4,19 @@ The names and attributes asserted here are the wire format the trace queries,
 the UI and the enterprise plugins read: they must not change.
 """
 
-from collections.abc import AsyncGenerator, AsyncIterator, Iterable, Iterator, Mapping
+import asyncio
+from collections.abc import (
+    AsyncGenerator,
+    AsyncIterator,
+    Iterable,
+    Iterator,
+    Mapping,
+    MutableMapping,
+)
 import dataclasses
 import inspect
 import json
+from typing import Any
 
 from opentelemetry import trace
 from opentelemetry.context import get_value
@@ -17,6 +26,9 @@ from opentelemetry.util.types import AttributeValue
 from pydantic import BaseModel
 import pytest
 
+from radicalbit_ai_gateway.endpoints.common.streaming_response import (
+    StreamingResponseWithStatusCode,
+)
 from radicalbit_ai_gateway.telemetry.tracing import (
     disable_tracing,
     entity_name,
@@ -55,6 +67,16 @@ def _view(span: ReadableSpan) -> _Span:
 
 def _by_name(spans: Iterable[ReadableSpan]) -> dict[str, _Span]:
     return {span.name: _view(span) for span in spans}
+
+
+def _one(spans: Iterable[ReadableSpan], name: str) -> ReadableSpan:
+    (span,) = [span for span in spans if span.name == name]
+    return span
+
+
+def _end(span: ReadableSpan) -> int:
+    assert span.end_time is not None
+    return span.end_time
 
 
 async def test_a_workflow_leaves_a_span_with_its_input_and_output(spans):
@@ -301,6 +323,119 @@ async def test_an_error_in_an_async_generator_marks_the_span(spans):
     (span,) = spans
     assert span.status.status_code is StatusCode.ERROR
     assert span.status.description == 'cut'
+
+
+# A streaming response, as the server sends it. Below ASGI 2.4 Starlette
+# listens for the client leaving while it streams.
+_HTTP_SCOPE = {'type': 'http', 'asgi': {'spec_version': '2.3'}}
+
+
+async def _serve(
+    response: StreamingResponseWithStatusCode, leave_after: int | None = None
+) -> list[bytes]:
+    """Send ``response``. The client leaves once ``leave_after`` chunks are
+    sent, if it is given.
+    """
+    leaves = asyncio.Event()
+    if leave_after == 0:
+        leaves.set()
+    sent: list[bytes] = []
+
+    async def receive() -> dict[str, str]:
+        await leaves.wait()
+        return {'type': 'http.disconnect'}
+
+    async def send(message: MutableMapping[str, Any]) -> None:
+        if message['type'] == 'http.response.body' and message['body']:
+            sent.append(message['body'])
+            if len(sent) == leave_after:
+                leaves.set()
+        # Sending waits on the network.
+        await asyncio.sleep(0)
+
+    await response(_HTTP_SCOPE, receive, send)
+    return sent
+
+
+async def test_a_workflow_that_returns_a_stream_ends_with_the_stream(spans):
+    @workflow(name='serve')
+    async def serve() -> StreamingResponseWithStatusCode:
+        async def body() -> AsyncIterator[str]:
+            with trace.get_tracer('plain').start_as_current_span('model call'):
+                yield 'a'
+            yield 'b'
+
+        return StreamingResponseWithStatusCode(body())
+
+    response = await serve()
+    # The handler has returned: the stream is not sent yet.
+    assert spans == []
+
+    assert await _serve(response) == [b'a', b'b']
+
+    serve_span, call_span = _one(spans, 'serve.workflow'), _one(spans, 'model call')
+    assert call_span.parent is not None
+    assert call_span.parent.span_id == serve_span.context.span_id
+    assert _end(serve_span) >= _end(call_span)
+    assert serve_span.status.status_code is StatusCode.UNSET
+    assert get_value('workflow_name') is None
+
+
+async def test_a_stream_that_fails_marks_its_workflow_span(spans):
+    @workflow(name='serve')
+    async def serve() -> StreamingResponseWithStatusCode:
+        async def body() -> AsyncIterator[str]:
+            yield 'a'
+            raise RuntimeError('upstream gone')
+
+        return StreamingResponseWithStatusCode(body())
+
+    response = await serve()
+    with pytest.raises(RuntimeError, match='upstream gone'):
+        await _serve(response)
+
+    (span,) = spans
+    assert span.status.status_code is StatusCode.ERROR
+    assert span.status.description == 'upstream gone'
+
+
+async def test_a_client_that_leaves_mid_stream_ends_the_workflow_span(spans):
+    closed = asyncio.Event()
+
+    @workflow(name='serve')
+    async def serve() -> StreamingResponseWithStatusCode:
+        async def body() -> AsyncIterator[str]:
+            try:
+                with trace.get_tracer('plain').start_as_current_span('model call'):
+                    yield 'a'
+                    yield 'b'
+            finally:
+                closed.set()
+
+        return StreamingResponseWithStatusCode(body())
+
+    # The client leaves while the first chunk is sent.
+    assert await _serve(await serve(), leave_after=1) == [b'a']
+
+    # The body is closed first, so its spans end before the request's.
+    assert closed.is_set()
+    serve_span, call_span = _one(spans, 'serve.workflow'), _one(spans, 'model call')
+    assert _end(serve_span) >= _end(call_span)
+    assert serve_span.status.status_code is StatusCode.UNSET
+
+
+async def test_a_client_that_leaves_before_the_stream_starts_ends_the_span(spans):
+    @workflow(name='serve')
+    async def serve() -> StreamingResponseWithStatusCode:
+        async def body() -> AsyncIterator[str]:
+            yield 'never sent'
+
+        return StreamingResponseWithStatusCode(body())
+
+    assert await _serve(await serve(), leave_after=0) == []
+
+    (span,) = spans
+    assert span.name == 'serve.workflow'
 
 
 @dataclasses.dataclass
