@@ -309,11 +309,27 @@ class ChatAnthropic(ChatModel):
     def client(self) -> anthropic.AsyncAnthropic:
         """The SDK client, built on first use like the integration did."""
         if self._client is None:
+            # SDK 2.x would send an empty key as `Authorization: Bearer `, which
+            # fails as a connection error.
+            if not self.anthropic_api_key:
+                raise TypeError(
+                    'Anthropic authentication failed: no API key or authorization '
+                    'credentials were provided. Set the ANTHROPIC_API_KEY '
+                    'environment variable or configure an api_key credential.'
+                )
             params: dict[str, Any] = {
                 'api_key': self.anthropic_api_key,
                 'base_url': self.anthropic_api_url,
                 'max_retries': self.max_retries,
-                'default_headers': dict(self.default_headers or {}),
+                # SDK 2.x defaults to API version 2026-10-21 (no sampling
+                # params) and Bearer auth: keep the version and header the
+                # gateway has always sent, unless configured otherwise.
+                'default_headers': {
+                    'anthropic-version': _DEFAULT_ANTHROPIC_VERSION,
+                    'x-api-key': self.anthropic_api_key,
+                    'Authorization': anthropic.Omit(),
+                    **(self.default_headers or {}),
+                },
             }
             http_params: dict[str, Any] = {'base_url': self.anthropic_api_url}
             # A timeout <= 0 means "SDK default"; None means no timeout at all.
@@ -499,16 +515,7 @@ class ChatAnthropic(ChatModel):
     async def _create(self, payload: dict[str, Any]) -> Any:
         client = self.client
         messages_api = client.beta.messages if 'betas' in payload else client.messages
-        try:
-            return await messages_api.with_raw_response.create(**payload)
-        except TypeError as e:
-            if 'Could not resolve authentication method' in str(e):
-                raise TypeError(
-                    'Anthropic authentication failed: no API key or authorization '
-                    'credentials were provided. Set the ANTHROPIC_API_KEY '
-                    'environment variable or configure an api_key credential.'
-                ) from e
-            raise
+        return await messages_api.with_raw_response.create(**payload)
 
     # ── native Messages API ─────────────────────────────────────────────────
     # The client's body goes upstream as sent, with only ``model`` swapped, and
