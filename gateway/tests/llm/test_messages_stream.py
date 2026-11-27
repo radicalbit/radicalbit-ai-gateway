@@ -132,3 +132,22 @@ def test_an_error_event_is_kept_as_it_came():
     built_error = _built([error]).error
     assert built_error is not None
     assert json.loads(built_error) == error
+
+
+def test_an_error_event_is_described_by_its_type_and_message():
+    error = {'type': 'error', 'error': {'type': 'overloaded_error', 'message': 'busy'}}
+
+    assert _built([error]).error_description() == 'overloaded_error: busy'
+
+
+def test_an_error_that_is_not_an_anthropic_error_is_described_as_it_came():
+    builder = MessageBuilder()
+    builder.add('error', 'upstream gone')
+
+    assert builder.error_description() == 'upstream gone'
+
+
+def test_a_stream_without_an_error_has_no_error_description():
+    events = _sse_events(canned.anthropic_stream())
+
+    assert _built(events).error_description() is None
