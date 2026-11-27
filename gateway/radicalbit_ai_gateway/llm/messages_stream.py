@@ -42,6 +42,20 @@ class MessageBuilder:
         #: The data of the upstream's ``error`` event, if one came.
         self.error: str | None = None
 
+    def error_description(self) -> str | None:
+        """Return ``<type>: <message>`` of the upstream's ``error`` event.
+
+        Return its raw data if it is not an Anthropic error. Return None if
+        no error came.
+        """
+        if self.error is None:
+            return None
+        payload = _parsed(self.error)
+        detail = payload.get('error') if isinstance(payload, dict) else None
+        if not isinstance(detail, dict):
+            return self.error
+        return f'{detail.get("type") or "error"}: {detail.get("message") or ""}'
+
     @property
     def complete(self) -> bool:
         """Whether the stream gave the reason the message stopped. It comes

@@ -31,6 +31,7 @@ from radicalbit_ai_gateway.llm.messages_stream import MessageBuilder
 from radicalbit_ai_gateway.llm.usage import messages_token_counts
 from radicalbit_ai_gateway.models.model import Model
 from radicalbit_ai_gateway.preprocessing import run_preprocessing
+from radicalbit_ai_gateway.telemetry.tracing import record_error
 from radicalbit_ai_gateway.utils.exceptions import (
     GatewayBadRequest,
     ModelInvokerInternalError,
@@ -217,6 +218,7 @@ async def _live(scope: MessagesScope, prepared: _Prepared) -> AsyncIterator[str]
     ):
         builder.add(event, data)
         yield relay_frame(event, data, route_name)
+    _record_stream_error(builder)
     await _count(scope, answering.model, builder.usage)
     message = builder.message()
     if message and _is_cacheable(builder) and is_complete(message):
@@ -250,12 +252,25 @@ async def _buffered(scope: MessagesScope, prepared: _Prepared) -> list[str]:
             raise ModelInvokerInternalError(
                 'The model stream ended before the answer was complete'
             )
+        _record_stream_error(builder)
         return [sse('error', builder.error)]
     return message_events(
         await _count_screen_and_store(
             scope, answering.model, message, cacheable=_is_cacheable(builder)
         )
     )
+
+
+def _record_stream_error(builder: MessageBuilder) -> None:
+    """Mark the request's span failed if the model's stream ended with an
+    ``error`` event.
+
+    The event goes to the client as the stream's last one, as Anthropic sends
+    it: nothing raises, so nothing else marks the span.
+    """
+    description = builder.error_description()
+    if description is not None:
+        record_error(description)
 
 
 def _is_cacheable(builder: MessageBuilder) -> bool:

@@ -8,6 +8,7 @@ mocked over HTTP with pook. The tests read the spans the request leaves.
 import json
 
 from opentelemetry.sdk.trace import ReadableSpan
+from opentelemetry.trace import StatusCode
 import pytest
 
 from tests.common import provider_responses as canned
@@ -88,6 +89,42 @@ def test_a_streaming_request_has_the_same_root_span(gateway, span_collector):
     root = _root(spans)
     assert root.name == 'messages.workflow'
     assert root.attributes['gateway.entry_endpoint'] == '/v1/messages'
+
+
+def test_a_streaming_root_span_lasts_until_the_stream_ends(gateway, span_collector):
+    mock_anthropic_stream()
+
+    spans = _spans_of(span_collector, lambda: send_stream(gateway))
+
+    root = _root(spans)
+    llm = _llm_span(spans)
+    assert root.end_time >= llm.end_time
+    assert root.status.status_code is not StatusCode.ERROR
+
+
+def test_a_stream_that_fails_mid_way_marks_the_root_span(gateway, span_collector):
+    events = canned.anthropic_stream().sse_events
+    assert events is not None
+    # The model sends its first text, then fails.
+    first_delta = next(
+        index for index, e in enumerate(events) if e['type'] == 'content_block_delta'
+    )
+    error = {
+        'type': 'error',
+        'error': {'type': 'overloaded_error', 'message': 'Overloaded'},
+    }
+    mock_anthropic_stream(
+        ''.join(
+            f'event: {e["type"]}\ndata: {json.dumps(e)}\n\n'
+            for e in [*events[: first_delta + 1], error]
+        )
+    )
+
+    spans = _spans_of(span_collector, lambda: send_stream(gateway))
+
+    root = _root(spans)
+    assert root.status.status_code is StatusCode.ERROR
+    assert root.status.description == 'overloaded_error: Overloaded'
 
 
 # ── The model call span ─────────────────────────────────────────────────────

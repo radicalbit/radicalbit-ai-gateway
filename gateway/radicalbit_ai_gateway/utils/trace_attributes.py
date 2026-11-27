@@ -1,9 +1,9 @@
-from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
+from collections.abc import Awaitable, Callable, Mapping
 from enum import Enum
 from functools import wraps
 from typing import Any, ParamSpec, TypeVar
 
-from opentelemetry.context import attach, detach, get_current, get_value
+from opentelemetry.context import get_value
 
 from radicalbit_ai_gateway.telemetry.tracing import set_association_properties
 
@@ -128,25 +128,3 @@ def ensure_endpoint_category(
             set_operation_category(OperationCategory.ENDPOINT)
 
     return wrapper
-
-
-def in_request_trace(stream: AsyncIterator[T]) -> AsyncIterator[T]:
-    """Return ``stream`` iterated in the current trace context.
-
-    A streaming endpoint returns before its stream is iterated, so its
-    workflow span has ended and its context is gone when the stream's spans
-    (the model call...) start: they would each open a trace of their own. Call
-    this in the endpoint, while its workflow span is current, to keep them in
-    the request's trace as children of that span.
-    """
-    context = get_current()
-
-    async def iterate() -> AsyncIterator[T]:
-        token = attach(context)
-        try:
-            async for item in stream:
-                yield item
-        finally:
-            detach(token)
-
-    return iterate()

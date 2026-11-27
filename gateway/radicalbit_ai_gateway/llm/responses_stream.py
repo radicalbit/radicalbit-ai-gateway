@@ -44,6 +44,23 @@ class NativeResponsesEvent:
         return self.event in _FINAL_EVENTS
 
     @property
+    def failure(self) -> str | None:
+        """Return ``<code>: <message>`` if this event fails the stream.
+
+        An ``error`` event fails it, and so does a final response with the
+        status ``failed``. Return None for any other event.
+        """
+        if self.event == 'error':
+            error = json.loads(self.data)
+        elif self.event == FINAL_EVENT_TYPES['failed']:
+            error = (self.response or {}).get('error')
+        else:
+            return None
+        if not isinstance(error, dict):
+            return 'error'
+        return f'{error.get("code") or "error"}: {error.get("message") or ""}'
+
+    @property
     def response(self) -> dict[str, Any] | None:
         if self.payload is None:
             return None

@@ -6,6 +6,10 @@ workflow, the path of the running tasks and the request's association
 properties travel in the OpenTelemetry context, and every span that starts,
 whoever starts it, is stamped with them.
 
+A coroutine that returns a streaming response is not done when it returns:
+the response is sent after it. Its span ends when the response is done. That
+is when the stream ends, fails or is cut short by the client.
+
 Until ``init_tracing`` is called the decorators only run the function.
 
 The spans, their attributes and the context keys are the ones the OpenLLMetry
@@ -16,6 +20,7 @@ from __future__ import annotations
 
 from collections.abc import (
     AsyncGenerator,
+    AsyncIterable,
     AsyncIterator,
     Awaitable,
     Callable,
@@ -35,7 +40,14 @@ from typing import Any, ParamSpec, Protocol, TypeVar, overload, runtime_checkabl
 import weakref
 
 from opentelemetry import trace
-from opentelemetry.context import Context, attach, detach, get_value, set_value
+from opentelemetry.context import (
+    Context,
+    attach,
+    detach,
+    get_current,
+    get_value,
+    set_value,
+)
 from opentelemetry.instrumentation.threading import ThreadingInstrumentor
 from opentelemetry.sdk.resources import SERVICE_NAME, Resource
 from opentelemetry.sdk.trace import Span, SpanProcessor, TracerProvider
@@ -140,6 +152,20 @@ def set_association_properties(properties: Mapping[str, AttributeValue]) -> None
         _set_association_attributes(trace.get_current_span(), properties)
 
 
+def record_error(error: Exception | str) -> None:
+    """Mark the current span failed with ``error``, or with that description.
+
+    For an error that is handled where it happens, so it never reaches the
+    decorator that would mark the span: a stream that fails after its first
+    frame ends with an error frame, not with the error.
+    """
+    span = trace.get_current_span()
+    if isinstance(error, str):
+        span.set_status(Status(StatusCode.ERROR, error))
+    else:
+        _record_error(span, error)
+
+
 def workflow(name: str) -> _Traced:
     """Trace the decorated function as the workflow ``name``."""
     return _Traced(name, _WORKFLOW)
@@ -229,6 +255,7 @@ def _trace_coroutine(
             return await fn(*args, **kwargs)
         span, tokens = _open_span(name, kind)
         _record(span, ENTITY_INPUT, {'args': args, 'kwargs': kwargs})
+        handed_over = False
         try:
             result = await fn(*args, **kwargs)
         except Exception as e:
@@ -236,9 +263,17 @@ def _trace_coroutine(
             raise
         else:
             _record(span, ENTITY_OUTPUT, result)
+            if isinstance(result, _SentLater):
+                # The response is sent after this returns: the span ends
+                # when it is done.
+                _end_span_when_sent(span, result)
+                handed_over = True
             return result
         finally:
-            _close_span(span, tokens)
+            if handed_over:
+                _detach_all(tokens)
+            else:
+                _close_span(span, tokens)
 
     return wrapper
 
@@ -358,6 +393,55 @@ async def _aiterate_in_span(
     finally:
         span.end()
         _detach_all(tokens)
+
+
+@runtime_checkable
+class _SentLater(Protocol):
+    """A response sent after the handler returns, that says when it is done
+    (``StreamingResponseWithStatusCode``).
+    """
+
+    body_iterator: AsyncIterable[Any]
+
+    def when_sent(self, callback: Callable[[], Awaitable[None]]) -> None: ...
+
+
+def _end_span_when_sent(span: trace.Span, response: _SentLater) -> None:
+    """Iterate the body of ``response`` with ``span`` current. End ``span``
+    when the response is done.
+
+    Call it while ``span`` is current: the body is iterated in this context,
+    so the body's spans are its children.
+    """
+    context = get_current()
+    body = response.body_iterator
+
+    async def iterate() -> AsyncGenerator[Any]:
+        token = attach(context)
+        try:
+            async for chunk in body:
+                yield chunk
+        except Exception as e:
+            _record_error(span, e)
+            raise
+        finally:
+            _detach_all((token,))
+
+    iterating = iterate()
+    response.body_iterator = iterating
+
+    async def end() -> None:
+        # A client that leaves can leave the body open. Close it, so its own
+        # spans end before this one.
+        try:
+            await iterating.aclose()
+            aclose = getattr(body, 'aclose', None)
+            if aclose is not None:
+                await aclose()
+        finally:
+            span.end()
+
+    response.when_sent(end)
 
 
 def _record(span: trace.Span, attribute: str, value: object) -> None:

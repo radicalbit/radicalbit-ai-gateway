@@ -17,6 +17,7 @@ import re
 from typing import Any
 
 from opentelemetry.sdk.trace import ReadableSpan
+from opentelemetry.trace import StatusCode
 import pytest
 
 from tests.common import provider_responses as upstream
@@ -739,7 +740,7 @@ SPAN_CASES = [
         lambda g: g.chat(
             [ROUTED, NOT_TRIGGERED, gpt_a_stream()], stream=True
         ),
-        [('auth_api_key.task', 'chat_completions.workflow'), ('load_project_limits.task', 'chat_completions.workflow'), ('ChatOpenAI.chat', 'select_model.task'), ('select_model.task', 'chat_completions.workflow'), ('check_contains.task', 'apply_check_guardrails.workflow'), ('ChatOpenAI.chat', 'check_judge.task'), ('check_judge.task', 'apply_check_guardrails.workflow'), ('check_contains.task', 'apply_check_guardrails.workflow'), ('apply_check_guardrails.workflow', 'chat_completions.workflow'), ('chat_completions.workflow', None), ('ChatOpenAI.chat', 'llm_stream.task'), ('llm_stream.task', 'chat_completions.workflow')],
+        [('auth_api_key.task', 'chat_completions.workflow'), ('load_project_limits.task', 'chat_completions.workflow'), ('ChatOpenAI.chat', 'select_model.task'), ('select_model.task', 'chat_completions.workflow'), ('check_contains.task', 'apply_check_guardrails.workflow'), ('ChatOpenAI.chat', 'check_judge.task'), ('check_judge.task', 'apply_check_guardrails.workflow'), ('check_contains.task', 'apply_check_guardrails.workflow'), ('apply_check_guardrails.workflow', 'chat_completions.workflow'), ('ChatOpenAI.chat', 'llm_stream.task'), ('llm_stream.task', 'chat_completions.workflow'), ('chat_completions.workflow', None)],
         id='chat_live_stream',
     ),
     pytest.param(
@@ -768,7 +769,7 @@ SPAN_CASES = [
             ],
             stream=True,
         ),
-        [('auth_api_key.task', 'responses.workflow'), ('load_project_limits.task', 'responses.workflow'), ('ChatOpenAI.chat', 'select_model.task'), ('select_model.task', 'responses.workflow'), ('check_contains.task', 'apply_check_guardrails.workflow'), ('ChatOpenAI.chat', 'check_judge.task'), ('check_judge.task', 'apply_check_guardrails.workflow'), ('check_contains.task', 'apply_check_guardrails.workflow'), ('apply_check_guardrails.workflow', 'responses.workflow'), ('responses.workflow', None), ('ChatOpenAI.chat', 'llm_stream_responses.task'), ('llm_stream_responses.task', 'responses.workflow')],
+        [('auth_api_key.task', 'responses.workflow'), ('load_project_limits.task', 'responses.workflow'), ('ChatOpenAI.chat', 'select_model.task'), ('select_model.task', 'responses.workflow'), ('check_contains.task', 'apply_check_guardrails.workflow'), ('ChatOpenAI.chat', 'check_judge.task'), ('check_judge.task', 'apply_check_guardrails.workflow'), ('check_contains.task', 'apply_check_guardrails.workflow'), ('apply_check_guardrails.workflow', 'responses.workflow'), ('ChatOpenAI.chat', 'llm_stream_responses.task'), ('llm_stream_responses.task', 'responses.workflow'), ('responses.workflow', None)],
         id='responses_stream',
     ),
     pytest.param(
@@ -795,7 +796,7 @@ SPAN_CASES = [
         lambda g: g.chat(
             [gpt_a_stream()], route='chat_metered', stream=True
         ),
-        [('auth_api_key.task', 'chat_completions.workflow'), ('load_project_limits.task', 'chat_completions.workflow'), ('check_token_input_limit.task', 'check_limiters.task'), ('check_limiters.task', 'chat_completions.workflow'), ('select_model.task', 'chat_completions.workflow'), ('chat_completions.workflow', None), ('ChatOpenAI.chat', 'llm_stream.task'), ('llm_stream.task', 'chat_completions.workflow')],
+        [('auth_api_key.task', 'chat_completions.workflow'), ('load_project_limits.task', 'chat_completions.workflow'), ('check_token_input_limit.task', 'check_limiters.task'), ('check_limiters.task', 'chat_completions.workflow'), ('select_model.task', 'chat_completions.workflow'), ('ChatOpenAI.chat', 'llm_stream.task'), ('llm_stream.task', 'chat_completions.workflow'), ('chat_completions.workflow', None)],
         id='chat_stream_metered',
     ),
     pytest.param(
@@ -823,7 +824,7 @@ SPAN_CASES = [
         lambda g: g.transcribe(
             [_transcription_stream()], route='audio_metered', stream=True
         ),
-        [('auth_api_key.task', 'audio_transcriptions.workflow'), ('load_project_limits.task', 'audio_transcriptions.workflow'), ('select_transcription_model.task', 'audio_transcriptions.workflow'), ('check_audio_duration_limit.task', 'audio_transcriptions.workflow'), ('audio_transcriptions.workflow', None), ('llm_transcribe_stream.task', 'audio_transcriptions.workflow')],
+        [('auth_api_key.task', 'audio_transcriptions.workflow'), ('load_project_limits.task', 'audio_transcriptions.workflow'), ('select_transcription_model.task', 'audio_transcriptions.workflow'), ('check_audio_duration_limit.task', 'audio_transcriptions.workflow'), ('llm_transcribe_stream.task', 'audio_transcriptions.workflow'), ('audio_transcriptions.workflow', None)],
         id='transcription_stream_metered',
     ),
     pytest.param(
@@ -861,6 +862,43 @@ async def test_spans(gateway, span_collector, send, expected):
 
     assert response.status_code == 200
     assert _span_tree(span_collector.spans) == expected
+
+
+def _failed_response_stream() -> CannedResponse:
+    """Return a Responses stream that the model ends with ``response.failed``."""
+    events = upstream.openai_response_stream(model='gpt-a').sse_events
+    assert events is not None
+    *started, completed = events
+    failed = {
+        'type': 'response.failed',
+        'response': {
+            **completed['response'],
+            'status': 'failed',
+            'error': {'code': 'server_error', 'message': 'The model failed'},
+        },
+    }
+    return CannedResponse(sse_events=[*started, failed])
+
+
+async def test_a_responses_stream_the_model_fails_marks_the_root_span(
+    gateway, span_collector
+):
+    span_collector.spans.clear()
+    span_collector.on = True
+    try:
+        response = gateway.responses(
+            [ROUTED, NOT_TRIGGERED, _failed_response_stream()], stream=True
+        )
+    finally:
+        span_collector.on = False
+
+    # The failure goes to the client as the stream's last event.
+    assert response.status_code == 200
+    assert 'response.failed' in response.text
+    (root,) = [span for span in span_collector.spans if span.parent is None]
+    assert root.name == 'responses.workflow'
+    assert root.status.status_code is StatusCode.ERROR
+    assert root.status.description == 'server_error: The model failed'
 
 
 SCOPED_SPANS = {

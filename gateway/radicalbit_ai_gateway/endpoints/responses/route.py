@@ -20,7 +20,6 @@ from radicalbit_ai_gateway.utils.app_config import get_app_config
 from radicalbit_ai_gateway.utils.exceptions import GatewayNotFoundError
 from radicalbit_ai_gateway.utils.trace_attributes import (
     OperationCategory,
-    in_request_trace,
     set_operation_category,
 )
 
@@ -65,7 +64,7 @@ class ResponsesRoute:
                 frames = await responses_pipeline.stream(scope, body)
                 set_operation_category(OperationCategory.ENDPOINT)
                 return StreamingResponseWithStatusCode(
-                    in_request_trace(serve_stream(frames)),
+                    serve_stream(frames),
                     media_type='text/event-stream',
                     headers=scope.headers(),
                 )
